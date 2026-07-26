@@ -1,0 +1,110 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/*",
+    "crates/*",
+]
+
+[workspace.package]
+version = "0.3.5"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/undead-undead/BenShu"
+keywords = ["ai", "agent", "trading", "llm", "framework"]
+categories = ["science", "simulation", "asynchronous"]
+
+[workspace.dependencies]
+# Internal crates
+benshu-brain = { path = "crates/brain", version = "0.3.5", default-features = true }
+benshu-providers = { path = "crates/providers", version = "0.3.5" }
+benshu-engram = { path = "crates/engram", version = "0.3.5" }
+benshu-inference = { path = "crates/inference", version = "0.3.5" }
+benshu-connectors = { path = "crates/connectors", version = "0.3.5" }
+benshu-security = { path = "crates/security", version = "0.3.5" }
+benshu-runtimes = { path = "crates/runtimes", version = "0.3.5" }
+benshu-builtin-tools = { path = "crates/builtin-tools", version = "0.3.5" }
+benshu-auth = { path = "crates/auth", version = "0.3.5" }
+benshu-knowledge = { path = "crates/knowledge", version = "0.3.5" }
+benshu-mcp = { path = "crates/mcp", version = "0.3.5" }
+benshu-infra = { path = "crates/infra", version = "0.3.5" }
+benshu-scheduler = { path = "crates/scheduler", version = "0.3.5" }
+benshu-sensory = { path = "crates/sensory", version = "0.3.5" }
+benshu-state = { path = "crates/state", version = "0.3.5" }
+benshu-telemetry = { path = "crates/telemetry", version = "0.3.5" }
+benshu-orchestrator = { path = "crates/orchestrator", version = "0.3.5" }
+benshu-kernel = { path = "crates/kernel", version = "0.3.5" }
+benshu-comm = { path = "crates/comm", version = "0.3.5" }
+benshu-hardness = { path = "crates/hardness", version = "0.3.5" }
+benshu-compression = { path = "crates/compression", version = "0.3.5" }
+benshu-routing = { path = "crates/routing", version = "0.3.5" }
+benshu-loop-guard = { path = "crates/loop-guard", version = "0.3.5" }
+benshu-intervention = { path = "crates/intervention", version = "0.3.5" }
+benshu-memory-core = { path = "crates/memory-core", version = "0.3.5" }
+benshu-memory-api = { path = "crates/memory-api", version = "0.3.5" }
+benshu-provider-core = { path = "crates/provider-core", version = "0.3.5" }
+benshu-protocol-core = { path = "crates/protocol-core", version = "0.3.5" }
+benshu-runtime-policy-core = { path = "crates/runtime-policy-core", version = "0.3.5" }
+benshu-experience-core = { path = "crates/experience-core", version = "0.3.5" }
+benshu-gateway = { path = "apps/gateway", version = "0.3.5" }
+
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# Serialization  
+serde = { version = "1.0", features = ["derive", "rc"] }
+serde_json = "1.0"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "stream", "multipart"], default-features = true }
+bytes = "1.9"
+
+# Error handling
+thiserror = "2.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Utilities
+uuid = { version = "1.12", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6.1"
+parking_lot = "0.12"
+schemars = "0.8"
+rayon = "1.10"
+simd-json = "0.14"
+regex = "1.12"
+aho-corasick = "1.1"
+once_cell = "1.21"
+
+# Serialization
+bincode = "1.3"
+hmac = "0.12"
+sha2 = "0.10"
+serde_yaml_ng = "0.10"
+rust_decimal = { version = "1.36", features = ["serde-float"] }
+rust_decimal_macros = "1.36"
+tokio-cron-scheduler = "0.13"
+prost = "0.13"
+prost-build = "0.13"
+tonic-build = "0.12"
+
+# Database & Crypto
+redb = "2.1"
+aes-gcm = "0.10"
+rand = "0.8"
+argon2 = "0.5"
+md5 = "0.7"
+sysinfo = "0.33"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+
+[workspace.lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+# [Build Config]

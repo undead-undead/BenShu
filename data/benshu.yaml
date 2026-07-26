@@ -1,0 +1,288 @@
+providers:
+  active_provider: null
+  resilient_enabled: false
+  fallback_provider: null
+  request_timeout_secs: null
+  reset_timeout_secs: null
+  failure_threshold: null
+  openai_api_key: sk-local-llama-key
+  anthropic_api_key: null
+  gemini_api_key: null
+  deepseek_api_key: null
+  minimax_api_key: null
+  openrouter_api_key: null
+  moonshot_api_key: null
+  zhipu_api_key: null
+  qwen_api_key: null
+  baidu_api_key: null
+  baidu_secret_key: null
+  xunfei_api_key: null
+  doubao_api_key: null
+  siliconflow_api_key: null
+  custom_providers:
+  - voice_tts_model
+  - voice_tts_voice
+  - voice_local_tts_enabled
+  - voice_local_tts_path
+server:
+  port: 3000
+  host: 127.0.0.1
+storage:
+  data_dir: null
+skills:
+  enabled:
+  - blockbeats-skill
+  - browser_browse
+agent_identity: null
+connectors:
+  telegram: null
+  discord: null
+  feishu: null
+  dingtalk: null
+  slack: null
+  email: null
+  qq: null
+knowledge:
+  enable_vector: true
+  model_ram_limit_gb: 4
+  model_vram_limit_gb: 0
+  auto_consolidation_enabled: true
+  embed_model: ''
+  rerank_model: ''
+sensory:
+  enable_global_voice: false
+  enable_local_vision: true
+  fact_check_enabled: false
+  voice_provider: null
+  stt_model: null
+  tts_model: null
+  vision_model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  ocr_model: null
+  image_gen_model: bridge-image:http://172.18.176.1:8022/v1|onnx-directml-image
+  image_edit_model: null
+  tactical_model: ''
+  fact_check_model: null
+  audio_understanding_model: null
+  realtime_vad_model: null
+  duplex_voice_model: null
+  local_classifier_model: null
+  local_router_model: null
+  local_safety_model: null
+  vram_budget_mb: null
+  video_buffer_size: null
+llama_cpp_runtime:
+  tuning_mode: auto
+  performance_profile: balanced
+  last_recommendation:
+    recommended_ctx_size: 65536
+    recommended_gpu_layers: 24
+    recommended_batch_size: 2048
+    recommended_ubatch_size: 512
+    recommended_threads: 8
+    recommended_mmap: false
+    recommended_mlock: false
+    recommended_kv_offload: true
+    recommended_flash_attn_mode: auto
+    recommended_cache_prompt: false
+    recommended_cont_batching: false
+    recommended_parallel_slots: 1
+    memory_plan:
+      model_weight_mb: 17862
+      mmproj_weight_mb: 0
+      estimated_vram_mb: 40910
+      estimated_ram_mb: 3576
+      kv_cache_budget_mb: 24576
+      safety_margin_mb: 2048
+    reason: profile=balanced usable_vram=24517MiB model=17862MiB ctx=65536 total_layers=28
+      estimated_gpu_layers=24
+    warnings:
+    - 'estimated_vram_exceeds_budget: estimated=40910MiB budget=24517MiB'
+  effective_diagnostics:
+    tuning_mode: auto
+    performance_profile: balanced
+    recommended_value_summary: capacity_estimate gpu_layers=24 ctx_size=65536 batch=2048
+      ubatch=512 est_vram=40910MiB est_ram=3576MiB
+    user_override_summary: 'none: automatic runtime planning active'
+    effective_value_summary: gpu_layers=24 ctx_size=65536 kv_offload=true
+    effective_memory_plan:
+      model_weight_mb: 17862
+      mmproj_weight_mb: 0
+      estimated_vram_mb: 40910
+      estimated_ram_mb: 3576
+      kv_cache_budget_mb: 24576
+      safety_margin_mb: 2048
+    effective_memory_summary: effective_est_vram=40910MiB effective_est_ram_or_commit=3576MiB
+      kv_cache=24576MiB kv_location=VRAM
+    effective_kv_location: VRAM
+    reload_required: false
+    status: ready_with_warnings
+    notes:
+    - 'estimated_vram_exceeds_budget: estimated=40910MiB budget=24517MiB'
+    - 'effective_vram_exceeds_budget: estimated=40910MiB budget=24517MiB'
+  ctx_size: 65536
+  gpu_layers: 24
+  threads: 8
+  threads_batch: null
+  batch_size: 2048
+  ubatch_size: 512
+  parallel_slots: 1
+  cache_ram: 256
+  ctx_checkpoints: 0
+  flash_attn_mode: auto
+  kv_offload: true
+  mmap: false
+  mlock: false
+  cache_prompt: false
+  cont_batching: false
+  warmup: true
+  context_shift: false
+  jinja: true
+  rope_scaling: null
+  rope_scale: null
+  rope_freq_base: null
+  rope_freq_scale: null
+  yarn_orig_ctx: null
+  yarn_ext_factor: null
+  yarn_attn_factor: null
+  yarn_beta_slow: null
+  yarn_beta_fast: null
+  cache_type_k: null
+  cache_type_v: null
+  device: null
+  split_mode: null
+  tensor_split: null
+  main_gpu: null
+  fit_mode: 'true'
+  fit_target: null
+  fit_ctx: null
+  cpu_moe: false
+  n_cpu_moe: null
+  mmproj_offload: true
+  image_min_tokens: null
+  image_max_tokens: null
+  reasoning_mode: false
+  reasoning_format: none
+  reasoning_budget: null
+  reasoning_budget_message: null
+  sampling_temperature: 0.8
+  sampling_top_k: 40
+  sampling_top_p: 0.95
+  sampling_min_p: 0.05
+  sampling_typical_p: 1.0
+  sampling_repeat_penalty: 1.0
+  sampling_presence_penalty: 0.0
+  sampling_frequency_penalty: 0.0
+  sampling_mirostat: 0
+  sampling_mirostat_eta: 0.1
+  sampling_mirostat_tau: 5.0
+  seed: null
+windows_ml_runtime:
+  runtime_family: windows_ml_onnx_runtime
+  execution_provider_preference: directml
+  device_target: auto
+  cpu_fallback_policy: allow
+  graph_optimization_level: all
+  intra_threads: null
+  inter_threads: null
+  text_profile:
+    batch_size: 8
+    max_sequence_length: 1024
+  vision_profile:
+    max_image_side: 1024
+    resize_policy: fit
+  audio_profile:
+    sample_rate_hz: 16000
+    chunk_ms: 30000
+  image_profile:
+    width: 1024
+    height: 1024
+    steps: 20
+    guidance: 7.5
+  realtime_profile:
+    vad_window_ms: 30
+    duplex_frame_ms: 20
+  safety_profile:
+    threshold: 0.5
+windows_ml_bridge:
+  image_bridge_base_url: http://172.18.176.1:8022/v1
+  bindings:
+    image_generation:
+      role: image_generation
+      source_model: bridge-image:http://172.18.176.1:8022/v1|onnx-directml-image
+      effective_model: bridge-image:http://172.18.176.1:8022/v1|onnx-directml-image
+      artifact_kind: image_bridge
+      runtime_target: specialized_image_runtime
+      execution_provider: directml_or_bridge
+      bridge_mode: image_bridge
+      note: Image generation already points at a dedicated bridge runtime.
+    vision:
+      role: vision
+      source_model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+      effective_model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+      artifact_kind: gguf
+      runtime_target: multimodal_runtime
+      execution_provider: provider_or_bridge_multimodal
+      bridge_mode: migration_pending
+      note: GGUF is reserved for the main llama.cpp brain path, not the Windows-native
+        small-model runtime.
+  base_url: http://172.18.176.1:28013/v1
+  host: 172.18.176.1
+  port: 28013
+runtime_host_control:
+  main_brain:
+    control_mode: command
+    service_name: null
+    restart_command:
+    - env
+    - BENSHU_WINDOWS_LLAMA_SERVER_EXE=/home/biubiuboy/BenShu/runtimes/llama.cpp/b9592/llama-server.exe
+    - bash
+    - /home/biubiuboy/BenShu/scripts/wsl/enable_windows_llama_bridge.sh
+    timeout_secs: 240
+  windows_ml:
+    control_mode: disabled
+    service_name: null
+    restart_command: []
+    timeout_secs: 60
+continuation_runtime:
+  disk_cache_enabled: false
+  cache_dir: null
+  cache_budget_mb: 4096
+  cache_max_entries: 1024
+  disable_disk_cache_for_sensitive_tasks: true
+agent_path: null
+agents:
+  crypto:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  voice:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  image:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  terminal:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  repo:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  data:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  chart:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  ocr:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  forge:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  coder:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  benshu:
+    provider: openai
+    base_url: http://172.18.176.1:28013/v1
+    model: benshu-main-brain
+    local_model_artifact: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    local_runtime_family: llama_cpp
+  mailer:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  browser:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  researcher:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  pdf:
+    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+trusted_workspaces: []

@@ -1,0 +1,17 @@
+[package]
+name = "benshu-memory-api"
+description = "Shared memory service contracts for BenShu runtime components"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+benshu-inference = { workspace = true }
+benshu-infra = { workspace = true }
+benshu-memory-core = { workspace = true }
+benshu-protocol-core = { workspace = true }
+benshu-scheduler = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde_json = { workspace = true }

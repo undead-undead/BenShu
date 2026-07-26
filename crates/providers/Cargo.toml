@@ -1,0 +1,61 @@
+[package]
+name = "benshu-providers"
+description = "LLM provider implementations for the BenShu AI Agent framework"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../README.md"
+
+[features]
+default = ["full"]
+full = ["openai", "anthropic", "gemini", "deepseek", "openrouter", "moonshot", "groq", "minimax", "llama_cpp", "zhipu", "qwen", "doubao", "siliconflow", "baidu", "xunfei"]
+llama_cpp = ["benshu-inference/llama_cpp"]
+openai = []
+anthropic = []
+gemini = []
+deepseek = ["openai"]
+openrouter = ["openai"]
+moonshot = ["openai"]
+zhipu = ["openai"]
+qwen = ["openai"]
+doubao = ["openai"]
+siliconflow = ["openai"]
+baidu = ["openai"]
+xunfei = ["openai"]
+groq = ["openai"]
+minimax = ["openai"]
+
+
+[dependencies]
+benshu-inference = { workspace = true }
+benshu-infra = { workspace = true }
+benshu-knowledge = { workspace = true }
+benshu-protocol-core = { workspace = true }
+benshu-provider-core = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml_ng = { workspace = true }
+reqwest = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+encoding_rs = "0.8"
+tokio-stream = "0.1"
+parking_lot.workspace = true
+candle-core = { version = "0.8" }
+uuid = { version = "1.0", features = ["v4"] }
+base64 = "0.22"
+tempfile = "3.10"
+image = "0.25"
+# llama-cpp-2 is now internal to benshu-inference
+
+[dev-dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+tokio-test = "0.4"
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true

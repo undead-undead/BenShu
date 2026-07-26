@@ -1,0 +1,17 @@
+tool_config:
+  novel_studio:
+    audit_enabled: true
+    chapter_unit_target: 4000
+    continuity_enabled: true
+    export_format: txt
+    export_when_complete: true
+    max_chapters_per_turn: 1
+    target_units: 4000
+  writing:
+    audit_enabled: true
+    chapter_unit_target: 4000
+    continuity_enabled: true
+    export_format: txt
+    export_when_complete: true
+    max_chapters_per_turn: 1
+    target_units: 4000

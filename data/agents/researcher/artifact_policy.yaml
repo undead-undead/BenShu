@@ -1,0 +1,458 @@
+handles:
+- artifact: web_research
+  intents:
+  - search
+  - fetch
+  - summarize_sources
+  tools:
+  - web_search
+  - web_fetch
+  - browser
+  triggers_from:
+  - web_research_request
+- artifact: academic_paper
+  direct_record_hints_from:
+  - paper_record
+  evidence_hints_from:
+  - scholarly_record
+  - heart_disease
+  - medical_treatment
+  intents:
+  - find_papers
+  - fetch_abstract
+  - source_summary
+  preferred_hosts:
+  - pubmed.ncbi.nlm.nih.gov
+  - pmc.ncbi.nlm.nih.gov
+  - api.crossref.org
+  - api.openalex.org
+  - doi.org
+  source_adapters:
+  - capability: api
+    domains:
+    - pubmed.ncbi.nlm.nih.gov
+    - eutils.ncbi.nlm.nih.gov
+    name: pubmed
+    weight: 120
+  - capability: api
+    domains:
+    - api.crossref.org
+    name: crossref
+    weight: 100
+  - capability: api
+    domains:
+    - api.openalex.org
+    name: openalex
+    weight: 95
+  tools:
+  - web_search
+  - web_fetch
+  - browser
+  triggers_from:
+  - academic_request
+  - lancet
+  - medical_treatment
+- artifact: code_repository
+  intents:
+  - find_repository
+  - inspect_project
+  tools:
+  - web_search
+  - web_fetch
+  - browser
+  triggers_from:
+  - repository_request
+- artifact: public_record
+  intents:
+  - find_records
+  - official_data
+  tools:
+  - web_search
+  - web_fetch
+  - browser
+  triggers_from:
+  - public_record_request
+- artifact: ranked_collection
+  browser_direct_site_attempt_timeout_secs: 45
+  browser_direct_site_budget_secs: 240
+  browser_direct_site_max_pages: 24
+  collection_index_path_terms_from:
+  - browser_collection_index_path
+  collection_facets:
+  - conflicting_terms_from:
+    - recommendation
+    - monthly_ticket
+    - sales_collection
+    evidence_terms_from:
+    - no_cost
+    name: no_cost_collection
+    requested_by_from:
+    - no_cost
+  - conflicting_terms_from:
+    - no_cost
+    - monthly_ticket
+    - sales_collection
+    evidence_terms_from:
+    - recommendation
+    name: recommendation_collection
+    requested_by_from:
+    - recommendation
+  - conflicting_terms_from:
+    - no_cost
+    - recommendation
+    - sales_collection
+    evidence_terms_from:
+    - monthly_ticket
+    name: monthly_ticket_collection
+    requested_by_from:
+    - monthly_ticket
+  collection_item_facets:
+  - conflicting_terms_from:
+    - xianxia
+    - science_fiction
+    - other_fiction_genres
+    evidence_terms_from:
+    - fantasy
+    name: fantasy_genre
+    requested_by_from:
+    - fantasy
+  - conflicting_terms_from:
+    - paid_access
+    evidence_terms_from:
+    - no_cost
+    name: no_cost_item
+    requested_by_from:
+    - no_cost
+    requires_evidence: true
+  - conflicting_terms_from:
+    - fantasy
+    - xianxia
+    - other_fiction_genres
+    evidence_terms_from:
+    - science_fiction
+    name: science_fiction_genre
+    requested_by_from:
+    - science_fiction
+  - conflicting_terms_from:
+    - fantasy
+    - science_fiction
+    - other_fiction_genres
+    evidence_terms_from:
+    - xianxia
+    name: xianxia_genre
+    requested_by_from:
+    - xianxia
+  evidence_hints:
+  - item_records
+  - source_page
+  - title_author_link
+  collection_title_noise_terms_from:
+  - browser_collection_title_noise
+  filter_navigation_text_terms_from:
+  - browser_filter_navigation_text
+  filter_navigation_path_prefixes_from:
+  - browser_filter_navigation_path_prefix
+  navigation_noise_text_terms_from:
+  - browser_navigation_noise_text
+  non_content_path_prefixes_from:
+  - browser_non_content_path_prefix
+  intents:
+  - find_collection
+  - verify_items
+  - import_metadata
+  tools:
+  - web_search
+  - web_fetch
+  - browser
+  triggers_from:
+  - ranked_collection_request
+  - no_cost
+  - recommendation
+  - monthly_ticket
+  - fantasy
+  - science_fiction
+  - xianxia
+terms:
+  academic_request:
+    aliases:
+    - 论文
+    - 研究
+    - PubMed
+    - DOI
+    - arxiv
+    - paper
+    - study
+  fantasy:
+    aliases:
+    - 玄幻
+    - 东方玄幻
+    - xuanhuan
+    - fantasy
+  heart_disease:
+    aliases:
+    - heart
+    - cardio
+    - cardiovascular
+    - 心脏
+    - 心血管
+  lancet:
+    aliases:
+    - 柳叶刀
+    - Lancet
+  medical_treatment:
+    aliases:
+    - 治疗
+    - treatment
+    - therapy
+    - trial
+  monthly_ticket:
+    aliases:
+    - 月票榜
+    - 月票排行
+    - 月票排名
+    - 月票
+    - monthly ticket
+  no_cost:
+    aliases:
+    - 免费榜
+    - 免费排行
+    - 免费排名
+    - 免费小说
+    - 限时免费
+    - 免费
+    - 限免
+    - free
+    - no-cost
+  other_fiction_genres:
+    aliases:
+    - 奇幻
+    - 武侠
+    - 都市
+    - 现实
+    - 军事
+    - 历史
+    - 游戏
+    - 体育
+    - 诸天无限
+    - 悬疑
+    - 灵异
+    - 轻小说
+    - wuxia
+    - urban
+  paid_access:
+    aliases:
+    - VIP
+    - vip
+    - 收费
+    - 付费
+    - 会员
+    - 订阅
+  paper_record:
+    aliases:
+    - doi
+    - pubmed
+  public_record_request:
+    aliases:
+    - 开奖记录
+    - 公告
+    - 记录
+    - 数据源
+    - official records
+  ranked_collection_request:
+    aliases:
+    - 前十
+    - 前10
+    - 榜单
+    - 排行
+    - 排名
+    - ranking
+    - top
+    - catalog
+    - collection
+    - 小说
+    - 书名
+    - 网文
+  browser_collection_index_path:
+    aliases:
+    - xuanhuan
+    - free
+    - rank
+    - all
+  browser_collection_title_noise:
+    aliases:
+    - 【作者】
+    - 【简介】
+    - 【评语】
+    - 作者：
+    - 简介：
+    - 评语：
+    - 最近更新
+    - 加入书架
+    - 免费试读
+    - public metadata
+    - author:
+    - summary:
+    - intro:
+  browser_filter_navigation_text:
+    aliases:
+    - 全部
+    - 分类
+    - 筛选
+    - 排序
+    - 排行
+    - 榜单
+    - 免费
+    - 连载
+    - 完本
+    - 短篇
+    - 三日内
+    - 七日内
+    - 半月内
+    - 一月内
+    - 最近
+    - 更新时间
+    - 字数
+    - 收藏
+    - 推荐
+    - category
+    - filter
+    - sort
+    - status
+    - genre
+    - channel
+    - ranking
+    - rank
+    - recent
+    - updated
+    - complete
+    - ongoing
+  browser_filter_navigation_path_prefix:
+    aliases:
+    - update
+    - action
+    - chanid
+    - channel
+    - category
+    - genre
+    - tag
+    - status
+    - sort
+    - page
+    - size
+    - sign
+    - vip
+    - word
+    - count
+    - price
+    - order
+    - state
+  browser_navigation_noise_text:
+    aliases:
+    - 首页
+    - 登录
+    - 注册
+    - 更多
+    - 全部分类
+    - 小说推荐排行榜
+    - 最新更新
+    - 书籍详情
+    - 加入书架
+    - 下载
+    - 帮助
+    - 客户端
+    - 关于
+    - 联系我们
+    - 版权
+    - 隐私
+    - 条款
+    - copyright
+    - privacy
+    - terms
+    - home
+    - login
+    - register
+    - more
+    - download
+    - help
+    - client
+    - app
+    - about
+    - contact
+  browser_non_content_path_prefix:
+    aliases:
+    - about
+    - intro
+    - help
+    - contact
+    - copyright
+    - privacy
+    - terms
+    - login
+    - register
+    - logout
+    - signin
+    - signup
+    - passport
+    - account
+    - user
+    - ask
+    - question
+    - questions
+    - qa
+    - qna
+    - app
+    - client
+    - game
+    - games
+    - ad
+    - ads
+    - download
+  recommendation:
+    aliases:
+    - 推荐榜
+    - 推荐排行
+    - 推荐排名
+    - 推荐票榜
+    - 推荐票
+    - 推荐
+    - recommended ranking
+    - recommendation ranking
+    - recommended
+    - recommendation
+  repository_request:
+    aliases:
+    - GitHub
+    - 仓库
+    - repo
+    - repository
+    - 源码
+    - 开源项目
+  sales_collection:
+    aliases:
+    - 畅销榜
+    - bestseller
+    - 收藏榜
+  scholarly_record:
+    aliases:
+    - official
+    - record
+    - open access
+  science_fiction:
+    aliases:
+    - 科幻
+    - science fiction
+    - sci-fi
+    - sf
+  web_research_request:
+    aliases:
+    - 搜索
+    - 查找
+    - 最新
+    - 资料
+    - source
+    - research
+    - search web
+  xianxia:
+    aliases:
+    - 仙侠
+    - xianxia

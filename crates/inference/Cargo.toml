@@ -1,0 +1,69 @@
+[package]
+name = "benshu-inference"
+version.workspace = true
+edition.workspace = true
+authors = ["BenShu Team"]
+description = "High-performance inference engine, SIMD kernels, and KV-cache management for BenShu"
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+parking_lot = { workspace = true }
+sysinfo = "0.38"
+simsimd = "6.2" # For vector ops
+anyhow = { workspace = true }
+half = { version = "2.4", features = ["num-traits", "serde"] }
+image = "0.25"
+uuid = { version = "1.0", features = ["v4"] }
+lazy_static = "1.4"
+benshu-infra = { workspace = true }
+
+# AI-Inference Support
+candle-core = { version = "0.8" }
+candle-nn = { version = "0.8" }
+candle-transformers = { version = "0.8" }
+hf-hub = { version = "0.4", features = ["tokio"] }
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+memmap2 = "0.9"
+async-trait = "0.1"
+dashmap = "6.1"
+thiserror = "2.0"
+tempfile = "3.10"
+llama-cpp-2 = { version = "0.1.146", optional = true }
+encoding_rs = "0.8"
+rand = "0.8"
+libc = "0.2"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+which = "7.0"
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+] }
+ort = { version = "2.0.0-rc.12", default-features = false, features = [
+    "std",
+    "ndarray",
+    "tracing",
+    "api-24",
+    "load-dynamic",
+    "directml",
+] }
+
+[features]
+default = ["candle"]
+candle = []
+diffusion = []
+tensorrt = []
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+metal = ["candle-core/metal", "candle-nn/metal", "candle-transformers/metal"]
+accelerate = ["candle-core/accelerate", "candle-nn/accelerate", "candle-transformers/accelerate"]
+vulkan = ["llama-cpp-2/vulkan"]
+llama_cpp = ["dep:llama-cpp-2", "llama-cpp-2/mtmd"]
+rocm = ["llama-cpp-2/rocm", "llama-cpp-2/dynamic-link"]
+windows_native_onnx = []

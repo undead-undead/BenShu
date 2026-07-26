@@ -1,0 +1,60 @@
+# Rust
+target/
+/.cargo/
+**/*.rs.bk
+**/*.rs.tmp
+
+# Database & Logs
+*.db
+*.db-shm
+*.db-wal
+*.log
+logs/
+data/*.db
+data/engram.db
+*.redb
+
+# Environments & Secrets
+.env
+.env.*
+vault/
+*.key
+*.pem
+secrets/
+
+# OS/IDEs
+.DS_Store
+.idea/
+.vscode/
+
+# Project Specific
+dist/
+build/
+bin/
+runtimes/llama.cpp/
+node_modules/
+
+# Runtime-generated BenShu data
+/.runtime-locks/
+/data/.runtime-locks/
+apps/gateway/data/
+data/data/
+data/generated/
+data/projects/
+data/telemetry/profiler_artifacts/
+data/telemetry/run_traces/
+data/telemetry/scorecards/
+data/telemetry/witness_bundles/
+data/telemetry/witness_logs/
+
+# Logs & Investigation
+check_*.txt
+test_*.txt
+test_brain_output*.txt
+test_final_output.txt
+check_output*.txt
+check_brain_tests.txt
+check_output_panel.txt
+test_output*.txt
+*.txt
+models/

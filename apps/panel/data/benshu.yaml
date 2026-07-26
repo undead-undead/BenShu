@@ -1,0 +1,33 @@
+providers:
+  active_provider: null
+  openai_api_key: null
+  anthropic_api_key: null
+  gemini_api_key: null
+  deepseek_api_key: null
+  minimax_api_key: null
+  openrouter_api_key: null
+  moonshot_api_key: null
+  doubao_api_key: null
+  custom_providers: []
+server:
+  port: 3000
+  host: 0.0.0.0
+storage:
+  data_dir: null
+skills:
+  enabled:
+  - browser_browse
+agent: null
+connectors:
+  telegram: null
+  discord: null
+  slack: null
+  feishu: null
+  dingtalk: null
+  email: null
+  qq: null
+knowledge:
+  enable_vector: true
+agent_path: null
+heartbeat_path: null
+agents: {}

@@ -1,0 +1,15 @@
+[package]
+name = "benshu-protocol-core"
+description = "Shared protocol contracts for BenShu agent messages and tool calls"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+benshu-compression = { workspace = true }
+benshu-infra = { workspace = true }
+benshu-memory-core = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

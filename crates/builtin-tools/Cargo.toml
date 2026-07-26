@@ -1,0 +1,78 @@
+[package]
+name = "benshu-builtin-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+benshu-brain = { workspace = true }
+benshu-security = { workspace = true }
+benshu-engram = { workspace = true }
+benshu-comm = { workspace = true }
+benshu-runtimes = { workspace = true }
+benshu-infra = { workspace = true }
+benshu-routing = { workspace = true }
+benshu-scheduler = { workspace = true }
+benshu-sensory = { path = "../sensory" }
+benshu-inference = { workspace = true }
+benshu-runtime-policy-core = { workspace = true }
+benshu-state = { workspace = true }
+benshu-compression = { workspace = true }
+benshu-memory-api = { workspace = true }
+benshu-memory-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+serde_yaml_ng = { workspace = true }
+regex = "1.10"
+reqwest = { workspace = true, optional = true, features = ["cookies"] }
+tokio = { workspace = true, features = ["full"] }
+schemars = "0.8"
+zip = "2.2"
+chrono = { workspace = true }
+parking_lot = { workspace = true }
+rand = "0.9"
+base64 = "0.22"
+image = "0.25"
+lopdf = "0.33"
+md5 = { workspace = true }
+sha2 = { workspace = true }
+headless_chrome = { version = "1.0", optional = true }
+uuid = { workspace = true, features = ["v4"] }
+futures = { workspace = true }
+which = "8.0"
+hex = "0.4"
+urlencoding = "2.1"
+notify-rust = "4.12.0"
+tempfile = "3.10"
+fs2 = "0.4.3"
+redb = { workspace = true }
+dirs = "6.0"
+encoding_rs = "0.8"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+core-graphics = "0.23"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+x11-dl = "2.21"
+
+[features]
+default = ["http", "cron", "vector-db", "wasm"]
+http = ["dep:reqwest", "benshu-brain/http"]
+browser = ["dep:headless_chrome"]
+cron = ["benshu-brain/cron"]
+vector-db = ["benshu-brain/vector-db"]
+wasm = ["benshu-runtimes/wasm"]
+
+[lints]
+workspace = true

@@ -1,0 +1,30 @@
+name: P1 Windows Runtime Smoke
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-runtime-smoke:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install protoc
+        shell: pwsh
+        run: |
+          choco install protoc --no-progress -y
+          protoc --version
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run P1 foreground chat runtime trace smoke
+        shell: bash
+        run: cargo test -p benshu-brain foreground_chat_emits_runtime_stage_trace_and_replay_contract --test runtime_governance_regression

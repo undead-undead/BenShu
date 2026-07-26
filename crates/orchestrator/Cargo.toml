@@ -1,0 +1,19 @@
+[package]
+name = "benshu-orchestrator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+benshu-infra = { workspace = true }
+benshu-telemetry = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+anyhow = { workspace = true }
+parking_lot = { workspace = true }
+async-trait = { workspace = true }
+
+[lints]
+workspace = true

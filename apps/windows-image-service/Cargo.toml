@@ -1,0 +1,23 @@
+[package]
+name = "benshu-windows-image-service"
+version.workspace = true
+edition.workspace = true
+authors = ["BenShu Team"]
+description = "Windows-first local ONNX image service shell for BenShu"
+
+[dependencies]
+benshu-inference = { workspace = true }
+axum = { version = "0.8", features = ["macros"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+async-trait = "0.1"
+chrono = { workspace = true }
+base64 = "0.22"
+image = "0.25"
+anyhow = { workspace = true }
+
+[lints]
+workspace = true

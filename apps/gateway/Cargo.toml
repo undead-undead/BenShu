@@ -1,0 +1,72 @@
+[package]
+name = "benshu-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+benshu-brain = { workspace = true, default-features = false, features = ["http", "wasm", "cron"] }
+benshu-comm = { workspace = true }
+benshu-compression = { workspace = true }
+benshu-engram = { workspace = true, features = ["fts", "vector"] }
+benshu-experience-core = { workspace = true }
+benshu-security = { workspace = true }
+benshu-state = { workspace = true }
+benshu-telemetry = { workspace = true }
+benshu-connectors = { workspace = true }
+benshu-auth = { workspace = true }
+benshu-kernel = { workspace = true, features = ["browser"] }
+benshu-sensory = { workspace = true }
+benshu-knowledge = { workspace = true }
+benshu-mcp = { workspace = true }
+benshu-builtin-tools = { workspace = true, features = ["http", "browser", "cron", "vector-db"] }
+benshu-infra = { workspace = true }
+benshu-protocol-core = { workspace = true }
+benshu-runtime-policy-core = { workspace = true }
+benshu-scheduler = { workspace = true }
+benshu-inference = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber.workspace = true
+tracing-appender = "0.2"
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json.workspace = true
+clap = { version = "4.4", features = ["derive", "env"] }
+dirs = "5.0"
+which = "6.0"
+futures = { workspace = true }
+async-stream = "0.3"
+async-trait = { workspace = true }
+regex = "1.10"
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio-stream = "0.1.18"
+tower-http = { version = "0.6", features = ["cors", "trace", "fs", "timeout", "limit"] }
+benshu-providers = { workspace = true }
+parking_lot.workspace = true
+dashmap.workspace = true
+tokio-util = { version = "0.7" }
+chrono.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+tower = { version = "0.5" }
+moka = { version = "0.12", features = ["future"] }
+dialoguer = "0.11"
+colored = "2.2"
+indicatif = "0.17"
+serde_yaml_ng = { workspace = true }
+dotenv = "0.15"
+reqwest = { workspace = true }
+urlencoding = "2.1"
+rand = "0.8"
+hex = "0.4"
+sysinfo = "0.38.3"
+
+[features]
+default = ["cron"]
+cron = []
+llama_cpp = ["benshu-inference/llama_cpp", "benshu-providers/llama_cpp"]
+rocm = ["llama_cpp", "benshu-inference/rocm"]
+
+[dev-dependencies]
+tempfile = "3.25.0"

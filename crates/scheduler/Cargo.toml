@@ -1,0 +1,26 @@
+[package]
+name = "benshu-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-cron-scheduler = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+dashmap = { workspace = true }
+tracing = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+redb = { workspace = true, optional = true }
+sysinfo = { workspace = true }
+benshu-infra = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+default = ["persistence"]
+persistence = ["dep:redb"]

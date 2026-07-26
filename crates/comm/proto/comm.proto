@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package benshu.comm;
+
+message Address {
+  oneof addr_type {
+    string agent = 1;
+    string user = 2;
+    string system = 3;
+  }
+}
+
+message Metadata {
+  string id = 1;     // UUID string
+  Address source = 2;
+  uint32 priority = 3;
+  uint64 timestamp = 4; // Unix seconds
+  uint64 timeout = 5;   // Unix seconds
+  string signature = 6;
+  Address signer = 7;
+  string tenant_id = 8;
+  string session_id = 9;
+  string trace_id = 10;
+  string task_id = 11;
+  string parent_task_id = 12;
+  string root_task_id = 13;
+  string parent_message_id = 14;
+  string root_message_id = 15;
+}
+
+message CommEnvelope {
+  Address target = 1;
+  bytes payload = 2;
+  Metadata meta = 3;
+}

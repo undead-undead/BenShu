@@ -1,0 +1,42 @@
+[package]
+name = "benshu-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+benshu-infra = { workspace = true }
+benshu-brain = { workspace = true, features = ["cron"] }
+benshu-comm = { workspace = true }
+benshu-engram = { workspace = true }
+benshu-experience-core = { workspace = true }
+benshu-inference = { workspace = true }
+benshu-memory-api = { workspace = true }
+benshu-sensory = { workspace = true }
+benshu-auth = { workspace = true }
+benshu-builtin-tools = { workspace = true, features = ["browser"] }
+benshu-providers = { workspace = true }
+benshu-security = { workspace = true }
+benshu-mcp = { workspace = true }
+benshu-scheduler = { workspace = true }
+benshu-state = { workspace = true }
+benshu-telemetry = { workspace = true }
+benshu-orchestrator = { workspace = true }
+redb = { workspace = true }
+
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+async-trait = { workspace = true }
+uuid = { workspace = true }
+parking_lot = { workspace = true }
+chrono = { workspace = true }
+
+[features]
+browser = ["benshu-builtin-tools/browser"]
+
+[lints]
+workspace = true

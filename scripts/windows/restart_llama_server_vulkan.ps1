@@ -1,0 +1,152 @@
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ServerExe,
+
+    [int]$MinBuild = 9592,
+
+    [Parameter(Mandatory = $true)]
+    [string]$ModelPath,
+
+    [string]$MmprojPath = "",
+    [string]$MediaPath = "",
+    [int]$Port = 8012,
+    [int]$CtxSize = 8192,
+    [int]$GpuLayers = 99,
+    [int]$Threads = -1,
+    [string]$ThreadsBatch = "",
+    [int]$BatchSize = 2048,
+    [int]$UbatchSize = 512,
+    [int]$ParallelSlots = 1,
+    [string]$CacheRam = "256",
+    [string]$CtxCheckpoints = "0",
+    [string]$FlashAttnMode = "auto",
+    [string]$KvOffload = "true",
+    [string]$Mmap = "true",
+    [string]$Mlock = "false",
+    [string]$CachePrompt = "false",
+    [string]$ContBatching = "false",
+    [string]$Warmup = "true",
+    [string]$ContextShift = "false",
+    [string]$Jinja = "true",
+    [string]$RopeScaling = "",
+    [string]$RopeScale = "",
+    [string]$RopeFreqBase = "",
+    [string]$RopeFreqScale = "",
+    [string]$YarnOrigCtx = "",
+    [string]$YarnExtFactor = "",
+    [string]$YarnAttnFactor = "",
+    [string]$YarnBetaSlow = "",
+    [string]$YarnBetaFast = "",
+    [string]$CacheTypeK = "",
+    [string]$CacheTypeV = "",
+    [string]$Device = "",
+    [string]$SplitMode = "",
+    [string]$TensorSplit = "",
+    [string]$MainGpu = "",
+    [string]$FitMode = "on",
+    [string]$FitTarget = "",
+    [string]$FitCtx = "",
+    [string]$CpuMoe = "false",
+    [string]$NCpuMoe = "",
+    [string]$MmprojOffload = "true",
+    [string]$ImageMinTokens = "",
+    [string]$ImageMaxTokens = "",
+    [string]$ReasoningMode = "auto",
+    [string]$ReasoningFormat = "auto",
+    [string]$ReasoningBudget = "",
+    [string]$ReasoningBudgetMessage = "",
+    [string]$SamplingTemperature = "0.8",
+    [string]$SamplingTopK = "40",
+    [string]$SamplingTopP = "0.95",
+    [string]$SamplingMinP = "0.05",
+    [string]$SamplingTypicalP = "1.0",
+    [string]$SamplingRepeatPenalty = "1.0",
+    [string]$SamplingPresencePenalty = "0.0",
+    [string]$SamplingFrequencyPenalty = "0.0",
+    [string]$SamplingMirostat = "0",
+    [string]$SamplingMirostatEta = "0.1",
+    [string]$SamplingMirostatTau = "5.0",
+    [string]$Seed = "",
+    [string]$BindHost = "127.0.0.1",
+    [string]$Alias = "benshu-main-brain",
+    [string]$ApiKey = "sk-local-llama-key",
+    [string]$PidFile = "$env:TEMP\\benshu-llama-vulkan.pid",
+    [string]$StdoutLogFile = "$env:TEMP\\benshu-llama-vulkan.out.log",
+    [string]$StderrLogFile = "$env:TEMP\\benshu-llama-vulkan.err.log"
+)
+
+$ErrorActionPreference = "Stop"
+$scriptDir = Split-Path -Parent $PSCommandPath
+
+& (Join-Path $scriptDir "stop_llama_server_vulkan.ps1") -PidFile $PidFile | Out-Host
+
+& (Join-Path $scriptDir "start_llama_server_vulkan.ps1") `
+    -ServerExe $ServerExe `
+    -MinBuild $MinBuild `
+    -ModelPath $ModelPath `
+    -MmprojPath $MmprojPath `
+    -MediaPath $MediaPath `
+    -Port $Port `
+    -CtxSize $CtxSize `
+    -GpuLayers $GpuLayers `
+    -Threads $Threads `
+    -ThreadsBatch $ThreadsBatch `
+    -BatchSize $BatchSize `
+    -UbatchSize $UbatchSize `
+    -ParallelSlots $ParallelSlots `
+    -CacheRam $CacheRam `
+    -CtxCheckpoints $CtxCheckpoints `
+    -FlashAttnMode $FlashAttnMode `
+    -KvOffload $KvOffload `
+    -Mmap $Mmap `
+    -Mlock $Mlock `
+    -CachePrompt $CachePrompt `
+    -ContBatching $ContBatching `
+    -Warmup $Warmup `
+    -ContextShift $ContextShift `
+    -Jinja $Jinja `
+    -RopeScaling $RopeScaling `
+    -RopeScale $RopeScale `
+    -RopeFreqBase $RopeFreqBase `
+    -RopeFreqScale $RopeFreqScale `
+    -YarnOrigCtx $YarnOrigCtx `
+    -YarnExtFactor $YarnExtFactor `
+    -YarnAttnFactor $YarnAttnFactor `
+    -YarnBetaSlow $YarnBetaSlow `
+    -YarnBetaFast $YarnBetaFast `
+    -CacheTypeK $CacheTypeK `
+    -CacheTypeV $CacheTypeV `
+    -Device $Device `
+    -SplitMode $SplitMode `
+    -TensorSplit $TensorSplit `
+    -MainGpu $MainGpu `
+    -FitMode $FitMode `
+    -FitTarget $FitTarget `
+    -FitCtx $FitCtx `
+    -CpuMoe $CpuMoe `
+    -NCpuMoe $NCpuMoe `
+    -MmprojOffload $MmprojOffload `
+    -ImageMinTokens $ImageMinTokens `
+    -ImageMaxTokens $ImageMaxTokens `
+    -ReasoningMode $ReasoningMode `
+    -ReasoningFormat $ReasoningFormat `
+    -ReasoningBudget $ReasoningBudget `
+    -ReasoningBudgetMessage $ReasoningBudgetMessage `
+    -SamplingTemperature $SamplingTemperature `
+    -SamplingTopK $SamplingTopK `
+    -SamplingTopP $SamplingTopP `
+    -SamplingMinP $SamplingMinP `
+    -SamplingTypicalP $SamplingTypicalP `
+    -SamplingRepeatPenalty $SamplingRepeatPenalty `
+    -SamplingPresencePenalty $SamplingPresencePenalty `
+    -SamplingFrequencyPenalty $SamplingFrequencyPenalty `
+    -SamplingMirostat $SamplingMirostat `
+    -SamplingMirostatEta $SamplingMirostatEta `
+    -SamplingMirostatTau $SamplingMirostatTau `
+    -Seed $Seed `
+    -BindHost $BindHost `
+    -Alias $Alias `
+    -ApiKey $ApiKey `
+    -PidFile $PidFile `
+    -StdoutLogFile $StdoutLogFile `
+    -StderrLogFile $StderrLogFile

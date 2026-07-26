@@ -1,0 +1,54 @@
+[package]
+name = "benshu-security"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+benshu-compression = { workspace = true }
+benshu-infra = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+regex = { workspace = true }
+aho-corasick = { workspace = true }
+once_cell = { workspace = true }
+tokio = { workspace = true }
+zip = { version = "0.6", features = ["deflate"] }
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+wasmtime = { version = "29.0", features = ["async", "component-model"] }
+wasmtime-wasi = { version = "29.0" }
+which = "6.0"
+chrono = { workspace = true }
+md5 = { workspace = true }
+bincode = { workspace = true }
+hmac.workspace = true
+sha2.workspace = true
+libc = "0.2"
+redb.workspace = true
+keyring = "2.3"
+sysinfo = "0.38.3"
+hex = "0.4.3"
+aes-gcm.workspace = true
+rand.workspace = true
+argon2.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_System_JobObjects",
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_Security"
+] }
+
+[lints]
+workspace = true

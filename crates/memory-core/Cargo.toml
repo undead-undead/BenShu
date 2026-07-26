@@ -1,0 +1,13 @@
+[package]
+name = "benshu-memory-core"
+description = "Shared memory, background, and multimodal memory data contracts for BenShu"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+benshu-compression = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
