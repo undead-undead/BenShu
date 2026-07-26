@@ -624,6 +624,9 @@ impl NovelChapterRunner {
         let draft_started_at = Instant::now();
         let recovered_candidate = self
             .recover_last_accepted_candidate(chapter_number, &authority.authority_root_fingerprint);
+        let recovered_best = recovered_candidate
+            .as_ref()
+            .map(|(_, candidate)| candidate.clone());
         let mut draft = if let Some((path, candidate)) = recovered_candidate {
             record_workflow_checkpoint(
                 &self.runtime,
@@ -783,6 +786,7 @@ impl NovelChapterRunner {
                 current_draft.clone(),
                 &initial_findings,
                 persisted_state,
+                recovered_best,
             )
             .await?;
         if request.attempt == 0
@@ -1013,20 +1017,24 @@ impl NovelChapterRunner {
                 ChapterLoopDecision::StopForFinalCleanup => {
                     break;
                 }
-                ChapterLoopDecision::LlmRevision => {
-                    if !revision_cycle
-                        .state
-                        .budget
-                        .can_attempt_semantic_revision(revision_cycle.semantic_improved_after_first)
-                    {
-                        return Ok(format_revision_blocker_result(
-                            &self.project_path,
-                            chapter_number,
-                            &write_result,
-                            &audit,
-                        ));
-                    }
-                }
+                ChapterLoopDecision::LlmRevision => {}
+            }
+            // Metadata and local-cleanup routes may discover that their
+            // deterministic repair is not applicable while body blockers still
+            // require a semantic rewrite. Those routes fall through to the same
+            // reviser below, so the shared persisted budget must guard this
+            // common entry point rather than only the explicit LlmRevision arm.
+            if !revision_cycle
+                .state
+                .budget
+                .can_attempt_semantic_revision(revision_cycle.semantic_improved_after_first)
+            {
+                return Ok(format_revision_blocker_result(
+                    &self.project_path,
+                    chapter_number,
+                    &write_result,
+                    &audit,
+                ));
             }
             let revision_issues = revision_issues(&write_result, &audit);
             let mut reviser_prompt = novel_runner::reviser_prompt(

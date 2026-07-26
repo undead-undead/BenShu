@@ -37,6 +37,7 @@
             "style_rules": draft.fiction_style_rules,
             "must_avoid": draft.fiction_must_avoid,
             "outline": draft.fiction_outline,
+            "authority_contract": draft.current_contract,
             "structured_contract_v2": draft.contract_v2(),
         })
     }
@@ -1639,18 +1640,22 @@
         draft.fiction_themes = vec!["选择权必须由承担代价的人争取".to_string()];
         draft.fiction_style_rules = vec!["用具体行动和抉择推进规则冲突".to_string()];
         draft.fiction_must_avoid = vec!["不要跳过证据链或让角色无解释改名".to_string()];
+        draft.narration_contract.pov = "第三人称有限视角".to_string();
         draft.fiction_main_causal_spine =
             "重生发现旧规则漏洞，入学试炼取得证据，终局公开改写天律。".to_string();
         draft.fiction_title_rationale =
             "天律碑来自雨夜学宫的关键证据，重开来自终局公开改写血脉天律的爽点行动。".to_string();
-        draft.fiction_outline = (1..=20)
-            .map(|index| {
+        draft.fiction_outline = std::iter::once(
+            "第1卷《天律重开》：本卷目标：苏清月取得并公开血脉天律的完整证据；卷尾变化：旧天律失去恢复可能。"
+                .to_string(),
+        )
+        .chain((1..=20).map(|index| {
                 if index == 20 {
                     format!("第{index:02}章《天律新篇》：本章目标：完成结局，重塑世界规则；预期转折：天律公开改写，旧规则失去恢复可能。")
                 } else {
                     format!("第{index:02}章《第{index}步抉择》：本章目标：推进第 {index} 个选择、代价或转折；预期转折：第 {index} 个选择的后果关闭上一阶段退路。")
                 }
-            })
+            }))
             .collect::<Vec<_>>()
             .join("\n");
 

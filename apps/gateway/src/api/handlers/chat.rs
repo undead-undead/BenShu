@@ -6025,10 +6025,21 @@ fn refresh_creation_contract_task_result(
     >,
 ) -> TaskState {
     let (lifecycle_status, response_text, provisional) = if let Some(draft) = draft {
-        let confirmable = writing_session_surface::creation_contract_draft_is_confirmable(draft);
+        let mut display_draft = draft.clone();
+        match &task.status {
+            TaskStatus::Completed => {}
+            TaskStatus::Blocked { .. } => display_draft.set_lifecycle_status(
+                benshu_builtin_tools::tool::writing::creation_contract::CreationDraftLifecycleStatus::Blocked,
+            ),
+            _ => display_draft.set_lifecycle_status(
+                benshu_builtin_tools::tool::writing::creation_contract::CreationDraftLifecycleStatus::DraftingContract,
+            ),
+        }
+        let confirmable = matches!(&task.status, TaskStatus::Completed)
+            && writing_session_surface::creation_contract_draft_is_confirmable(&display_draft);
         (
-            writing_session_surface::creation_contract_panel_status_for_draft(draft),
-            writing_session_surface::stabilize_creation_contract_panel_response(draft, ""),
+            writing_session_surface::creation_contract_panel_status_for_draft(&display_draft),
+            writing_session_surface::stabilize_creation_contract_panel_response(&display_draft, ""),
             !confirmable,
         )
     } else {
@@ -7779,6 +7790,43 @@ USER REQUEST\n\
                 .and_then(|value| value.get("creation_contract"))
                 .is_some());
         }
+    }
+
+    #[test]
+    fn running_creation_contract_task_never_exposes_intermediate_confirmable_draft() {
+        let mut draft =
+            benshu_builtin_tools::tool::writing::creation_contract::build_initial_creation_draft(
+                "session-running-contract",
+                "fiction",
+                "写一部10万字都市小说，每章2500字。",
+            )
+            .expect("draft");
+        draft.set_lifecycle_status(
+            benshu_builtin_tools::tool::writing::creation_contract::CreationDraftLifecycleStatus::Approved,
+        );
+        let mut task = TaskState::new(
+            "foreground_chat_supervisor",
+            "creation contract planning",
+            json!({}),
+            "benshu",
+        );
+        task.status = TaskStatus::Running;
+
+        let refreshed = refresh_creation_contract_task_result(task, Some(&draft));
+        let result = refreshed.result.expect("result");
+        let text = result
+            .get("response_text")
+            .and_then(serde_json::Value::as_str)
+            .expect("response text");
+
+        assert!(!text.starts_with("可确认合同"), "{text}");
+        assert!(text.contains("不可确认"), "{text}");
+        assert_eq!(
+            result
+                .pointer("/creation_contract/provisional")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
     }
 
     #[test]

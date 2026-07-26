@@ -2236,6 +2236,7 @@ fn contract_repair_keeps_best_pending_candidate_as_anchor() {
   "world_rules":["灵能考试会转移考生运势","旧城区考生必须借灵入场"],
   "style_rules":["具体场景推进","保持中文"],
   "must_avoid":["不要角色改名","不要抽象总结式书名"],
+  "structured":{"narration_contract":{"pov":"第三人称有限视角"}},
   "outline":{
     "volumes":[{"title":"夜校借灵","objective":"主角拿到借灵证并发现考场异常","ending_change":"主角确认考试吞噬运势"}],
     "near_chapters":[
@@ -2333,6 +2334,7 @@ fn pending_contract_metadata_patch_repairs_numeric_chapter_turns_without_full_re
   "world_rules":["灵能考试会转移考生运势","旧城区考生必须借灵入场"],
   "style_rules":["具体场景推进","保持中文"],
   "must_avoid":["不要角色改名","不要抽象总结式书名"],
+  "structured":{"narration_contract":{"pov":"第三人称有限视角"}},
   "outline":{
     "volumes":[{"title":"夜校借灵","objective":"主角拿到借灵证并发现考场异常","ending_change":"主角确认考试吞噬运势"}],
     "near_chapters":[
@@ -2425,6 +2427,7 @@ fn metadata_patch_accepts_nested_outline_with_title_and_volumes() {
   "world_rules":["残卷记录修行入口的漏洞，但每次使用都会引来宗门追踪。","天道垄断会封锁凡人城的灵脉入口。","凡人借灵脉修行必须付出记忆、寿元或关系代价。"],
   "style_rules":["具体场景推进","保持中文"],
   "must_avoid":["不要角色改名","不要用摘要替代正文"],
+  "structured":{"narration_contract":{"pov":"第三人称有限视角"}},
   "outline":{"volumes":[],"near_chapters":[],"raw_outline":""}
 }"#;
 
@@ -2520,6 +2523,7 @@ fn metadata_patch_applies_world_rules_with_title_and_outline() {
   "world_rules":[],
   "style_rules":["保持中文场景推进"],
   "must_avoid":["不要角色改名"],
+  "structured":{"narration_contract":{"pov":"第三人称有限视角"}},
   "outline":{"volumes":[],"near_chapters":[]}
 }"#;
 
@@ -4276,6 +4280,7 @@ fn valid_fenced_json_contract_commits_as_current_contract() {
   "world_rules": ["灵轨只能由承担代价的人接通", "夜校考试会放大考生最害怕失去的东西"],
   "style_rules": ["用具体场景推进", "考试和城市异常交替推进"],
   "must_avoid": ["不要让角色无解释改名", "不要用摘要替代正文"],
+  "structured": {"narration_contract":{"pov":"第三人称有限视角"}},
   "outline": {
     "volumes": [
       {"title":"雨夜入校","objective":"主角进入夜校并发现灵轨异常","ending_change":"主角被迫成为灵轨见证者"}
@@ -4356,7 +4361,7 @@ fn valid_fenced_json_contract_commits_as_current_contract() {
 }
 
 #[test]
-fn natural_language_field_pack_can_commit_as_typed_contract() {
+fn natural_language_field_pack_is_preserved_for_structured_governance_repair() {
     let mut draft = super::super::build_initial_creation_draft(
         "session-ready-natural",
         "fiction",
@@ -4378,9 +4383,16 @@ fn natural_language_field_pack_can_commit_as_typed_contract() {
 
     let outcome = super::super::submit_generated_contract_candidate_to_draft(&mut draft, raw);
 
-    assert!(outcome.is_ready(), "{:?}", outcome.gate.actionable_issues());
+    assert!(!outcome.is_ready());
+    assert!(outcome
+        .gate
+        .actionable_issues()
+        .iter()
+        .any(|issue| issue.contains("缺少可执行的结构化治理内容")));
+    assert!(draft.pending_contract_candidate.is_some());
+    let (draft, contract) =
+        super::super::creation_draft_and_contract_with_pending_applied(&draft);
     assert_eq!(draft.title, "夜校借灵证");
-    assert!(draft.current_contract.is_some());
     assert!(draft.pending_contract_candidate.is_none());
     assert_eq!(draft.target_units, Some(50000));
     assert_eq!(draft.chapter_unit_target, Some(2500));
@@ -4401,13 +4413,6 @@ fn natural_language_field_pack_can_commit_as_typed_contract() {
                 || governed_characters.contains("role: 关键对手")),
         "{governed_characters}"
     );
-    let contract = draft
-        .current_contract
-        .as_ref()
-        .and_then(|value| {
-            super::super::NovelCreationContract::parse_json_boundary(&value.to_string())
-        })
-        .expect("current typed contract");
     assert!(
         contract.outline.near_chapters.len() >= 3,
         "{:?}",
@@ -4470,7 +4475,7 @@ fn natural_language_field_pack_rejects_conflicting_outline_book_title() {
 }
 
 #[test]
-fn complete_natural_language_field_pack_commits_as_typed_contract() {
+fn complete_visible_field_pack_still_requires_structured_governance() {
     let mut draft = super::super::build_initial_creation_draft(
         "session-ready-field-pack",
         "fiction",
@@ -4506,9 +4511,16 @@ fn complete_natural_language_field_pack_commits_as_typed_contract() {
 
     let outcome = super::super::submit_generated_contract_candidate_to_draft(&mut draft, raw);
 
-    assert!(outcome.is_ready(), "{:?}", outcome.gate.actionable_issues());
+    assert!(!outcome.is_ready());
+    assert!(outcome
+        .gate
+        .actionable_issues()
+        .iter()
+        .any(|issue| issue.contains("缺少可执行的结构化治理内容")));
+    assert!(draft.pending_contract_candidate.is_some());
+    let (draft, contract) =
+        super::super::creation_draft_and_contract_with_pending_applied(&draft);
     assert_eq!(draft.title, "夜校借灵证");
-    assert!(draft.current_contract.is_some());
     assert!(draft.pending_contract_candidate.is_none());
     assert!(draft
         .fiction_characters
@@ -4543,13 +4555,6 @@ fn complete_natural_language_field_pack_commits_as_typed_contract() {
         "{:?}",
         draft.fiction_themes
     );
-    let contract = draft
-        .current_contract
-        .as_ref()
-        .and_then(|value| {
-            super::super::NovelCreationContract::parse_json_boundary(&value.to_string())
-        })
-        .expect("current typed contract");
     assert!(
         contract.outline.near_chapters.len() >= 3,
         "{:?}",
@@ -4612,6 +4617,7 @@ fn chinese_key_json_contract_commits_through_typed_normalizer() {
   "世界规则": ["借灵簿能临时借用灵脉但会记录并抽取考生运势", "地下灵轨只能由承担代价的人接通"],
   "叙事风格": ["具体场景推进", "保持中文人物对话"],
   "必须避免": ["不要角色无解释改名", "不要英文名", "不要用摘要替代正文"],
+  "structured": {"narration_contract":{"pov":"第三人称有限视角"}},
   "全书大纲": "秦知安进入夜校补考，追查借灵簿和地下灵轨，终局公开证据改写晋级规则。",
   "分卷": [
     {"卷名":"雨夜入校","阶段目标":"主角进入夜校并确认借灵簿异常","卷尾变化":"主角成为灵轨见证者"}
@@ -4783,13 +4789,13 @@ fn missing_governance_with_existing_outline_does_not_loop_back_to_plot() {
     );
     issues.extend_findings([
         super::super::issue::ContractIssue::new(
-            "contract.outline",
+            "contract.outline.plan",
             super::super::issue::ContractIssueKind::Plot,
             super::super::issue::ContractIssueEvidence::new("outline", "missing stage plan"),
             "ContractBlocker: 小说合同缺少分卷/阶段安排或近期章节包",
         ),
         super::super::issue::ContractIssue::new(
-            "contract.outline",
+            "contract.outline.plan",
             super::super::issue::ContractIssueKind::Plot,
             super::super::issue::ContractIssueEvidence::new("outline", "missing outline"),
             "小说合同尚未形成逐章规划或分卷/阶段大纲",
@@ -4869,6 +4875,7 @@ fn local_protagonist_name_is_projected_into_outline_text() {
   "world_rules": ["记忆可以交易", "交易越多越接近空壳"],
   "style_rules": ["具体场景推进"],
   "must_avoid": ["不要角色改名"],
+  "structured": {"narration_contract":{"pov":"第三人称有限视角"}},
   "outline": {
     "volumes": [{"title":"雨站开闸","objective":"陆沉进入记忆交易链","ending_change":"陆沉发现自己也是交易样本"}],
     "near_chapters": [{"number":1,"goal":"陆沉在雨夜站台发现第一张记忆票据","expected_turn":"陆沉意识到童年被交易"}],

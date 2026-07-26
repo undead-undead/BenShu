@@ -183,12 +183,6 @@ pub(super) fn chapter_step_blocker_reason(output: &str) -> Option<String> {
     )
 }
 
-pub(super) fn chapter_step_blocker_requires_state_repair(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| line.trim() == "blocker_kind: state_repair_required")
-}
-
 pub(super) fn format_state_repair_blocker_result(
     project_path: &str,
     chapter_number: usize,
@@ -292,13 +286,5 @@ mod tests {
 
         assert!(result.contains("unit_count: 3290"), "{result}");
         assert!(result.contains("total_units: 14420"), "{result}");
-    }
-
-    #[test]
-    fn state_repair_blocker_is_distinct_from_prose_retry() {
-        let output = "status: blocked\nruntime_effect: artifact.state_degraded\n\
-            blocker_kind: state_repair_required\nblockers: observer output is unsupported";
-
-        assert!(chapter_step_blocker_requires_state_repair(output));
     }
 }

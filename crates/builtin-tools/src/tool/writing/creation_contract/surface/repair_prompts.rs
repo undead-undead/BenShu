@@ -93,18 +93,22 @@ fn persisted_contract_quality_findings(
     );
     for issue in issues {
         let (code, kind, field) = if issue.contains("semantic.outline_character_authority") {
-            let candidate_field = persisted_semantic_candidate_field(issue).unwrap_or(issue);
+            let candidate_field = persisted_semantic_candidate_field(issue);
             (
                 "semantic.outline_character_authority",
-                super::super::issue::user_story_semantic_issue_kind(candidate_field),
-                candidate_field,
+                candidate_field
+                    .map(super::super::issue::user_story_semantic_issue_kind)
+                    .unwrap_or(ContractIssueKind::Plot),
+                candidate_field.unwrap_or("outline"),
             )
         } else if issue.contains("semantic.user_story_authority") {
-            let candidate_field = persisted_semantic_candidate_field(issue).unwrap_or(issue);
+            let candidate_field = persisted_semantic_candidate_field(issue);
             (
                 "semantic.user_story_authority",
-                super::super::issue::user_story_semantic_issue_kind(candidate_field),
-                candidate_field,
+                candidate_field
+                    .map(super::super::issue::user_story_semantic_issue_kind)
+                    .unwrap_or(ContractIssueKind::Skeleton),
+                candidate_field.unwrap_or("story_authority"),
             )
         } else {
             (

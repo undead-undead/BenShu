@@ -16,8 +16,30 @@ impl ContractIssueKind {
     }
 }
 
+pub(crate) fn contract_issue_requires_plot_owner(issue: &str) -> bool {
+    let lowered = issue.to_ascii_lowercase();
+    lowered.contains("outline.longform_position")
+        || lowered.contains("outline.terminal_coverage")
+        || issue.contains("提前完成权威终局")
+        || issue.contains("末卷没有执行权威终局")
+        || issue.contains("终局放回末卷")
+}
+
 pub(crate) fn user_story_semantic_issue_kind(candidate_field: &str) -> ContractIssueKind {
     let lowered = candidate_field.to_ascii_lowercase();
+    if [
+        "角色权威",
+        "角色表",
+        "人物表",
+        "人物权威",
+        "character",
+        "role",
+    ]
+    .iter()
+    .any(|marker| candidate_field.contains(marker) || lowered.contains(marker))
+    {
+        return ContractIssueKind::Characters;
+    }
     if [
         "大纲",
         "分卷",
@@ -390,6 +412,10 @@ mod tests {
         assert_eq!(
             user_story_semantic_issue_kind("ending.desired_resolution"),
             ContractIssueKind::Skeleton
+        );
+        assert_eq!(
+            user_story_semantic_issue_kind("候选合同角色权威表"),
+            ContractIssueKind::Characters
         );
     }
 }

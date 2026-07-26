@@ -12,20 +12,28 @@ pub fn submit_generated_contract_candidate_to_draft(
     draft: &mut SessionCreationDraftState,
     raw_contract_text: &str,
 ) -> ContractSubmissionOutcome {
-    submit_generated_contract_candidate_with_policy(draft, raw_contract_text, false)
+    submit_generated_contract_candidate_with_policy(draft, raw_contract_text, false, false)
+}
+
+pub(crate) fn submit_character_role_authority_repair_candidate_to_draft(
+    draft: &mut SessionCreationDraftState,
+    raw_contract_text: &str,
+) -> ContractSubmissionOutcome {
+    submit_generated_contract_candidate_with_policy(draft, raw_contract_text, false, true)
 }
 
 fn submit_premerged_contract_candidate_to_draft(
     draft: &mut SessionCreationDraftState,
     raw_contract_text: &str,
 ) -> ContractSubmissionOutcome {
-    submit_generated_contract_candidate_with_policy(draft, raw_contract_text, true)
+    submit_generated_contract_candidate_with_policy(draft, raw_contract_text, true, false)
 }
 
 fn submit_generated_contract_candidate_with_policy(
     draft: &mut SessionCreationDraftState,
     raw_contract_text: &str,
     allow_existing_contract_full_merge: bool,
+    allow_character_role_authority_repair: bool,
 ) -> ContractSubmissionOutcome {
     if !draft.can_accept_contract_candidate() {
         return ContractSubmissionOutcome {
@@ -84,7 +92,12 @@ fn submit_generated_contract_candidate_with_policy(
                 "已有合同的修复输出只能修改当前质量问题所属的单一 typed scope；多作用域 contract_batch 不能绕过完整合同覆盖保护，如需更换整个故事必须先由用户明确重置故事合同",
             );
         }
-        return submit_creation_contract_patch_candidate(draft, &sanitized, patch);
+        return submit_creation_contract_patch_candidate(
+            draft,
+            &sanitized,
+            patch,
+            allow_character_role_authority_repair,
+        );
     } else if let Some(normalized) = normalized {
         if draft.current_contract.is_some() && !allow_existing_contract_full_merge {
             return existing_contract_replacement_rejection_outcome(
@@ -115,7 +128,12 @@ fn submit_generated_contract_candidate_with_policy(
     } else if let Some(patch) = normalize_creation_contract_patch_boundary(draft, raw_contract_text)
         .or_else(|| normalize_creation_contract_patch_boundary(draft, &sanitized))
     {
-        return submit_creation_contract_patch_candidate(draft, &sanitized, patch);
+        return submit_creation_contract_patch_candidate(
+            draft,
+            &sanitized,
+            patch,
+            allow_character_role_authority_repair,
+        );
     } else {
         let issue = "合同输出不能解析为 JSON，也没有形成可归位的合同字段包".to_string();
         record_contract_repair_candidate(draft, &sanitized, None, &[issue.clone()]);
@@ -230,6 +248,17 @@ fn contract_value_is_single_scope_partial(value: &serde_json::Value) -> bool {
 }
 
 fn normalize_candidate_creative_surface(contract: &mut NovelCreationContract) {
+    if value_missing(&contract.title.canonical_title) {
+        let inferred = super::patch_normalizer::infer_book_title_from_rationale_text(
+            &contract.title.rationale,
+        );
+        if !value_missing(&inferred) {
+            contract.title.canonical_title = inferred.clone();
+            if contract.title.candidates.is_empty() {
+                contract.title.candidates.push(inferred);
+            }
+        }
+    }
     contract.brief = sanitize_creation_brief_value(&contract.brief);
     contract.premise = sanitize_creation_brief_value(&contract.premise);
     contract.outline.raw_outline =
@@ -294,6 +323,18 @@ mod creative_surface_tests {
             "主角在终局公开原始名单。"
         );
     }
+
+    #[test]
+    fn unified_candidate_normalization_reuses_existing_title_rationale_inference() {
+        let mut contract = NovelCreationContract::default();
+        contract.title.rationale =
+            "最终书名“晋升陷阱”来自主角登顶后成为新规则守门人的终局变化".to_string();
+
+        normalize_candidate_creative_surface(&mut contract);
+
+        assert_eq!(contract.title.canonical_title, "晋升陷阱");
+        assert_eq!(contract.title.candidates, vec!["晋升陷阱"]);
+    }
 }
 
 fn contract_text_looks_like_explicit_patch(text: &str) -> bool {
@@ -314,12 +355,18 @@ fn submit_creation_contract_patch_candidate(
     draft: &mut SessionCreationDraftState,
     sanitized: &str,
     patch: CreationContractPatch,
+    allow_character_role_authority_repair: bool,
 ) -> ContractSubmissionOutcome {
     if let Some(outcome) = contract_boundary_rejection_outcome(draft, sanitized) {
         return outcome;
     }
     if let CreationContractPatch::Batch(items) = patch {
-        return submit_creation_contract_patch_batch_candidate(draft, sanitized, items);
+        return submit_creation_contract_patch_batch_candidate(
+            draft,
+            sanitized,
+            items,
+            allow_character_role_authority_repair,
+        );
     }
 
     let patch_type = patch.patch_type();
@@ -347,18 +394,26 @@ fn submit_creation_contract_patch_candidate(
         return submit_title_only_contract_patch_candidate(draft, &sanitized, patch);
     }
 
-    patch.apply_to_draft(&mut candidate_draft);
+    patch.apply_to_draft_with_role_repair_policy(
+        &mut candidate_draft,
+        allow_character_role_authority_repair,
+    );
     normalize_fiction_creation_draft_after_contract_change(&mut candidate_draft);
     sanitize_creation_draft_control_noise(&mut candidate_draft);
     let applied_contract =
         super::strong_novel_contract_from_visible_creation_draft(&candidate_draft);
-    patch.merge_applied_scope_into_contract(&mut contract, &applied_contract);
+    patch.merge_applied_scope_into_contract_with_role_repair_policy(
+        &mut contract,
+        &applied_contract,
+        allow_character_role_authority_repair,
+    );
     contract.normalize();
     let normalized_value =
         serde_json::to_value(&contract).unwrap_or_else(|_| serde_json::json!({}));
     let normalized_text = serde_json::to_string(&contract).unwrap_or_default();
-    let outcome = submit_novel_creation_contract_candidate(
+    let outcome = submit_novel_creation_contract_candidate_from_preapplied_draft(
         draft,
+        candidate_draft,
         sanitized,
         contract,
         normalized_text,
@@ -415,6 +470,7 @@ fn submit_creation_contract_patch_batch_candidate(
     draft: &mut SessionCreationDraftState,
     sanitized: &str,
     items: Vec<CreationContractPatch>,
+    allow_character_role_authority_repair: bool,
 ) -> ContractSubmissionOutcome {
     let (mut candidate_draft, mut contract) =
         creation_draft_and_contract_with_pending_applied(draft);
@@ -453,7 +509,10 @@ fn submit_creation_contract_patch_batch_candidate(
     }
 
     for item in &valid_items {
-        item.apply_to_draft(&mut candidate_draft);
+        item.apply_to_draft_with_role_repair_policy(
+            &mut candidate_draft,
+            allow_character_role_authority_repair,
+        );
     }
     normalize_fiction_creation_draft_after_contract_change(&mut candidate_draft);
     sanitize_creation_draft_control_noise(&mut candidate_draft);
@@ -466,15 +525,20 @@ fn submit_creation_contract_patch_batch_candidate(
     let applied_contract =
         super::strong_novel_contract_from_visible_creation_draft(&candidate_draft);
     for item in &valid_items {
-        item.merge_applied_scope_into_contract(&mut contract, &applied_contract);
+        item.merge_applied_scope_into_contract_with_role_repair_policy(
+            &mut contract,
+            &applied_contract,
+            allow_character_role_authority_repair,
+        );
     }
     contract.normalize();
     let normalized_value =
         serde_json::to_value(&contract).unwrap_or_else(|_| serde_json::json!({}));
     let normalized_text = serde_json::to_string(&contract).unwrap_or_default();
 
-    let mut outcome = submit_novel_creation_contract_candidate(
+    let mut outcome = submit_novel_creation_contract_candidate_from_preapplied_draft(
         draft,
+        candidate_draft,
         sanitized,
         contract,
         normalized_text,
@@ -538,6 +602,24 @@ fn contract_boundary_rejection_outcome(
 fn submit_novel_creation_contract_candidate(
     draft: &mut SessionCreationDraftState,
     sanitized: &str,
+    contract: NovelCreationContract,
+    normalized_text: String,
+    normalized_value: serde_json::Value,
+) -> ContractSubmissionOutcome {
+    submit_novel_creation_contract_candidate_from_preapplied_draft(
+        draft,
+        draft.clone(),
+        sanitized,
+        contract,
+        normalized_text,
+        normalized_value,
+    )
+}
+
+fn submit_novel_creation_contract_candidate_from_preapplied_draft(
+    draft: &mut SessionCreationDraftState,
+    mut candidate_draft: SessionCreationDraftState,
+    sanitized: &str,
     mut contract: NovelCreationContract,
     normalized_text: String,
     normalized_value: serde_json::Value,
@@ -569,7 +651,6 @@ fn submit_novel_creation_contract_candidate(
         };
     }
 
-    let mut candidate_draft = draft.clone();
     let mut candidate_contract = contract.clone();
     apply_strong_novel_contract_to_creation_draft(&mut candidate_draft, &mut candidate_contract);
     candidate_draft.pending_contract_candidate = None;

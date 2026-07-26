@@ -216,13 +216,25 @@ fn protected_authority_anchors_lost(
     parent: &novel_runner::DraftOutput,
     candidate: &novel_runner::DraftOutput,
 ) -> usize {
-    let mut anchors = authority
+    let chapter_scope = serde_json::to_string(&authority.chapter_contract).unwrap_or_default();
+    let truth_scope = serde_json::to_string(&authority.truth_as_of_chapter).unwrap_or_default();
+    let mut character_anchors = authority
         .character_registrations
         .iter()
         .map(|registration| registration.canonical_name.trim().to_string())
         .filter(|name| !name.is_empty())
         .collect::<BTreeSet<_>>();
-    collect_character_authority_anchors(&authority.canonical_contract, false, &mut anchors);
+    collect_character_authority_anchors(
+        &authority.canonical_contract,
+        false,
+        &mut character_anchors,
+    );
+    // A rejected parent is not story truth. A character name is protected only when it is
+    // already in sealed truth or is required by this chapter contract. Otherwise deleting an
+    // accidentally introduced future character would be misclassified as continuity loss.
+    character_anchors
+        .retain(|anchor| character_anchor_is_protected(&chapter_scope, &truth_scope, anchor));
+    let mut anchors = character_anchors;
     anchors.extend(
         authority
             .chapter_contract
@@ -238,6 +250,10 @@ fn protected_authority_anchors_lost(
             parent.content.contains(anchor.as_str()) && !candidate.content.contains(anchor.as_str())
         })
         .count()
+}
+
+fn character_anchor_is_protected(chapter_scope: &str, truth_scope: &str, anchor: &str) -> bool {
+    chapter_scope.contains(anchor) || truth_scope.contains(anchor)
 }
 
 fn collect_character_authority_anchors(
@@ -386,6 +402,7 @@ impl NovelChapterRunner {
         initial_draft: novel_runner::DraftOutput,
         initial_findings: &[chapter_quality::ChapterFinding],
         mut persisted_state: RevisionState,
+        recovered_best: Option<DraftCandidateRecord>,
     ) -> anyhow::Result<BoundedRevisionCycle> {
         let chapter_number = authority.chapter_number;
         let vector = revision_quality_vector(
@@ -397,51 +414,58 @@ impl NovelChapterRunner {
             self.chapter_unit_target,
             &self.language,
         );
-        let provenance = if persisted_state.best_candidate_id.is_some() {
-            CandidateProvenance::RecoveredBest
-        } else if initial_draft.degraded {
+        let provenance = if initial_draft.degraded {
             CandidateProvenance::TruncatedRecovery
         } else {
             CandidateProvenance::InitialDraft
         };
-        let best_candidate = draft_candidate_record(
-            authority,
-            initial_draft,
-            initial_findings.to_vec(),
-            vector,
-            provenance,
-            persisted_state.best_candidate_id.clone(),
-            true,
-        );
-        self.persist_draft_candidate(
-            chapter_number,
-            persisted_state.next_candidate_iteration,
-            &best_candidate,
-        )
-        .await?;
-        let best_path = self
-            .persist_best_draft_candidate(chapter_number, &best_candidate)
+        let best_candidate = if let Some(mut recovered) = recovered_best {
+            recovered.draft = initial_draft;
+            recovered.findings = initial_findings.to_vec();
+            recovered.quality_vector = vector;
+            recovered.accepted_as_best = true;
+            recovered
+        } else {
+            let candidate = draft_candidate_record(
+                authority,
+                initial_draft,
+                initial_findings.to_vec(),
+                vector,
+                provenance,
+                None,
+                true,
+            );
+            self.persist_draft_candidate(
+                chapter_number,
+                persisted_state.next_candidate_iteration,
+                &candidate,
+            )
             .await?;
-        call_novel_studio_json(
-            &self.tool,
-            json!({
-                "action": "record_candidate_decision",
-                "project_path": self.project_path,
-                "chapter_number": chapter_number,
-                "attempt_kind": serde_json::to_value(provenance)?
-                    .as_str()
-                    .unwrap_or("initial_draft"),
-                "candidate_fingerprint": best_candidate.body_fingerprint.clone(),
-                "quality_vector": best_candidate.quality_vector.clone(),
-                "accepted_as_best": true,
-                "best_candidate_path": best_path.clone()
-            }),
-        )
-        .await?;
-        persisted_state.best_candidate_id = Some(best_candidate.candidate_id.clone());
-        persisted_state.best_candidate_path = Some(best_path);
-        persisted_state.next_candidate_iteration =
-            persisted_state.next_candidate_iteration.saturating_add(1);
+            let best_path = self
+                .persist_best_draft_candidate(chapter_number, &candidate)
+                .await?;
+            call_novel_studio_json(
+                &self.tool,
+                json!({
+                    "action": "record_candidate_decision",
+                    "project_path": self.project_path,
+                    "chapter_number": chapter_number,
+                    "attempt_kind": serde_json::to_value(provenance)?
+                        .as_str()
+                        .unwrap_or("initial_draft"),
+                    "candidate_fingerprint": candidate.body_fingerprint.clone(),
+                    "quality_vector": candidate.quality_vector.clone(),
+                    "accepted_as_best": true,
+                    "best_candidate_path": best_path.clone()
+                }),
+            )
+            .await?;
+            persisted_state.best_candidate_id = Some(candidate.candidate_id.clone());
+            persisted_state.best_candidate_path = Some(best_path);
+            persisted_state.next_candidate_iteration =
+                persisted_state.next_candidate_iteration.saturating_add(1);
+            candidate
+        };
         let next_iteration = persisted_state.next_candidate_iteration;
         Ok(BoundedRevisionCycle {
             best_candidate,
@@ -711,6 +735,23 @@ mod tests {
             &improved,
             &improved,
             CandidateProvenance::SemanticRevision,
+        ));
+    }
+
+    #[test]
+    fn rejected_candidate_cannot_make_a_future_character_a_protected_fact() {
+        let chapter_scope = r#"{"goal":"姜清澜确认旧图失效"}"#;
+        let sealed_truth = r#"{"characters":["姜清澜"]}"#;
+
+        assert!(character_anchor_is_protected(
+            chapter_scope,
+            sealed_truth,
+            "姜清澜"
+        ));
+        assert!(!character_anchor_is_protected(
+            chapter_scope,
+            sealed_truth,
+            "岑启白"
         ));
     }
 

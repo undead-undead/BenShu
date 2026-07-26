@@ -159,7 +159,7 @@ pub(crate) fn parse_final_chapter_observation(
         .ok_or_else(|| anyhow::anyhow!("final chapter observer did not return a JSON object"))?;
     let mut value = serde_json::from_str::<serde_json::Value>(&json)
         .map_err(|error| anyhow::anyhow!("invalid final chapter observation: {error}"))?;
-    normalize_final_observation_numeric_fields(&mut value);
+    normalize_final_observation_shape(&mut value);
     let mut observation = serde_json::from_value::<FinalChapterObservation>(value)
         .map_err(|error| anyhow::anyhow!("invalid final chapter observation: {error}"))?;
     observation.current_state = observation.current_state.trim().to_string();
@@ -178,9 +178,40 @@ pub(crate) fn parse_final_chapter_observation(
     Ok(observation)
 }
 
-fn normalize_final_observation_numeric_fields(value: &mut serde_json::Value) {
+fn normalize_final_observation_shape(value: &mut serde_json::Value) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    for field in ["current_state", "pending_hooks", "chapter_summary"] {
+        if let Some(field_value) = object.get_mut(field) {
+            if !field_value.is_string() {
+                *field_value = serde_json::Value::String(observation_text_from_value(field_value));
+            }
+        }
+    }
+    for field in ["continuity_updates", "resolved_hooks"] {
+        let Some(field_value) = object.get_mut(field) else {
+            continue;
+        };
+        let items = match &*field_value {
+            serde_json::Value::Array(values) => values
+                .iter()
+                .map(observation_text_from_value)
+                .filter(|value| !value.is_empty())
+                .map(serde_json::Value::String)
+                .collect(),
+            serde_json::Value::Null => Vec::new(),
+            value => {
+                let text = observation_text_from_value(value);
+                (!text.is_empty())
+                    .then(|| vec![serde_json::Value::String(text)])
+                    .unwrap_or_default()
+            }
+        };
+        *field_value = serde_json::Value::Array(items);
+    }
     for field in ["state_changes"] {
-        let Some(updates) = value
+        let Some(updates) = object
             .get_mut(field)
             .and_then(serde_json::Value::as_array_mut)
         else {
@@ -198,6 +229,29 @@ fn normalize_final_observation_numeric_fields(value: &mut serde_json::Value) {
             };
             update["defer_until_chapter"] = serde_json::json!(number);
         }
+    }
+}
+
+fn observation_text_from_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(value) => value.trim().to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(observation_text_from_value)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join("；"),
+        serde_json::Value::Object(values) => values
+            .iter()
+            .filter_map(|(key, value)| {
+                let value = observation_text_from_value(value);
+                (!value.is_empty()).then(|| format!("{}：{}", key.trim(), value))
+            })
+            .collect::<Vec<_>>()
+            .join("；"),
+        serde_json::Value::Null => String::new(),
     }
 }
 

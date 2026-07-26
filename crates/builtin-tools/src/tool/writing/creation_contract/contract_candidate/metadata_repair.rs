@@ -24,12 +24,7 @@ pub fn creation_contract_issues_are_contract_metadata_only(issues: &[String]) ->
 
 fn creation_contract_issue_is_metadata_repairable(issue: &str) -> bool {
     let lowered = issue.to_ascii_lowercase();
-    if lowered.contains("outline.longform_position")
-        || lowered.contains("outline.terminal_coverage")
-        || issue.contains("提前完成权威终局")
-        || issue.contains("末卷没有执行权威终局")
-        || issue.contains("终局放回末卷")
-    {
+    if super::super::issue::contract_issue_requires_plot_owner(issue) {
         return false;
     }
     if issue.contains("缺少可锁定书名")

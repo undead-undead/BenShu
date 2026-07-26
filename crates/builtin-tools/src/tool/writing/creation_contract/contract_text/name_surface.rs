@@ -477,7 +477,8 @@ pub(crate) fn strip_contract_section_heading_residue(value: &str) -> String {
                 let separated = prefix.is_empty()
                     || prefix.chars().next_back().is_some_and(|ch| {
                         ch.is_whitespace() || matches!(ch, '。' | '.' | '；' | ';')
-                    });
+                    })
+                    || fused_section_heading_residue(label);
                 if separated {
                     cleaned = prefix.trim_end().to_string();
                     break;
@@ -487,6 +488,10 @@ pub(crate) fn strip_contract_section_heading_residue(value: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+fn fused_section_heading_residue(label: &str) -> bool {
+    matches!(label, "近期章节包" | "伏笔矩阵" | "结构合同" | "质量合同")
 }
 
 pub(crate) fn contract_text_contains_section_heading_residue(value: &str) -> bool {
@@ -503,7 +508,7 @@ pub(crate) fn contract_text_contains_section_heading_residue(value: &str) -> boo
                 comparable.strip_suffix(label).is_some_and(|prefix| {
                     prefix.chars().next_back().is_some_and(|ch| {
                         ch.is_whitespace() || matches!(ch, '。' | '.' | '；' | ';')
-                    })
+                    }) || fused_section_heading_residue(label)
                 })
             })
     })
@@ -896,6 +901,13 @@ mod tests {
         ));
         assert!(!contract_text_contains_section_heading_residue(
             "主角重新设计分卷规划"
+        ));
+        assert_eq!(
+            strip_contract_section_heading_residue("对手突破防线，灯塔近在咫尺近期章节包"),
+            "对手突破防线，灯塔近在咫尺"
+        );
+        assert!(contract_text_contains_section_heading_residue(
+            "对手突破防线，灯塔近在咫尺近期章节包"
         ));
     }
 }

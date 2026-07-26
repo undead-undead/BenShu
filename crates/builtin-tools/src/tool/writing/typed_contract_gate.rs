@@ -225,10 +225,6 @@ pub(crate) fn validate_novel_creation_contract_for_scope(
             }
         }
     }
-    issues.set_scope("contract.outline", ContractIssueKind::Plot, "outline");
-    if !contract.outline.has_stage_or_near_chapter_plan() {
-        issues.push("ContractBlocker: 小说合同缺少分卷/阶段安排或近期章节包".to_string());
-    }
     outline_gate::validate_outline_surface(contract, &mut issues, scope);
 
     issues.set_scope(
@@ -797,6 +793,12 @@ fn story_field_contains_dangling_authority_subject_fragment(
         if value_missing(name) {
             continue;
         }
+        if compact
+            .split(|ch| matches!(ch, '。' | '；' | ';' | '→'))
+            .any(|clause| clause == name)
+        {
+            return true;
+        }
         for leading_punct in ["，", ",", "；", ";"] {
             for trailing_punct in ["，", ",", "；", ";"] {
                 let orphaned_subject = format!("{leading_punct}{name}{trailing_punct}");
@@ -894,6 +896,35 @@ pub(crate) fn world_rule_looks_truncated_or_not_actionable(value: &str) -> bool 
     if world_rule_uses_generic_placeholder(&compact) {
         return true;
     }
+    if world_rule_clause_depends_on_previous(&compact) {
+        return true;
+    }
+    for conditional in ["一旦", "如果", "若"] {
+        let Some((_, consequence)) = compact.split_once(conditional) else {
+            continue;
+        };
+        let separator = consequence
+            .char_indices()
+            .find(|(_, ch)| matches!(ch, '，' | ',' | '；' | ';'));
+        let consequence_clause = separator
+            .and_then(|(index, ch)| consequence.get(index + ch.len_utf8()..))
+            .unwrap_or(consequence);
+        let consequence_markers: &[&str] = if separator.is_some() {
+            &[
+                "就", "便", "会", "将", "必须", "只能", "需要", "需", "导致", "触发", "失去",
+                "无法", "不能",
+            ]
+        } else {
+            &["就", "便", "会", "将", "必须", "只能", "需要", "需"]
+        };
+        if consequence_markers
+            .iter()
+            .any(|marker| consequence_clause.contains(marker))
+        {
+            continue;
+        }
+        return true;
+    }
     let has_rule_signal = [
         "会",
         "必须",
@@ -934,6 +965,7 @@ pub(crate) fn world_rule_looks_truncated_or_not_actionable(value: &str) -> bool 
         "一旦",
         "否则",
         "将",
+        "越",
     ]
     .iter()
     .any(|marker| compact.contains(marker));
@@ -941,6 +973,79 @@ pub(crate) fn world_rule_looks_truncated_or_not_actionable(value: &str) -> bool 
         return true;
     }
     false
+}
+
+pub(crate) fn world_rule_clause_depends_on_previous(value: &str) -> bool {
+    let compact = value.replace(char::is_whitespace, "");
+    [
+        "否则", "不然", "但是", "然而", "而且", "并且", "同时", "从而", "因此", "所以",
+    ]
+    .iter()
+    .any(|prefix| compact.starts_with(prefix))
+        || [
+            "但会",
+            "但必须",
+            "但只能",
+            "但不能",
+            "但不得",
+            "但需要",
+            "但需",
+        ]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
+        || [
+            "则会",
+            "则必须",
+            "则只能",
+            "则不能",
+            "则不得",
+            "则需要",
+            "则需",
+            "则触发",
+            "则导致",
+            "则失去",
+            "则无法",
+        ]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
+        || [
+            "越会",
+            "越需",
+            "越需要",
+            "越容易",
+            "越难",
+            "越无法",
+            "越不能",
+            "越可能",
+            "越快",
+            "越强",
+            "越弱",
+        ]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
+        || [
+            "将会",
+            "将被",
+            "将导致",
+            "将触发",
+            "将失去",
+            "将无法",
+            "将不能",
+            "将不得",
+            "将永久",
+        ]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
+}
+
+pub(crate) fn world_rule_clause_completes_pending(value: &str) -> bool {
+    let compact = value.replace(char::is_whitespace, "");
+    world_rule_clause_depends_on_previous(&compact)
+        || [
+            "就", "便", "会", "必须", "只能", "需要", "需", "导致", "触发", "失去", "无法", "不能",
+        ]
+        .iter()
+        .any(|prefix| compact.starts_with(prefix))
 }
 
 fn world_rule_uses_generic_placeholder(value: &str) -> bool {
@@ -1065,6 +1170,12 @@ mod tests {
         assert!(!world_rule_looks_truncated_or_not_actionable(
             "若强行抵达但内心仍逃避，终点站将关闭，列车被迫进入无限循环的荒原轨道。"
         ));
+        assert!(world_rule_looks_truncated_or_not_actionable(
+            "开发商若隐瞒地基缺陷"
+        ));
+        assert!(world_rule_looks_truncated_or_not_actionable(
+            "如果社区书店失去公益资格"
+        ));
     }
 
     #[test]
@@ -1074,6 +1185,19 @@ mod tests {
         ));
         assert!(!world_rule_looks_truncated_or_not_actionable(
             "特定版面可作为加密通讯信道，截获信号需匹配对应版面。"
+        ));
+        assert!(!world_rule_looks_truncated_or_not_actionable(
+            "海雾越过警戒线后，岛上航道会交换真实方位与虚假方位。"
+        ));
+        assert!(world_rule_looks_truncated_or_not_actionable("越需寒玉压制"));
+        assert!(!world_rule_looks_truncated_or_not_actionable(
+            "越级挑战必须登记并支付十枚灵石。"
+        ));
+        assert!(!world_rule_looks_truncated_or_not_actionable(
+            "将军不得私自调动守城军。"
+        ));
+        assert!(world_rule_looks_truncated_or_not_actionable(
+            "将永久失去大型竞标资格"
         ));
     }
 
@@ -1222,6 +1346,10 @@ mod tests {
         ));
         assert!(!story_field_contains_dangling_authority_subject_fragment(
             "岑屿安、祝栖桥与韩照澜联手破阵",
+            &["岑屿安", "祝栖桥", "韩照澜"]
+        ));
+        assert!(!story_field_contains_dangling_authority_subject_fragment(
+            "岑屿安，祝栖桥与韩照澜联手破阵",
             &["岑屿安", "祝栖桥", "韩照澜"]
         ));
         assert!(story_field_contains_dangling_authority_subject_fragment(
@@ -1722,6 +1850,20 @@ mod tests {
     }
 
     #[test]
+    fn typed_gate_blocks_authority_name_as_standalone_causal_clause() {
+        let value = base_ready_contract_json();
+        let mut contract: NovelCreationContract = serde_json::from_value(value).expect("contract");
+        let primary = contract.characters[0].canonical_name.clone();
+        contract.main_causal_spine =
+            format!("发现名册异常；锁定墨迹来源；图稿被毁；{primary}；决口前夜公开原始证据");
+
+        let report = validate_novel_creation_contract(&contract);
+        let joined = report.issues.join("\n");
+
+        assert!(joined.contains("含有角色名后接逗号的截断主语"), "{joined}");
+    }
+
+    #[test]
     fn typed_gate_blocks_user_request_controls_in_creative_contract_fields() {
         let value = base_ready_contract_json();
         let mut contract: NovelCreationContract = serde_json::from_value(value).expect("contract");
@@ -2080,6 +2222,43 @@ mod tests {
         assert!(
             !full_report.is_ready(),
             "full longform enrichment should still surface missing rolling fields"
+        );
+    }
+
+    #[test]
+    fn locked_authority_gate_requires_authored_structured_governance() {
+        let value = base_ready_contract_json();
+        let mut contract: NovelCreationContract = serde_json::from_value(value).expect("contract");
+        contract.structured = Default::default();
+
+        let display_report = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::DisplayContract,
+        );
+        let locked_report = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+
+        assert!(
+            display_report.is_ready(),
+            "an unfinished structured contract may still be rendered for review: {}",
+            display_report.issues.join("\n")
+        );
+        assert!(
+            locked_report
+                .issues
+                .join("\n")
+                .contains("缺少可执行的结构化治理内容"),
+            "the same contract must not become chapter authority: {}",
+            locked_report.issues.join("\n")
+        );
+        assert!(
+            locked_report.issues.iter().any(|issue| {
+                issue.kind == ContractIssueKind::Governance
+                    && issue.code == "contract.structured_governance"
+            }),
+            "the existing staged repair coordinator must route the blocker to Governance"
         );
     }
 

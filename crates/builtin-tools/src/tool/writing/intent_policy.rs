@@ -73,6 +73,17 @@ pub(crate) fn decide(input: WritingIntentInput<'_>) -> WritingIntentDecision {
     if has_unnegated_any(message, &lowered, RENAME_TERMS) {
         return WritingIntentDecision::new(WritingIntent::RenameProject, 0.88, "rename_project");
     }
+    if matches!(
+        input.draft_status,
+        Some(CreationDraftLifecycleStatus::ContractReady)
+    ) && explicit_contract_confirmation_with_execution(message, &lowered)
+    {
+        return WritingIntentDecision::new(
+            WritingIntent::ApproveContract,
+            0.95,
+            "approve_contract",
+        );
+    }
     if has_unnegated_any(message, &lowered, START_WRITING_TERMS) {
         return WritingIntentDecision::new(
             WritingIntent::ApproveContract,
@@ -128,6 +139,36 @@ pub(crate) fn decide(input: WritingIntentInput<'_>) -> WritingIntentDecision {
         return decision;
     }
     WritingIntentDecision::new(WritingIntent::Unknown, 0.1, "unknown")
+}
+
+fn explicit_contract_confirmation_with_execution(message: &str, lowered: &str) -> bool {
+    let confirms_current_contract = has_unnegated_any(
+        message,
+        lowered,
+        &[
+            "我确认这份合同",
+            "确认这份合同",
+            "确认这个合同",
+            "确认当前合同",
+            "合同确认无误",
+            "批准这份合同",
+            "i approve this contract",
+        ],
+    );
+    let requests_execution = has_unnegated_any(
+        message,
+        lowered,
+        &[
+            "写出",
+            "创作第",
+            "生成第",
+            "完成第",
+            "保存第",
+            "write chapter",
+            "draft chapter",
+        ],
+    );
+    confirms_current_contract && requests_execution
 }
 
 fn has_any(message: &str, lowered: &str, terms: &[&str]) -> bool {
@@ -530,6 +571,19 @@ mod tests {
     fn explicit_contract_confirmation_with_first_chapter_still_starts() {
         let decision = decide(WritingIntentInput {
             message: "确认这个合同，先写第一章。正文写完后告诉我保存和审稿状态；不要展示JSON、内部路径或工具参数。",
+            session_has_draft: true,
+            draft_status: Some(CreationDraftLifecycleStatus::ContractReady),
+            latest_project_path: None,
+            active_task_status: None,
+        });
+
+        assert_eq!(decision.intent, WritingIntent::ApproveContract);
+    }
+
+    #[test]
+    fn natural_confirmation_with_review_and_save_still_starts() {
+        let decision = decide(WritingIntentInput {
+            message: "我确认这份合同。请严格按合同完整写出、审稿并保存第1章；第1章通过后停下来，只告诉我实际结果。",
             session_has_draft: true,
             draft_status: Some(CreationDraftLifecycleStatus::ContractReady),
             latest_project_path: None,

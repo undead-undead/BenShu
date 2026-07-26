@@ -97,6 +97,19 @@ fn contains_distinctive_english_span(haystack: &str, source: &str) -> bool {
             .any(|needle| haystack.windows(3).any(|window| window == needle))
 }
 
+fn without_shared_leading_cjk_subject(segment: &str, current_seed: &str) -> String {
+    let shared = segment
+        .chars()
+        .zip(current_seed.chars())
+        .take_while(|(left, right)| left == right)
+        .count();
+    if (2..=4).contains(&shared) && segment.chars().count() > shared {
+        segment.chars().skip(shared).collect()
+    } else {
+        segment.to_string()
+    }
+}
+
 pub(crate) fn event_text_is_grounded_in_current_chapter(
     field: &str,
     current_seed: &str,
@@ -138,6 +151,11 @@ pub(crate) fn text_consumes_future_chapter(
             }
         })
         .any(|segment| {
+            let segment = if cjk {
+                without_shared_leading_cjk_subject(&segment, &current_seed_compact)
+            } else {
+                segment
+            };
             if (cjk && event_text.contains(&segment))
                 || (!cjk && text.to_ascii_lowercase().contains(&segment))
             {
@@ -1466,6 +1484,28 @@ mod tests {
         assert!(
             final_body_future_consumption_evidence(intent, current, next, true).is_none(),
             "purpose and future-intent clauses must not be treated as completed outcomes"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_detection_ignores_shared_subject_prefixes() {
+        let current = "阮听舟在测脉时看到异常数据，发现矿脉寿命流失过快；测出数据与宗门记录不符，阮听舟被监工责罚";
+        let next = "阮听舟深夜潜入废弃矿坑，遇到微服私访的钟景原；钟景原认出阮听舟手中的罗盘，两人达成初步合作";
+
+        assert!(
+            final_body_future_consumption_evidence(
+                "阮听舟深吸了一口气，强行压下心底的那丝疲惫。",
+                current,
+                next,
+                true,
+            )
+            .is_none(),
+            "a character name plus one shared action character is not future-event evidence"
+        );
+        let consumed = "入夜后，阮听舟已经潜入废弃矿坑。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            Some(consumed)
         );
     }
 

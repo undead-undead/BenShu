@@ -145,6 +145,19 @@ fn persisted_rejected_length_topup_still_exhausts_the_one_shot_budget() {
     assert!(budget.length_topup_attempted);
 }
 
+#[test]
+fn persisted_rejected_semantic_revision_exhausts_the_default_budget() {
+    let mut budget = RevisionBudget::default();
+
+    super::super::chapter_runtime::restore_recovered_attempt_budget(
+        &mut budget,
+        CandidateProvenance::SemanticRevision,
+    );
+
+    assert_eq!(budget.semantic_attempts, 1);
+    assert!(!budget.can_attempt_semantic_revision(false));
+}
+
     #[test]
     fn tiny_length_shortfall_uses_tiny_topup_segment() {
         let segment = chapter_expansion_segment_target(2500, 22);
@@ -1034,7 +1047,7 @@ fn persisted_rejected_length_topup_still_exhausts_the_one_shot_budget() {
     }
 
     #[test]
-    fn novel_continuous_plan_retries_quality_blockers_to_configured_limit() {
+    fn novel_continuous_plan_keeps_bounded_transient_step_retries() {
         let plan = build_novel_continuous_plan(
             "写小说",
             "writer",
@@ -1046,8 +1059,6 @@ fn persisted_rejected_length_topup_still_exhausts_the_one_shot_budget() {
         );
 
         assert_eq!(plan.policy.max_retries_per_step, 10);
-        assert!((0..10).all(chapter_step_blocker_retry_remaining));
-        assert!(!chapter_step_blocker_retry_remaining(10));
     }
 
 

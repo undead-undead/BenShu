@@ -13,10 +13,12 @@ use super::{
     creation_draft_with_pending_contract_applied, final_prompt_from_contract_metadata_repair,
     final_prompt_from_title_metadata_repair, pending_explicit_contract_revision_findings,
     record_contract_quality_blocker_diagnostic, repair_pending_contract_metadata_locally,
-    strong_novel_contract_from_creation_draft, submit_generated_contract_candidate_to_draft,
-    submit_pending_contract_metadata_repair, submit_pending_contract_title_metadata_repair,
-    ContractGateResult, ContractGateStatus, ContractReadinessScope, ContractSubmissionOutcome,
-    CreationDraftLifecycleStatus, CreationDraftRuntime, SessionCreationDraftState,
+    strong_novel_contract_from_creation_draft,
+    submit_character_role_authority_repair_candidate_to_draft,
+    submit_generated_contract_candidate_to_draft, submit_pending_contract_metadata_repair,
+    submit_pending_contract_title_metadata_repair, ContractGateResult, ContractGateStatus,
+    ContractReadinessScope, ContractSubmissionOutcome, CreationDraftLifecycleStatus,
+    CreationDraftRuntime, SessionCreationDraftState,
 };
 use super::{
     creation_contract_quality_blocked_response, stabilize_creation_contract_user_response,
@@ -62,6 +64,24 @@ pub async fn submit_session_creation_contract_candidate<R>(
 where
     R: CreationDraftRuntime + Send,
 {
+    submit_session_creation_contract_candidate_with_policy(
+        runtime,
+        session_id,
+        contract_text,
+        false,
+    )
+    .await
+}
+
+async fn submit_session_creation_contract_candidate_with_policy<R>(
+    runtime: &mut R,
+    session_id: &str,
+    contract_text: &str,
+    allow_character_role_authority_repair: bool,
+) -> anyhow::Result<Option<(SessionCreationDraftState, ContractSubmissionOutcome)>>
+where
+    R: CreationDraftRuntime + Send,
+{
     let Some(mut draft) = runtime.load_draft(session_id).await? else {
         return Ok(None);
     };
@@ -74,7 +94,11 @@ where
             },
         )));
     }
-    let outcome = submit_generated_contract_candidate_to_draft(&mut draft, contract_text);
+    let outcome = if allow_character_role_authority_repair {
+        submit_character_role_authority_repair_candidate_to_draft(&mut draft, contract_text)
+    } else {
+        submit_generated_contract_candidate_to_draft(&mut draft, contract_text)
+    };
     runtime.save_draft(&draft).await?;
     Ok(Some((draft, outcome)))
 }
@@ -1028,10 +1052,12 @@ where
                 let mut repaired = current_outcome.clone();
                 repaired.response = repaired_text;
                 let Some((render_draft, repaired_submission)) =
-                    submit_session_creation_contract_candidate(
+                    submit_session_creation_contract_candidate_with_policy(
                         runtime,
                         session_id,
                         &repaired.response,
+                        current_stage == ContractCompletionStage::Characters
+                            && issues_authorize_character_role_authority_repair(&current_issues),
                     )
                     .await?
                 else {
@@ -1244,6 +1270,12 @@ fn creation_contract_issues_require_semantic_stage(issues: &ContractIssueList) -
         .any(|issue| issue.code.starts_with("semantic."))
 }
 
+fn issues_authorize_character_role_authority_repair(issues: &ContractIssueList) -> bool {
+    issues.iter().any(|issue| {
+        issue.code == "semantic.user_story_authority" && issue.kind == ContractIssueKind::Characters
+    })
+}
+
 fn creation_contract_issue_is_patch_scope_noise(issue: &str) -> bool {
     issue.contains("typed patch 作用域校验未通过")
         || issue.contains("character_patch ")
@@ -1317,15 +1349,15 @@ impl ContractRepairProgressSnapshot {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ContractModelPatchBudget {
     completed_attempts: usize,
-    second_attempt_allowed: bool,
+    next_attempt_allowed: bool,
 }
 
 impl ContractModelPatchBudget {
-    const ABSOLUTE_MAX_ATTEMPTS: usize = 2;
+    const ABSOLUTE_MAX_ATTEMPTS: usize = 5;
 
     fn can_attempt(&self) -> bool {
         self.completed_attempts == 0
-            || (self.completed_attempts == 1 && self.second_attempt_allowed)
+            || (self.completed_attempts < Self::ABSOLUTE_MAX_ATTEMPTS && self.next_attempt_allowed)
     }
 
     fn next_attempt_number(&self) -> usize {
@@ -1335,7 +1367,8 @@ impl ContractModelPatchBudget {
     fn record(&mut self, net_improvement: bool) {
         debug_assert!(self.can_attempt());
         self.completed_attempts = (self.completed_attempts + 1).min(Self::ABSOLUTE_MAX_ATTEMPTS);
-        self.second_attempt_allowed = self.completed_attempts == 1 && net_improvement;
+        self.next_attempt_allowed =
+            self.completed_attempts < Self::ABSOLUTE_MAX_ATTEMPTS && net_improvement;
     }
 }
 
@@ -1691,6 +1724,167 @@ mod tests {
             "写都市玄幻小说，每章2500字，至少5万字",
         )
         .expect("fiction creation draft")
+    }
+
+    #[test]
+    fn only_user_story_character_conflict_authorizes_role_authority_repair() {
+        let authorized = ContractIssueList::single(
+            "semantic.user_story_authority",
+            ContractIssueKind::Characters,
+            "character_authority",
+            "用户男主职能与候选角色权威表冲突",
+        );
+        let unrelated_character_issue = ContractIssueList::single(
+            "contract.character_authority",
+            ContractIssueKind::Characters,
+            "character_authority",
+            "角色底线缺失",
+        );
+        let story_plot_issue = ContractIssueList::single(
+            "semantic.user_story_authority",
+            ContractIssueKind::Plot,
+            "outline",
+            "大纲偏离用户故事核心",
+        );
+
+        assert!(issues_authorize_character_role_authority_repair(
+            &authorized
+        ));
+        assert!(!issues_authorize_character_role_authority_repair(
+            &unrelated_character_issue
+        ));
+        assert!(!issues_authorize_character_role_authority_repair(
+            &story_plot_issue
+        ));
+    }
+
+    #[test]
+    fn semantic_role_conflict_routes_to_authorized_character_contract_repair() {
+        let mut draft = crate::tool::writing::creation_contract::build_initial_creation_draft(
+            "semantic-role-repair-chain",
+            "fiction",
+            "写一部古代言情小说，总字数10万字，每章2500字。男主陶泊衡是与叶望真共同查案的年轻官员，顾云朔是掩盖私账的对手。",
+        )
+        .expect("draft");
+        draft.planning_notes.push(
+            "用户故事核心权威：男主陶泊衡是与叶望真共同查案的年轻官员，顾云朔是掩盖私账的对手。"
+                .to_string(),
+        );
+        draft.title = "贡香私账".to_string();
+        draft.brief = "香药铺掌柜与年轻官员共同追查贡香私账。".to_string();
+        draft.fiction_premise =
+            "叶望真经营的香药铺被卷入贡香私账案，陶泊衡与她共同查案。".to_string();
+        draft.fiction_ending_direction = "叶望真与陶泊衡公开私账，顾云朔失去行会控制。".to_string();
+        draft.fiction_protagonist_arc =
+            "叶望真从独自守店成长为能与陶泊衡共同承担责任的人。".to_string();
+        draft.fiction_world_imagery = "贡香仓、香药铺、行会账房与雨夜官署。".to_string();
+        draft.fiction_main_causal_spine =
+            "假贡香引出私账，私账指向顾云朔，叶望真与陶泊衡建立证据链并公开真相。".to_string();
+        draft.fiction_themes = vec!["信任必须建立在可核验证据之上".to_string()];
+        draft.fiction_world_rules =
+            vec!["贡香入库必须由商铺、行会和官署三方留存同号账页。".to_string()];
+        draft.fiction_style_rules = vec!["用查账行动和人物选择推进冲突。".to_string()];
+        draft.fiction_must_avoid = vec!["不得互换陶泊衡与顾云朔的叙事职能。".to_string()];
+        draft.fiction_outline =
+            "第一卷《错账》：叶望真与陶泊衡核对贡香账页；卷尾变化：顾云朔的私账链首次暴露。"
+                .to_string();
+        draft.fiction_characters = vec![
+            "name: 叶望真; role: 主角; desire: 保住香药铺并查明账册真相; fear: 家业与信誉一同被夺; bottom_line: 不以假香害人; arc_start: 独自承担店铺债务; arc_end: 能与可信之人共同承担责任; name_source: generated_by_writing_tool_policy".to_string(),
+            "name: 顾云朔; role: 关键关系对象; desire: 垄断香药行会并掩盖私账; fear: 贡香私账曝光; bottom_line: 不失去行会控制; arc_start: 隐身幕后的会首; arc_end: 因私账败露而失势; name_source: generated_by_writing_tool_policy".to_string(),
+            "name: 陶泊衡; role: 对手; desire: 与叶望真共同查清贡香账册; fear: 证据被毁且连累叶望真; bottom_line: 不以无辜者顶罪; arc_start: 只相信卷宗的年轻官员; arc_end: 学会信任叶望真的判断; name_source: generated_by_writing_tool_policy".to_string(),
+        ];
+
+        let contract = strong_novel_contract_from_creation_draft(&draft);
+        let request = user_story_authority_review_request(
+            "男主陶泊衡是与叶望真共同查案的年轻官员，顾云朔是掩盖私账的对手。",
+            &contract,
+        )
+        .expect("semantic request");
+        let wrong_role_line = request
+            .character_authority
+            .lines()
+            .find(|line| line.contains("姓名：陶泊衡"))
+            .expect("wrong role evidence");
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            &serde_json::json!({
+                "verdict": "conflict",
+                "rationale": "用户指定的男主在候选角色表中被标成对手",
+                "evidence": {
+                    "authority_field": "用户故事核心权威",
+                    "authority_quote": "男主陶泊衡是与叶望真共同查案的年轻官员",
+                    "candidate_field": "候选合同角色权威表",
+                    "candidate_quote": wrong_role_line
+                }
+            })
+            .to_string(),
+        ));
+        let kind = finding
+            .evidence
+            .as_ref()
+            .map(|evidence| {
+                super::super::issue::user_story_semantic_issue_kind(&evidence.candidate_field)
+            })
+            .expect("grounded evidence");
+        let issue = semantic_authority_conflict_issue(
+            &finding,
+            "semantic.user_story_authority",
+            kind,
+            "ContractBlocker[semantic.user_story_authority]: 角色职能偏离用户权威",
+        )
+        .expect("semantic issue");
+        let issues = ContractIssueList::from_issue(issue);
+
+        assert_eq!(kind, ContractIssueKind::Characters);
+        assert_eq!(
+            super::super::staged_prompts::select_contract_completion_stage(&draft, &issues),
+            ContractCompletionStage::Characters
+        );
+        assert!(issues_authorize_character_role_authority_repair(&issues));
+
+        let repair = serde_json::json!({
+            "patch_type": "character_patch",
+            "characters": [
+                {"canonical_name":"叶望真","role":"主角","desire":"保住香药铺并查明账册真相","fear":"家业与信誉一同被夺","bottom_line":"不以假香害人","arc_start":"独自承担店铺债务","arc_end":"能与可信之人共同承担责任"},
+                {"canonical_name":"顾云朔","role":"关键对手","desire":"垄断香药行会并掩盖私账","fear":"贡香私账曝光","bottom_line":"不失去行会控制","arc_start":"隐身幕后的会首","arc_end":"因私账败露而失势"},
+                {"canonical_name":"陶泊衡","role":"关键关系对象","desire":"与叶望真共同查清贡香账册","fear":"证据被毁且连累叶望真","bottom_line":"不以无辜者顶罪","arc_start":"只相信卷宗的年轻官员","arc_end":"学会信任叶望真的判断"}
+            ]
+        })
+        .to_string();
+        let submission =
+            submit_character_role_authority_repair_candidate_to_draft(&mut draft, &repair);
+        assert!(
+            submission
+                .gate
+                .actionable_issues()
+                .iter()
+                .all(|issue| !issue.contains("typed patch 作用域校验未通过")
+                    && !issue.contains("角色权威表外角色")),
+            "{:?}",
+            submission.gate.actionable_issues()
+        );
+        let effective = creation_draft_with_pending_contract_applied(&draft);
+        let characters = effective
+            .fiction_characters
+            .iter()
+            .map(|line| super::super::draft_character_line_to_contract(line))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters
+                .iter()
+                .find(|character| character.canonical_name == "陶泊衡")
+                .map(|character| character.role.as_str()),
+            Some("关键关系对象"),
+            "submission={:?}; effective_characters={:?}",
+            submission.gate.actionable_issues(),
+            effective.fiction_characters
+        );
+        assert_eq!(
+            characters
+                .iter()
+                .find(|character| character.canonical_name == "顾云朔")
+                .map(|character| character.role.as_str()),
+            Some("对手")
+        );
     }
 
     #[test]
@@ -2129,18 +2323,31 @@ mod tests {
     }
 
     #[test]
-    fn contract_model_patch_budget_allows_only_one_follow_up_after_net_improvement() {
+    fn contract_model_patch_budget_allows_bounded_follow_ups_while_each_attempt_improves() {
         let mut budget = ContractModelPatchBudget::default();
-        budget.record(true);
-        assert!(budget.can_attempt());
-        assert_eq!(budget.next_attempt_number(), 2);
-
+        for completed in 1..ContractModelPatchBudget::ABSOLUTE_MAX_ATTEMPTS {
+            budget.record(true);
+            assert!(budget.can_attempt());
+            assert_eq!(budget.next_attempt_number(), completed + 1);
+        }
         budget.record(true);
 
         assert_eq!(
             budget.completed_attempts,
             ContractModelPatchBudget::ABSOLUTE_MAX_ATTEMPTS
         );
+        assert!(!budget.can_attempt());
+    }
+
+    #[test]
+    fn contract_model_patch_budget_stops_follow_ups_on_first_non_improving_attempt() {
+        let mut budget = ContractModelPatchBudget::default();
+        budget.record(true);
+        assert!(budget.can_attempt());
+
+        budget.record(false);
+
+        assert_eq!(budget.completed_attempts, 2);
         assert!(!budget.can_attempt());
     }
 }

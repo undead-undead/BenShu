@@ -3541,6 +3541,20 @@ mod tests {
     }
 
     #[test]
+    fn chinese_ordinal_volume_header_remains_a_typed_volume() {
+        let outline =
+            "第一卷《雨夜入校》：许闻进入夜校并确认借灵证异常；卷尾变化：许闻成为灵轨见证者。\n\
+第01章《雨夜补考》：本章目标：许闻第一次听见地下灵轨启动。\n\
+第02章《借灵证》：本章目标：许闻发现借灵证会记录运势损耗。";
+
+        let patch = derive_plot_contract_from_outline_text(outline);
+
+        assert_eq!(patch.volumes.len(), 1, "{:?}", patch.volumes);
+        assert_eq!(patch.volumes[0].title, "雨夜入校");
+        assert_eq!(patch.near_chapters.len(), 2);
+    }
+
+    #[test]
     fn terminal_volume_reference_at_segment_end_does_not_create_an_extra_volume() {
         let outline = "第1卷《旧账重开》：主角重新取得谈判入口；卷尾变化：对手被迫公开第一份账目\n\
 第2卷《逆价收网》：主角建立新的供应链；卷尾变化：主角持续推进到第4卷\n\

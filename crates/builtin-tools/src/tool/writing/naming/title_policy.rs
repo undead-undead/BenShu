@@ -42,6 +42,20 @@ mod evidence_policy_tests {
     }
 
     #[test]
+    fn story_backed_ledger_title_is_not_mistaken_for_clipped_prose() {
+        let evidence = "秦望澜获得能预知物价的逆流账本，凭借逆流账本挽救商号并重塑商业秩序。";
+        assert_eq!(
+            title_contract_basis_issue(
+                "逆流账本",
+                "书名",
+                "核心道具“逆流账本”贯穿全书，且书名直接指向主角利用信息差翻盘的轨迹。",
+                evidence,
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn clipped_contract_phrase_is_rejected() {
         let evidence = "主角推进证据链，终局公开账册并打破垄断。";
         assert!(title_contract_basis_issue(
@@ -1192,7 +1206,13 @@ fn rationale_unquoted_title_mismatch(title_core: &str, rationale: &str) -> Optio
                 let candidate_is_plain_cjk_title = (2..=12).contains(&candidate_chars)
                     && candidate
                         .chars()
-                        .all(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch));
+                        .all(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch))
+                    && ![
+                        "直接", "本身", "同时", "最终", "明确", "主要", "核心", "实际", "能够",
+                        "可以", "正好",
+                    ]
+                    .iter()
+                    .any(|modifier| candidate == *modifier);
                 if candidate_is_plain_cjk_title
                     && candidate_core != title_core
                     && !title_core.contains(&candidate_core)
@@ -1473,6 +1493,7 @@ fn story_object_suffixes() -> &'static [&'static str] {
         "通行证",
         "许可证",
         "账册",
+        "账本",
         "账目",
         "名册",
         "名单",

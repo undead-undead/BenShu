@@ -12,6 +12,12 @@ pub(super) fn validate_structured_contract_fields(
         "structured",
     );
     let structured = &contract.structured;
+    if scope != ContractReadinessScope::DisplayContract && !structured.has_authored_content() {
+        issues.push(
+            "ContractBlocker: 小说合同缺少可执行的结构化治理内容，不能锁定为章节写作权威"
+                .to_string(),
+        );
+    }
     if surface_gate::structured_contract_contains_legal_residue(structured) {
         issues.push(
             "ContractBlocker: 小说合同结构化字段含有法律合同、交付协议或甲乙方条款残片".to_string(),

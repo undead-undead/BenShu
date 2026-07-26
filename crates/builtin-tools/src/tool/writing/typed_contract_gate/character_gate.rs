@@ -1296,6 +1296,8 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
         "击败",
         "控制",
         "追查",
+        "核对",
+        "针对",
         "反制",
         "公开",
         "守住",
@@ -1483,6 +1485,9 @@ fn direct_role_reference_name(after_marker: &str) -> Option<String> {
         return None;
     }
     let trimmed = after_separator.trim_start_matches('是');
+    if let Some(candidate) = quoted_role_reference_name(trimmed) {
+        return Some(candidate);
+    }
     let trimmed_chars = trimmed.char_indices().collect::<Vec<_>>();
     for name_len in [3, 2] {
         let end = trimmed_chars
@@ -1521,6 +1526,43 @@ fn direct_role_reference_name(after_marker: &str) -> Option<String> {
         break;
     }
     trim_role_reference_candidate(&candidate)
+}
+
+fn quoted_role_reference_name(value: &str) -> Option<String> {
+    let value = value.trim_start();
+    let mut chars = value.chars();
+    let opening = chars.next()?;
+    let closing = match opening {
+        '“' => '”',
+        '‘' => '’',
+        '"' => '"',
+        '\'' => '\'',
+        '「' => '」',
+        '『' => '』',
+        '《' => '》',
+        _ => return None,
+    };
+    let mut candidate = String::new();
+    let mut closed = false;
+    for ch in chars {
+        if ch == closing {
+            closed = true;
+            break;
+        }
+        if !surface_gate::is_cjk_unified(ch) || candidate.chars().count() >= 4 {
+            return None;
+        }
+        candidate.push(ch);
+    }
+    let len = candidate.chars().count();
+    if !closed || !(1..=4).contains(&len) {
+        return None;
+    }
+    if len == 1 || role_reference_candidate_looks_like_person(&candidate) {
+        Some(candidate)
+    } else {
+        None
+    }
 }
 
 fn split_trailing_grammar_connector_from_role_name(
@@ -1885,9 +1927,34 @@ pub(super) fn replace_character_anchor_reference(
         return text.to_string();
     }
     if reference.chars().count() == 1 {
+        if reference.chars().all(surface_gate::is_cjk_unified) {
+            return replace_quoted_single_character_reference(text, &reference, replacement);
+        }
         return replace_single_ascii_character_reference(text, &reference, replacement);
     }
     text.replace(&reference, replacement)
+}
+
+fn replace_quoted_single_character_reference(
+    text: &str,
+    reference: &str,
+    replacement: &str,
+) -> String {
+    let mut rewritten = text.to_string();
+    for (opening, closing) in [
+        ('“', '”'),
+        ('‘', '’'),
+        ('"', '"'),
+        ('\'', '\''),
+        ('「', '」'),
+        ('『', '』'),
+        ('《', '》'),
+    ] {
+        let source = format!("{opening}{reference}{closing}");
+        let target = format!("{opening}{replacement}{closing}");
+        rewritten = rewritten.replace(&source, &target);
+    }
+    rewritten
 }
 
 fn replace_single_ascii_character_reference(
@@ -1952,7 +2019,11 @@ fn clean_character_anchor_replacement_reference(reference: &str) -> Option<Strin
         })
         .to_string();
     let len = value.chars().count();
-    if len == 1 && !value.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+    if len == 1
+        && !value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || surface_gate::is_cjk_unified(ch))
+    {
         return None;
     }
     if !(1..=8).contains(&len) {
@@ -2581,9 +2652,50 @@ mod tests {
     }
 
     #[test]
+    fn primary_role_references_read_quoted_incomplete_names() {
+        assert_eq!(
+            primary_role_person_references("主角“默”是一名记忆修复师"),
+            ["默"]
+        );
+        assert_eq!(
+            primary_role_person_references("主人公是「顾晟衡」，他追查被删除的案件"),
+            ["顾晟衡"]
+        );
+    }
+
+    #[test]
     fn authority_name_prefix_accepts_ordinary_narrative_tail() {
         assert!(authority_name_prefix_matches("温星声本", "温星声"));
         assert!(authority_name_prefix_matches("温星声本是", "温星声"));
+    }
+
+    #[test]
+    fn authority_name_followed_by_targeted_action_is_not_extended_into_a_new_name() {
+        let authority = ["顾景岚"];
+        assert!(reference_matches_authority_name_in_text(
+            "顾景岚针",
+            "姜谨声因寒玉依赖导致根基脆弱，被顾景岚针对性击败。",
+            &authority,
+        ));
+    }
+
+    #[test]
+    fn authority_name_followed_by_verification_action_is_not_extended_into_a_new_name() {
+        let authority = ["陶泊衡"];
+        let mut issues = ContractIssueList::default();
+
+        validate_text_character_references(
+            "兑现矩阵",
+            "叶望真与陶泊衡核对贡香账页",
+            &authority,
+            &[],
+            &mut issues,
+        );
+
+        assert!(
+            issues.is_empty(),
+            "a verification predicate after an authority name must not become a fake character: {issues:?}"
+        );
     }
 
     #[test]

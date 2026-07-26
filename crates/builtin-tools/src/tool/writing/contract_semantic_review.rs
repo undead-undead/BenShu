@@ -51,6 +51,19 @@ impl SemanticConflictEvidence {
             && sources_contain_exact_quote(authority_sources, &self.authority_quote)
             && sources_contain_exact_quote(candidate_sources, &self.candidate_quote)
     }
+
+    fn is_grounded_user_authority_omission(
+        &self,
+        authority_sources: &[&str],
+        candidate_sources: &[&str],
+    ) -> bool {
+        self.is_exact()
+            && self.candidate_quote.trim() == "<missing>"
+            && sources_contain_exact_quote(authority_sources, &self.authority_quote)
+            && !sources_contain_exact_quote(candidate_sources, &self.authority_quote)
+            && user_authority_quote_is_explicit_requirement(&self.authority_quote)
+            && user_story_candidate_field_is_known(&self.candidate_field)
+    }
 }
 
 impl SemanticReviewFinding {
@@ -70,6 +83,93 @@ impl SemanticReviewFinding {
         }
         self
     }
+
+    fn require_grounded_user_authority_conflict(
+        mut self,
+        authority_sources: &[&str],
+        candidate_sources: &[&str],
+    ) -> Self {
+        if self.verdict == SemanticReviewVerdict::Conflict
+            && (semantic_rationale_denies_conflict(&self.rationale)
+                || !self.evidence.as_ref().is_some_and(|evidence| {
+                    evidence.is_grounded_in(authority_sources, candidate_sources)
+                        || evidence.is_grounded_user_authority_omission(
+                            authority_sources,
+                            candidate_sources,
+                        )
+                }))
+        {
+            self.verdict = SemanticReviewVerdict::Uncertain;
+            self.evidence = None;
+        }
+        self
+    }
+}
+
+fn user_authority_quote_is_explicit_requirement(quote: &str) -> bool {
+    let compact = quote.replace(char::is_whitespace, "");
+    [
+        "必须",
+        "不能",
+        "不得",
+        "只能",
+        "不可",
+        "不要",
+        "避免",
+        "禁止",
+        "务必",
+        "绝不",
+        "总字数",
+        "每章",
+        "主角",
+        "男主",
+        "女主",
+        "对手",
+        "同伴",
+        "导师",
+        "关系对象",
+        "终局",
+        "结局",
+    ]
+    .iter()
+    .any(|marker| compact.contains(marker))
+}
+
+fn user_story_candidate_field_is_known(field: &str) -> bool {
+    let compact = field.replace(char::is_whitespace, "").to_ascii_lowercase();
+    [
+        "角色权威",
+        "角色表",
+        "人物表",
+        "character",
+        "role",
+        "故事简述",
+        "brief",
+        "故事前提",
+        "premise",
+        "主角弧线",
+        "protagonist_arc",
+        "主线",
+        "因果",
+        "causal",
+        "终局",
+        "结局",
+        "ending",
+        "书名理由",
+        "title_rationale",
+        "主题",
+        "世界规则",
+        "必须避免",
+        "governance",
+        "大纲",
+        "分卷",
+        "章节",
+        "outline",
+        "volume",
+        "chapter",
+    ]
+    .iter()
+    .any(|marker| compact.contains(marker))
 }
 
 fn semantic_rationale_denies_conflict(rationale: &str) -> bool {
@@ -154,15 +254,17 @@ impl UserStoryAuthorityReviewRequest {
              如果合同把用户指定的核心阴谋/目标换成另一种阴谋/目标，即使题材相近，也必须判 conflict。\n\
              用户把两个事件写成相关、伴随、掩盖或偶然相交时，合同不得擅自升级为一方主动制造、控制另一方；新增细节不得把相关性改写成用户未指定的直接因果，否则必须判 conflict。\n\
              必须核对角色权威表与故事前提、主线、终局、大纲中的身份和叙事功能；同一姓名被同时写成不同人物、死者与对手互换、同伴与对手身份错置，或角色权威表和故事字段互相矛盾时，必须判 conflict。\n\
+             角色权威表是模型生成的候选合同，不高于用户故事核心权威。若用户指定的男主、女主、关系对象、同伴或对手在候选角色表中被标成互斥职能，必须判 conflict；candidate_field 必须指向角色权威表并引用错误角色行，不得把本来符合用户要求的故事前提当成冲突证据。\n\
              必须检查核心证据链是否自洽；如果结论依赖明显无法由所述证据推出的跳跃，也必须判 conflict。\n\
              不得凭空扩大人物、工具或制度的能力边界；如果分卷或近期章节依赖故事前提、世界规则和因果链从未建立的关键能力，也必须判 conflict。\n\
              必须检查分卷与近期章节是否按因果和时间顺序持续推进：主冲突或终局已经完成后又重启同一主线、追加新的“最终反派/最终解决”，单卷拼入多套卷目标或重复卷尾，近期章节目标存在缺谓语、词序破损或事件编号错位，都必须判 conflict。\n\
              主题、世界规则和“必须避免”只是约束，不能替代对冲突故事字段的实际改写；若“必须避免”已经说明某种身份、时间线或终局写法不允许，但角色权威、故事字段或大纲仍保留该写法，必须判 conflict，并在 rationale 中点明仍冲突的具体字段。\n\
              近期章节里的行为主体、承受对象和实体类型必须自洽；地点、房号、人物、设备、机构不能互相错当成另一类实体来执行或承受动作，否则必须判 conflict。\n\
              同时检查故事前提、总主线因果、终局和大纲是否含明显错字、词序错乱、截断或不可读拼接；只要存在这些语言损坏，即使大意接近，也必须判 conflict。\n\
+             用户权威中含“必须、不能、不得、只能、避免”等明确约束时，必须在合同故事字段、世界规则、必须避免或大纲中逐项落实；整项遗漏必须判 conflict，不能因为候选没有相反句就判 equivalent。\n\
              不得改写合同，不得输出补丁。\n\
              用户故事核心权威：{}\n\
-             角色权威表（含人物弧线）：{}\n\
+             候选合同角色权威表（含人物弧线）：{}\n\
              合同故事简述：{}\n\
              合同故事前提：{}\n\
              合同主角弧线：{}\n\
@@ -171,7 +273,7 @@ impl UserStoryAuthorityReviewRequest {
              合同书名理由：{}\n\
              合同主题、世界规则与必须避免：{}\n\
              合同大纲：{}\n\
-             conflict 必须逐字引用一处用户权威和一处候选合同，并标出两边字段；无法提供双侧精确引用时必须输出 uncertain。\n\
+             conflict 必须逐字引用一处用户权威和一处候选合同，并标出两边字段。若用户明确要求被候选完全遗漏，authority_quote 仍须逐字引用用户权威，candidate_field 填应承载该要求的候选字段，candidate_quote 固定填 `<missing>`；其他无法提供双侧精确引用的情况必须输出 uncertain。\n\
              只输出一个 JSON 对象：\n\
              {{\"verdict\":\"equivalent|conflict|uncertain\",\"rationale\":\"一句简短理由\",\"evidence\":{{\"authority_field\":\"用户权威字段\",\"authority_quote\":\"逐字短引文\",\"candidate_field\":\"候选合同字段\",\"candidate_quote\":\"逐字短引文\"}}}}",
             self.authority,
@@ -188,9 +290,10 @@ impl UserStoryAuthorityReviewRequest {
     }
 
     pub(crate) fn ground_finding(&self, finding: SemanticReviewFinding) -> SemanticReviewFinding {
-        finding.require_grounded_conflict(
-            &[&self.authority, &self.character_authority],
+        finding.require_grounded_user_authority_conflict(
+            &[&self.authority],
             &[
+                &self.character_authority,
                 &self.brief,
                 &self.premise,
                 &self.protagonist_arc,
@@ -309,7 +412,10 @@ impl OutlineCharacterAuthorityReviewRequest {
                 evidence_quote_is_character_bottom_line(
                     &self.character_authority,
                     &evidence.authority_quote,
-                ) && !candidate_explicitly_executes_forbidden_choice(&evidence.candidate_quote)
+                ) && !candidate_explicitly_executes_forbidden_choice(
+                    &evidence.authority_quote,
+                    &evidence.candidate_quote,
+                )
             })
         {
             finding.verdict = SemanticReviewVerdict::Uncertain;
@@ -363,17 +469,68 @@ fn evidence_quote_matches_character_field(
     })
 }
 
-fn candidate_explicitly_executes_forbidden_choice(candidate: &str) -> bool {
+fn candidate_explicitly_executes_forbidden_choice(authority: &str, candidate: &str) -> bool {
     let compact = candidate
         .chars()
         .filter(|ch| !ch.is_whitespace())
         .collect::<String>();
-    [
-        "主动", "选择", "决定", "同意", "允许", "亲手", "自愿", "换取", "交换", "牺牲", "出卖",
-        "背叛", "放弃", "交出", "销毁",
+    let has_voluntary_choice = voluntary_choice_markers()
+        .iter()
+        .any(|marker| contains_unnegated_voluntary_marker(&compact, marker));
+    let has_explicit_action = forbidden_action_markers()
+        .iter()
+        .any(|marker| contains_unnegated_voluntary_marker(&compact, marker));
+    if !has_voluntary_choice || !has_explicit_action {
+        return false;
+    }
+
+    let anchors = forbidden_choice_authority_anchors(authority);
+    !anchors.is_empty()
+        && anchors
+            .iter()
+            .all(|anchor| compact_clause(&compact).contains(anchor))
+}
+
+fn voluntary_choice_markers() -> &'static [&'static str] {
+    &["主动", "选择", "决定", "同意", "允许", "亲手", "自愿"]
+}
+
+fn forbidden_action_markers() -> &'static [&'static str] {
+    &[
+        "换取", "交换", "牺牲", "出卖", "背叛", "放弃", "交出", "销毁", "舍弃", "抛弃", "转让",
+        "泄露", "伤害", "杀害", "杀死",
     ]
-    .iter()
-    .any(|marker| contains_unnegated_voluntary_marker(&compact, marker))
+}
+
+fn forbidden_choice_authority_anchors(authority: &str) -> Vec<String> {
+    let mut value = compact_clause(authority);
+    let mut separators = Vec::new();
+    separators.extend_from_slice(&[
+        "绝不", "不得", "不能", "不可", "不准", "禁止", "不许", "不要", "不以", "不",
+    ]);
+    separators.extend_from_slice(voluntary_choice_markers());
+    separators.extend_from_slice(forbidden_action_markers());
+    separators.sort_unstable_by_key(|marker| std::cmp::Reverse(marker.chars().count()));
+    for marker in separators {
+        value = value.replace(marker, "|");
+    }
+    for connector in [
+        "以此", "从而", "因此", "为了", "用来", "对", "以", "把", "将", "的",
+    ] {
+        value = value.replace(connector, "");
+    }
+    value
+        .split(|ch: char| {
+            ch == '|' || ch.is_ascii_punctuation() || matches!(ch, '，' | '。' | '；' | '：' | '、')
+        })
+        .map(compact_clause)
+        .filter(|anchor| anchor.chars().count() >= 2)
+        .fold(Vec::new(), |mut anchors, anchor| {
+            if !anchors.iter().any(|known| known == &anchor) {
+                anchors.push(anchor);
+            }
+            anchors
+        })
 }
 
 fn contains_unnegated_voluntary_marker(text: &str, marker: &str) -> bool {
@@ -709,6 +866,94 @@ mod tests {
     }
 
     #[test]
+    fn user_story_authority_conflict_accepts_grounded_missing_field_evidence_only() {
+        let request = UserStoryAuthorityReviewRequest {
+            authority: "重生优势必须随时间推移失效".to_string(),
+            character_authority: "姓名：祝照澜；角色：主角".to_string(),
+            brief: "采购经理重生后追查供应链造假".to_string(),
+            premise: "采购经理回到上市前一年".to_string(),
+            protagonist_arc: "从背锅者成长为透明供应体系的建立者".to_string(),
+            causal_spine: "发现造假并建立新供应链".to_string(),
+            ending: "公司以透明供应链完成上市".to_string(),
+            title_rationale: "书名来自终局行动".to_string(),
+            governance: "世界规则：合同违约需要赔偿".to_string(),
+            outline: "第一卷追查造假；第二卷完成上市".to_string(),
+        };
+        let grounded = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"明确约束被完全遗漏","evidence":{"authority_field":"用户故事核心权威","authority_quote":"重生优势必须随时间推移失效","candidate_field":"世界规则与大纲","candidate_quote":"<missing>"}}"#,
+        ));
+        assert_eq!(grounded.verdict, SemanticReviewVerdict::Conflict);
+
+        let fabricated = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"明确约束被完全遗漏","evidence":{"authority_field":"用户故事核心权威","authority_quote":"主角必须预知所有股价","candidate_field":"世界规则与大纲","candidate_quote":"<missing>"}}"#,
+        ));
+        assert_eq!(fabricated.verdict, SemanticReviewVerdict::Uncertain);
+
+        let fabricated_field = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"明确约束被完全遗漏","evidence":{"authority_field":"用户故事核心权威","authority_quote":"重生优势必须随时间推移失效","candidate_field":"模型随意声明的字段","candidate_quote":"<missing>"}}"#,
+        ));
+        assert_eq!(fabricated_field.verdict, SemanticReviewVerdict::Uncertain);
+
+        let non_requirement = UserStoryAuthorityReviewRequest {
+            authority: "故事发生在一座沿海城市".to_string(),
+            ..request.clone()
+        }
+        .ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"背景被遗漏","evidence":{"authority_field":"用户故事核心权威","authority_quote":"故事发生在一座沿海城市","candidate_field":"故事前提","candidate_quote":"<missing>"}}"#,
+        ));
+        assert_eq!(non_requirement.verdict, SemanticReviewVerdict::Uncertain);
+
+        let already_present = UserStoryAuthorityReviewRequest {
+            premise: "重生优势必须随时间推移失效".to_string(),
+            ..request.clone()
+        }
+        .ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"错误声称遗漏","evidence":{"authority_field":"用户故事核心权威","authority_quote":"重生优势必须随时间推移失效","candidate_field":"故事前提","candidate_quote":"<missing>"}}"#,
+        ));
+        assert_eq!(already_present.verdict, SemanticReviewVerdict::Uncertain);
+
+        let ending_request = EndingEquivalenceReviewRequest {
+            canonical_ending: "主角公开账册并终结垄断".to_string(),
+            outline_ending: "主角回到故乡".to_string(),
+            raw_outline: String::new(),
+        };
+        let unsupported_elsewhere = ending_request.ground_finding(
+            parse_semantic_review_finding(
+                r#"{"verdict":"conflict","rationale":"终局遗漏","evidence":{"authority_field":"ending","authority_quote":"终结垄断","candidate_field":"outline","candidate_quote":"<missing>"}}"#,
+            ),
+        );
+        assert_eq!(
+            unsupported_elsewhere.verdict,
+            SemanticReviewVerdict::Uncertain
+        );
+    }
+
+    #[test]
+    fn user_story_authority_treats_generated_character_roles_as_candidate_contract() {
+        let request = UserStoryAuthorityReviewRequest {
+            authority: "女主经营香药铺，男主是追查贡香账册失窃案的年轻官员".to_string(),
+            character_authority: "姓名：陶泊衡；角色：对手；欲望：查明贡香失窃真相".to_string(),
+            brief: "女掌柜与年轻官员合作查案".to_string(),
+            premise: "女掌柜卷入陶泊衡的查案计划".to_string(),
+            protagonist_arc: "从独行者成长为合作者".to_string(),
+            causal_spine: "账册失窃引发调查".to_string(),
+            ending: "两人追回账册并定情".to_string(),
+            title_rationale: "以契约为证".to_string(),
+            governance: "担保人承担真实债务".to_string(),
+            outline: "陶泊衡与女掌柜联手破案".to_string(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"男主在角色表被标成对手","evidence":{"authority_field":"用户故事核心权威","authority_quote":"男主是追查贡香账册失窃案的年轻官员","candidate_field":"候选合同角色权威表","candidate_quote":"姓名：陶泊衡；角色：对手；欲望：查明贡香失窃真相"}}"#,
+        ));
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+
+        let wrong_side = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"错把角色表当用户权威","evidence":{"authority_field":"角色权威表","authority_quote":"姓名：陶泊衡；角色：对手","candidate_field":"故事前提","candidate_quote":"女掌柜卷入陶泊衡的查案计划"}}"#,
+        ));
+        assert_eq!(wrong_side.verdict, SemanticReviewVerdict::Uncertain);
+    }
+
+    #[test]
     fn self_contradictory_conflict_rationale_cannot_hard_block() {
         let mut contract = NovelCreationContract::default();
         contract.characters = vec![super::super::creation_contract_model::CharacterContract {
@@ -841,15 +1086,78 @@ mod tests {
     }
 
     #[test]
+    fn different_self_sacrifice_does_not_inherit_an_unrelated_bottom_line_action() {
+        let mut contract = NovelCreationContract::default();
+        contract.characters = vec![super::super::creation_contract_model::CharacterContract {
+            canonical_name: "姜照舟".to_string(),
+            role: "主角".to_string(),
+            bottom_line: "不以心核换取安逸生活".to_string(),
+            ..Default::default()
+        }];
+        contract.premise = "姜照舟携带心核寻找骨海灯塔。".to_string();
+        contract.ending.desired_resolution = "姜照舟逆转潮汐。".to_string();
+        contract.outline.near_chapters =
+            vec![super::super::creation_contract_model::ChapterSeedContract {
+                number: Some(40),
+                goal: "姜照舟抵达灯塔核心".to_string(),
+                expected_turn: "姜照舟牺牲自己嵌入心核，逆转潮汐".to_string(),
+            }];
+        let request = outline_character_authority_review_request(&contract).expect("review");
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"牺牲自己等于用心核换安逸","evidence":{"authority_field":"姜照舟_底线","authority_quote":"不以心核换取安逸生活","candidate_field":"第40章_预期转折","candidate_quote":"姜照舟牺牲自己嵌入心核，逆转潮汐"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Uncertain);
+        assert!(finding.evidence.is_none());
+    }
+
+    #[test]
+    fn synonymous_voluntary_action_still_violates_the_same_bottom_line() {
+        let mut contract = NovelCreationContract::default();
+        contract.characters = vec![super::super::creation_contract_model::CharacterContract {
+            canonical_name: "裴望川".to_string(),
+            role: "主角".to_string(),
+            bottom_line: "不牺牲同伴换取通行权".to_string(),
+            ..Default::default()
+        }];
+        contract.premise = "裴望川带领同伴穿越封锁区。".to_string();
+        contract.ending.desired_resolution = "众人抵达安全区。".to_string();
+        contract.outline.near_chapters =
+            vec![super::super::creation_contract_model::ChapterSeedContract {
+                number: Some(12),
+                goal: "裴望川面对守门人的交易".to_string(),
+                expected_turn: "裴望川决定主动交出同伴，以此获得通行权".to_string(),
+            }];
+        let request = outline_character_authority_review_request(&contract).expect("review");
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"主角主动执行了底线禁止的交易","evidence":{"authority_field":"裴望川_底线","authority_quote":"不牺牲同伴换取通行权","candidate_field":"第12章_预期转折","candidate_quote":"裴望川决定主动交出同伴，以此获得通行权"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+        assert!(finding.evidence.is_some());
+    }
+
+    #[test]
     fn forced_or_negated_bottom_line_action_is_not_a_voluntary_choice() {
         assert!(!candidate_explicitly_executes_forbidden_choice(
+            "绝不交出听雪楼控制权",
             "阮星安被迫交出听雪楼控制权"
         ));
         assert!(!candidate_explicitly_executes_forbidden_choice(
+            "绝不放弃听雪楼控制权",
             "阮星安拒绝放弃听雪楼控制权"
         ));
         assert!(candidate_explicitly_executes_forbidden_choice(
+            "绝不交出听雪楼控制权",
             "阮星安决定主动交出听雪楼控制权"
+        ));
+        assert!(candidate_explicitly_executes_forbidden_choice(
+            "不牺牲同伴换取通行权",
+            "裴望川决定主动交出同伴，以此获得通行权"
+        ));
+        assert!(!candidate_explicitly_executes_forbidden_choice(
+            "不以心核换取安逸生活",
+            "姜照舟牺牲自己嵌入心核，逆转潮汐"
         ));
     }
 

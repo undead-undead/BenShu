@@ -183,12 +183,21 @@ fn character_patch_prompt(
 ) -> String {
     let profile_hint = genre_patch_prompt_hint(draft, user_message);
     let repairs_existing_authority = !draft.fiction_characters.is_empty();
-    let patch_scope_guidance = if repairs_existing_authority {
+    let repairs_locked_roles = repairs_existing_authority
+        && ContractIssueSet::new(issues).actionable().any(|issue| {
+            issue.code == "semantic.user_story_authority"
+                && issue.kind == ContractIssueKind::Characters
+        });
+    let patch_scope_guidance = if repairs_locked_roles {
+        "当前角色姓名权威已锁定，但质量门明确指出角色定位与用户故事权威冲突。本轮必须输出完整角色表：所有 canonical_name 必须原样保留且每人恰好出现一次，不得新建、删除、合并或互换姓名；必须按用户权威和稳定故事锚点纠正 role，并同步重写与新 role 一致的欲望、恐惧、底线、弧线和计划登场/离场字段。这是角色功能权威纠错，不是改名。"
+    } else if repairs_existing_authority {
         "当前角色权威表已经建立。本轮只输出质量门点名角色的局部修复：canonical_name 必须原样复用；只填写需要替换的欲望、恐惧、底线、弧线、计划登场或计划离场字段，未出错字段可以省略。如果质量门点名计划登场/离场，补丁必须返回对应的 planned_entry/planned_exit，并引用稳定锚点中的实际分卷。不得新建角色或改变角色定位。"
     } else {
         "当前尚未建立角色权威表，必须一次生成完整角色表。"
     };
-    let character_patch_example = if repairs_existing_authority {
+    let character_patch_example = if repairs_locked_roles {
+        INITIAL_CHARACTER_PATCH_EXAMPLE
+    } else if repairs_existing_authority {
         r#"{"patch_type":"character_patch","characters":[{"canonical_name":"已有姓名","bottom_line":"带具体对象的明确禁令或承诺"}]}"#
     } else {
         INITIAL_CHARACTER_PATCH_EXAMPLE
@@ -562,6 +571,9 @@ fn contract_issue_matches_completion_stage(
             (
                 ContractCompletionStage::Skeleton,
                 ContractIssueKind::Skeleton
+            ) | (
+                ContractCompletionStage::Characters,
+                ContractIssueKind::Characters
             ) | (ContractCompletionStage::Plot, ContractIssueKind::Plot)
         );
     }
@@ -822,6 +834,23 @@ mod tests {
             stage_relevant_contract_issues(ContractCompletionStage::Skeleton, &plot_issues)
                 .is_empty()
         );
+
+        let character_issues = ContractIssueList::single(
+            "semantic.user_story_authority",
+            ContractIssueKind::Characters,
+            "角色权威表",
+            "ContractBlocker[semantic.user_story_authority]: 男主被标成对手",
+        );
+        assert!(!stage_relevant_contract_issues(
+            ContractCompletionStage::Characters,
+            &character_issues,
+        )
+        .is_empty());
+        assert!(stage_relevant_contract_issues(
+            ContractCompletionStage::Skeleton,
+            &character_issues,
+        )
+        .is_empty());
     }
 
     fn typed_issues(

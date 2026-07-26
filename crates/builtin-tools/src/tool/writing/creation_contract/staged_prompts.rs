@@ -81,6 +81,9 @@ fn contract_completion_stage_candidates(
     let has_user_story_plot_issue = actionable_issues.iter().any(|issue| {
         issue.code == "semantic.user_story_authority" && issue.kind == ContractIssueKind::Plot
     });
+    let has_user_story_character_issue = actionable_issues.iter().any(|issue| {
+        issue.code == "semantic.user_story_authority" && issue.kind == ContractIssueKind::Characters
+    });
     let skeleton_fields_ready = !value_missing(&draft.fiction_premise)
         && !value_missing(&draft.fiction_ending_direction)
         && !value_missing(&draft.fiction_world_imagery)
@@ -92,7 +95,7 @@ fn contract_completion_stage_candidates(
     if !skeleton_fields_ready || has_user_story_skeleton_issue || has_only_title_metadata_issues {
         push_stage_once(&mut stages, ContractCompletionStage::Skeleton);
     }
-    if !characters_ready {
+    if !characters_ready || has_user_story_character_issue {
         push_stage_once(&mut stages, ContractCompletionStage::Characters);
     }
     if actionable_issues
@@ -104,15 +107,19 @@ fn contract_completion_stage_candidates(
     if skeleton_fields_ready && has_non_title_skeleton_issue && !has_user_story_skeleton_issue {
         push_stage_once(&mut stages, ContractCompletionStage::Skeleton);
     }
-    let plot_ready = !draft.fiction_outline.trim().is_empty();
+    let plot_surface_ready = !draft.fiction_outline.trim().is_empty();
+    let typed_plot_plan_ready = strong_novel_contract_from_creation_draft(draft)
+        .outline
+        .has_stage_or_near_chapter_plan();
     let governance_ready = fiction_list_ready(&draft.fiction_themes)
         && fiction_list_ready(&draft.fiction_world_rules)
         && fiction_list_ready(&draft.fiction_style_rules)
         && fiction_list_ready(&draft.fiction_must_avoid);
     let plot_issue_requires_patch = actionable_issues.iter().any(|issue| {
-        issue.kind == ContractIssueKind::Plot && !(plot_ready && issue.code == "contract.outline")
+        issue.kind == ContractIssueKind::Plot
+            && (issue.code != "contract.outline.plan" || !typed_plot_plan_ready)
     });
-    if !plot_ready || plot_issue_requires_patch || has_user_story_plot_issue {
+    if !plot_surface_ready || plot_issue_requires_patch || has_user_story_plot_issue {
         push_stage_once(&mut stages, ContractCompletionStage::Plot);
     }
     if has_title_metadata_issue {
@@ -449,6 +456,95 @@ mod tests {
     }
 
     #[test]
+    fn typed_outline_blocker_routes_to_plot_even_when_raw_outline_summary_exists() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-stage-typed-outline-after-summary",
+            "fiction",
+            "写星际科幻小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        draft.fiction_premise = "导航员发现航船收到来自自身未来的求救信号。".to_string();
+        draft.fiction_ending_direction =
+            "导航员公开被改写的船史，并让乘员共同决定真实航线。".to_string();
+        draft.fiction_world_imagery = "世代航船、折叠航图与记忆档案库。".to_string();
+        draft.fiction_main_causal_spine =
+            "未来信号暴露船史矛盾，导航员沿航线证据追到记忆篡改源头。".to_string();
+        draft.fiction_characters = vec![
+            "姓名：季观澜；角色定位：主角；欲望：找回真实航线；恐惧：航船失去目标；底线：不以乘员记忆换取抵达；弧线起点：服从航图；弧线终点：公开真相".to_string(),
+            "姓名：顾砚舟；角色定位：关键同伴；欲望：保存船史；恐惧：档案被彻底覆盖；底线：不伪造证据；弧线起点：独自查证；弧线终点：共同公开".to_string(),
+            "姓名：谢临川；角色定位：关键对手；欲望：维持既定航线；恐惧：篡改曝光；底线：不交出主脑权限；弧线起点：控制档案；弧线终点：失去垄断".to_string(),
+        ];
+        draft.fiction_outline =
+            "导航员从未来信号入局，逐步查清航线与船史矛盾，最终公开记忆篡改。".to_string();
+        draft.fiction_themes = vec!["记忆权与共同选择".to_string()];
+        draft.fiction_world_rules = vec!["每次改写公共记忆都会留下航图校验差异。".to_string()];
+        draft.fiction_style_rules = vec!["以航行行动和证据推进悬疑。".to_string()];
+        draft.fiction_must_avoid = vec!["避免无代价改写全船记忆。".to_string()];
+
+        let mut issues = ContractIssueList::single(
+            "contract.outline.plan",
+            ContractIssueKind::Plot,
+            "outline",
+            "ContractBlocker: 小说合同缺少分卷/阶段安排或近期章节包",
+        );
+        issues.push_issue(test_issue(
+            "contract.structured.authored",
+            ContractIssueKind::Governance,
+            "ContractBlocker: 小说合同缺少可执行的结构化治理内容，不能锁定为章节写作权威",
+        ));
+
+        assert_eq!(
+            select_contract_completion_stage(&draft, &issues),
+            ContractCompletionStage::Plot
+        );
+        assert_eq!(
+            select_contract_completion_stage_excluding(
+                &draft,
+                &issues,
+                &[ContractCompletionStage::Plot],
+            ),
+            Some(ContractCompletionStage::Governance)
+        );
+    }
+
+    #[test]
+    fn populated_outline_with_terminal_blocker_returns_to_plot_owner() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-stage-terminal-outline-repair",
+            "fiction",
+            "写赛博朋克小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        draft.fiction_premise = "记忆税迫使底层技师修复非法旧记忆。".to_string();
+        draft.fiction_ending_direction = "主角公开记忆税原始账本并切断垄断系统。".to_string();
+        draft.fiction_world_imagery = "海上巨城、记忆仓与税务节点。".to_string();
+        draft.fiction_main_causal_spine =
+            "非法旧记忆引出税务黑箱，证据推进到终局公开。".to_string();
+        draft.fiction_characters = vec![
+            "姓名：沈砚川；角色定位：主角；欲望：修复被征税的真实记忆；恐惧：失去自我；底线：不伪造证据；弧线起点：只求自保；弧线终点：公开真相".to_string(),
+            "姓名：顾听澜；角色定位：关键同伴；欲望：找回家人的记忆；恐惧：证据被销毁；底线：不牺牲无辜者；弧线起点：拒绝合作；弧线终点：共同承担".to_string(),
+            "姓名：陆承枢；角色定位：对手；欲望：维持记忆税垄断；恐惧：旧账公开；底线：不交出核心权限；弧线起点：控制全城；弧线终点：失去制度权力".to_string(),
+        ];
+        draft.fiction_outline =
+            "第1卷：主角取得旧记忆；第2卷：主角调查税务节点；第3卷：尾声。".to_string();
+        draft.fiction_themes = vec!["记忆权与人格尊严".to_string()];
+        draft.fiction_world_rules = vec!["读取记忆必须支付记忆税".to_string()];
+        draft.fiction_style_rules = vec!["以行动和证据推进".to_string()];
+        draft.fiction_must_avoid = vec!["避免无代价改写记忆".to_string()];
+        let issues = ContractIssueList::single(
+            "contract.outline",
+            ContractIssueKind::Plot,
+            "outline",
+            "ContractBlocker[outline.terminal_coverage]: 小说合同末卷没有执行权威终局的核心解决事件",
+        );
+
+        assert_eq!(
+            select_contract_completion_stage(&draft, &issues),
+            ContractCompletionStage::Plot
+        );
+    }
+
+    #[test]
     fn missing_character_authority_precedes_stale_name_cleanup_in_filled_skeleton() {
         let mut draft = super::build_initial_creation_draft(
             "session-stage-characters-before-name-cleanup",
@@ -519,6 +615,25 @@ mod tests {
                 &draft,
                 &issues,
                 &[ContractCompletionStage::Skeleton],
+            ),
+            None
+        );
+
+        let character_issues = ContractIssueList::single(
+            "semantic.user_story_authority",
+            ContractIssueKind::Characters,
+            "角色权威表",
+            "ContractBlocker[semantic.user_story_authority]: 男主被标成对手",
+        );
+        assert_eq!(
+            select_contract_completion_stage_excluding(&draft, &character_issues, &[]),
+            Some(ContractCompletionStage::Characters)
+        );
+        assert_eq!(
+            select_contract_completion_stage_excluding(
+                &draft,
+                &character_issues,
+                &[ContractCompletionStage::Characters],
             ),
             None
         );

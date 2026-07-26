@@ -1302,7 +1302,7 @@
     }
 
     #[test]
-    fn natural_contract_cleanup_does_not_create_authoritative_outline_names() {
+    fn natural_contract_cleanup_preserves_candidate_without_inventing_outline_names() {
         let mut draft = super::super::build_initial_creation_draft(
             "session-a",
             "fiction",
@@ -1329,7 +1329,13 @@
 
         let outcome =
             super::super::submit_generated_contract_candidate_to_draft(&mut draft, contract);
-        assert!(outcome.is_ready(), "{:?}", outcome.gate.actionable_issues());
+        assert!(!outcome.is_ready());
+        assert!(outcome
+            .gate
+            .actionable_issues()
+            .iter()
+            .any(|issue| issue.contains("缺少可执行的结构化治理内容")));
+        let draft = super::super::creation_draft_with_pending_contract_applied(&draft);
 
         assert!(!draft.fiction_outline.is_empty());
         assert!(!draft.fiction_characters.is_empty());

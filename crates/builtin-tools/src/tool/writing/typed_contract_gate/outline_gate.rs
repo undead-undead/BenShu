@@ -19,6 +19,10 @@ const DEFERRED_TERMINAL_MARKERS: &[&str] = &[
     "尚未",
     "将要",
     "即将",
+    "终局前",
+    "决战前",
+    "决赛前",
+    "最终战前",
 ];
 const PROCESS_ONLY_TERMINAL_MARKERS: &[&str] = &[
     "寻找", "调查", "筹集", "争取", "等待", "逼近", "通往", "引向",
@@ -46,10 +50,33 @@ pub(super) fn validate_outline_surface(
     validate_outline_primary_role_authority(contract, issues);
     validate_outline_role_authority(contract, issues);
     if scope == ContractReadinessScope::LockedAuthorityContract
-        && !contract.outline.has_stage_or_near_chapter_plan()
+        && contract.outline.volumes.is_empty()
     {
+        issues.set_scope(
+            "contract.outline.volumes",
+            crate::tool::writing::creation_contract::issue::ContractIssueKind::Plot,
+            "outline.volumes",
+        );
+        issues.push("ContractBlocker: 小说合同缺少分卷/阶段安排，不能锁定长篇阶段边界".to_string());
+    }
+    if scope == ContractReadinessScope::LockedAuthorityContract
+        && contract.outline.near_chapters.is_empty()
+    {
+        issues.set_scope(
+            "contract.outline.near_chapters",
+            crate::tool::writing::creation_contract::issue::ContractIssueKind::Plot,
+            "outline.near_chapters",
+        );
         issues.push(
-            "ContractBlocker: 小说合同缺少分卷/阶段安排或近期章节包，不能进入写作确认".to_string(),
+            "ContractBlocker: 小说合同缺少从第1章开始的近期章节包，不能锁定开篇写作窗口"
+                .to_string(),
+        );
+    }
+    if scope == ContractReadinessScope::LockedAuthorityContract {
+        issues.set_scope(
+            "contract.outline",
+            crate::tool::writing::creation_contract::issue::ContractIssueKind::Plot,
+            "outline",
         );
     }
     if scope == ContractReadinessScope::LockedAuthorityContract
@@ -598,9 +625,6 @@ fn final_volume_misses_authoritative_terminal_resolution(contract: &NovelCreatio
         .map(|character| character.canonical_name.trim())
         .filter(|name| !value_missing(name))
         .collect::<Vec<_>>();
-    if clause_resolves_terminal_debt(&contract.outline.raw_outline, terminal, &authority_names) {
-        return false;
-    }
     if contract.outline.volumes.len() == 1
         && !final_volume_explicitly_declares_post_terminal_only(final_volume)
     {
@@ -654,6 +678,11 @@ fn clause_resolves_terminal_debt(
     }
     let final_text = compact_clause_without_character_authority(final_clause, authority_names);
     let terminal_text = compact_clause_without_character_authority(terminal, authority_names);
+    if clause_is_explicitly_limited_stage_event(&final_text, &terminal_text)
+        || clause_is_explicitly_deferred_or_process_event(&final_text, &terminal_text)
+    {
+        return false;
+    }
     let final_chars = final_text.chars().collect::<Vec<_>>();
     let terminal_chars = terminal_text.chars().collect::<Vec<_>>();
     if final_chars.len() < 7 || terminal_chars.len() < 7 {
@@ -1227,6 +1256,47 @@ mod tests {
     }
 
     #[test]
+    fn locked_contract_requires_both_volume_plan_and_near_chapter_window() {
+        let mut only_near = NovelCreationContract::default();
+        only_near.outline.near_chapters = vec![ChapterSeedContract {
+            number: Some(1),
+            goal: "主角核对第一份被改写的赈灾名册。".to_string(),
+            expected_turn: "同一墨迹也出现在第二代名册上。".to_string(),
+        }];
+        let mut near_issues = ContractIssueList::default();
+        validate_outline_surface(
+            &only_near,
+            &mut near_issues,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        assert!(
+            near_issues
+                .iter()
+                .any(|issue| issue.code == "contract.outline.volumes"),
+            "near chapters alone must not replace the long-form volume boundary: {near_issues:?}"
+        );
+
+        let mut only_volume = NovelCreationContract::default();
+        only_volume.outline.volumes = vec![VolumeContract {
+            title: "旧志疑墨".to_string(),
+            objective: "主角确认三代名册都被同一种墨迹改写。".to_string(),
+            ending_change: "主角锁定旧堤工程图是下一阶段的关键证据。".to_string(),
+        }];
+        let mut volume_issues = ContractIssueList::default();
+        validate_outline_surface(
+            &only_volume,
+            &mut volume_issues,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        assert!(
+            volume_issues
+                .iter()
+                .any(|issue| issue.code == "contract.outline.near_chapters"),
+            "volume stages alone must not replace the opening chapter window: {volume_issues:?}"
+        );
+    }
+
+    #[test]
     fn locked_contract_does_not_treat_raw_outline_words_as_typed_plan() {
         let mut contract = NovelCreationContract::default();
         contract.outline.raw_outline =
@@ -1242,7 +1312,10 @@ mod tests {
         assert!(
             issues
                 .iter()
-                .any(|issue| issue.contains("缺少分卷/阶段安排或近期章节包")),
+                .any(|issue| issue.code == "contract.outline.volumes")
+                && issues
+                    .iter()
+                    .any(|issue| issue.code == "contract.outline.near_chapters"),
             "untyped raw text must not satisfy the locked contract plan gate: {issues:?}"
         );
     }
@@ -1506,6 +1579,68 @@ mod tests {
                 .iter()
                 .any(|issue| issue.contains("outline.terminal_coverage")),
             "terminal coverage must be checked for every final volume, not only volumes labeled as an epilogue: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn raw_outline_terminal_summary_cannot_replace_final_volume_execution() {
+        let mut contract = NovelCreationContract::default();
+        contract.target_units = Some(100_000);
+        contract.chapter_unit_target = Some(2_500);
+        contract.ending.desired_resolution = "姜照舟将心核嵌入灯塔核心并逆转骨海潮汐".to_string();
+        contract.outline.raw_outline = "姜照舟最终将心核嵌入灯塔核心并逆转骨海潮汐。".to_string();
+        contract.outline.volumes = vec![
+            VolumeContract {
+                title: "骨海边缘".to_string(),
+                objective: "姜照舟取得心核并逃离追兵".to_string(),
+                ending_change: "船队驶入沉船回廊".to_string(),
+            },
+            VolumeContract {
+                title: "回廊深处".to_string(),
+                objective: "姜照舟解开第一段灯塔线索".to_string(),
+                ending_change: "追兵突破回廊防线，灯塔仍未抵达".to_string(),
+            },
+        ];
+
+        let mut issues = ContractIssueList::default();
+        validate_longform_plan_position(&contract, &mut issues);
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("outline.terminal_coverage")),
+            "a raw summary cannot execute the missing final-volume action: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn final_volume_stopping_before_the_final_cannot_pass_by_shared_event_words() {
+        let mut contract = NovelCreationContract::default();
+        contract.target_units = Some(100_000);
+        contract.chapter_unit_target = Some(2_500);
+        contract.ending.desired_resolution =
+            "沈清宁在全国大赛决赛最后一跳越过纪录线并夺冠".to_string();
+        contract.outline.volumes = vec![
+            VolumeContract {
+                title: "港口风云".to_string(),
+                objective: "沈清宁掌握跃迁技术".to_string(),
+                ending_change: "沈清宁取得省队试训资格".to_string(),
+            },
+            VolumeContract {
+                title: "逆风破晓".to_string(),
+                objective: "沈清宁在省队立足".to_string(),
+                ending_change: "沈清宁克服伤病，在全国大赛决赛前确立技术优势".to_string(),
+            },
+        ];
+
+        let mut issues = ContractIssueList::default();
+        validate_longform_plan_position(&contract, &mut issues);
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("outline.terminal_coverage")),
+            "pre-final preparation cannot execute the terminal event: {issues:?}"
         );
     }
 

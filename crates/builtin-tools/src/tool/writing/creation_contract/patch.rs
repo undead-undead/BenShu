@@ -226,21 +226,36 @@ impl CreationContractPatch {
     }
 
     pub(crate) fn apply_to_draft(&self, draft: &mut SessionCreationDraftState) {
-        self.apply_values_to_draft(draft);
+        self.apply_to_draft_with_role_repair_policy(draft, false);
+    }
+
+    pub(crate) fn apply_to_draft_with_role_repair_policy(
+        &self,
+        draft: &mut SessionCreationDraftState,
+        allow_character_role_authority_repair: bool,
+    ) {
+        self.apply_values_to_draft(draft, allow_character_role_authority_repair);
         draft.structured_contract_revision = draft.structured_contract_revision.saturating_add(1);
     }
 
-    fn apply_values_to_draft(&self, draft: &mut SessionCreationDraftState) {
+    fn apply_values_to_draft(
+        &self,
+        draft: &mut SessionCreationDraftState,
+        allow_character_role_authority_repair: bool,
+    ) {
         match self {
             Self::Title(patch) => patch.apply_to_draft(draft),
             Self::Skeleton(patch) => patch.apply_to_draft(draft),
-            Self::Characters(patch) => patch.apply_to_draft(draft),
+            Self::Characters(patch) => patch.apply_to_draft_with_role_repair_policy(
+                draft,
+                allow_character_role_authority_repair,
+            ),
             Self::Plot(patch) => patch.apply_to_draft(draft),
             Self::Governance(patch) => patch.apply_to_draft(draft),
             Self::Metadata(patch) => patch.apply_to_draft(draft),
             Self::Batch(items) => {
                 for item in items {
-                    item.apply_values_to_draft(draft);
+                    item.apply_values_to_draft(draft, allow_character_role_authority_repair);
                 }
             }
         }
@@ -250,6 +265,15 @@ impl CreationContractPatch {
         &self,
         base: &mut NovelCreationContract,
         applied: &NovelCreationContract,
+    ) {
+        self.merge_applied_scope_into_contract_with_role_repair_policy(base, applied, false);
+    }
+
+    pub(crate) fn merge_applied_scope_into_contract_with_role_repair_policy(
+        &self,
+        base: &mut NovelCreationContract,
+        applied: &NovelCreationContract,
+        allow_character_role_authority_repair: bool,
     ) {
         match self {
             Self::Title(_) => base.title = applied.title.clone(),
@@ -282,6 +306,7 @@ impl CreationContractPatch {
                         &mut base.characters,
                         &applied.characters,
                         volume_count,
+                        allow_character_role_authority_repair,
                     );
                     record_superseded_character_names(&mut base.characters, &replacements);
                 }
@@ -341,7 +366,11 @@ impl CreationContractPatch {
             }
             Self::Batch(items) => {
                 for item in items {
-                    item.merge_applied_scope_into_contract(base, applied);
+                    item.merge_applied_scope_into_contract_with_role_repair_policy(
+                        base,
+                        applied,
+                        allow_character_role_authority_repair,
+                    );
                 }
             }
         }
@@ -398,6 +427,7 @@ fn merge_character_patch_scope(
     authority: &mut Vec<CharacterContract>,
     incoming: &[CharacterContract],
     volume_count: usize,
+    allow_role_authority_repair: bool,
 ) {
     if authority.is_empty() {
         authority.extend_from_slice(incoming);
@@ -408,6 +438,8 @@ fn merge_character_patch_scope(
         .map(|character| character.canonical_name.trim().to_string())
         .filter(|name| !value_missing(name))
         .collect::<Vec<_>>();
+    let repair_complete_role_table = allow_role_authority_repair
+        && complete_canonical_character_role_repair(authority, incoming);
     for candidate in incoming {
         let existing_index = authority
             .iter()
@@ -426,6 +458,11 @@ fn merge_character_patch_scope(
                     .position(|known| character_contract_roles_match(known, candidate))
             });
         if let Some(existing) = existing_index.and_then(|index| authority.get_mut(index)) {
+            if repair_complete_role_table
+                && existing.canonical_name.trim() == candidate.canonical_name.trim()
+            {
+                replace_character_role_authority_fields(existing, candidate);
+            }
             merge_missing_character_contract_fields(
                 existing,
                 candidate,
@@ -1184,10 +1221,19 @@ pub(crate) struct CharacterPatch {
 }
 
 impl CharacterPatch {
+    #[cfg(test)]
     fn apply_to_draft(&self, draft: &mut SessionCreationDraftState) {
+        self.apply_to_draft_with_role_repair_policy(draft, false);
+    }
+
+    fn apply_to_draft_with_role_repair_policy(
+        &self,
+        draft: &mut SessionCreationDraftState,
+        allow_role_authority_repair: bool,
+    ) {
         if !self.characters.is_empty() {
             if draft_has_trusted_character_name_authority(draft) {
-                self.apply_as_authority_field_repair(draft);
+                self.apply_as_authority_field_repair(draft, allow_role_authority_repair);
                 return;
             }
             let mut governed_contracts = self.characters.clone();
@@ -1259,7 +1305,11 @@ impl CharacterPatch {
         }
     }
 
-    fn apply_as_authority_field_repair(&self, draft: &mut SessionCreationDraftState) {
+    fn apply_as_authority_field_repair(
+        &self,
+        draft: &mut SessionCreationDraftState,
+        allow_role_authority_repair: bool,
+    ) {
         let volume_count = super::strong_novel_contract_from_creation_draft(draft)
             .outline
             .volumes
@@ -1289,6 +1339,8 @@ impl CharacterPatch {
         }
 
         let incoming = self.characters.clone();
+        let repair_complete_role_table = allow_role_authority_repair
+            && complete_canonical_character_role_repair(&existing, &incoming);
         let allow_role_alignment = incoming.len() >= existing.len();
         let mut replacements = BTreeMap::new();
         let mut new_characters = Vec::new();
@@ -1330,6 +1382,12 @@ impl CharacterPatch {
                 let preserved_name = existing[index].canonical_name.trim().to_string();
                 if incoming_name != preserved_name {
                     replacements.insert(incoming_name.to_string(), preserved_name);
+                }
+                if repair_complete_role_table && canonical_match == Some(index) {
+                    replace_character_role_authority_fields(
+                        &mut existing[index],
+                        &incoming_character,
+                    );
                 }
                 let authority_names = existing
                     .iter()
@@ -1409,6 +1467,66 @@ impl CharacterPatch {
         rewrite_contract_v2_names(&mut contract_v2, &replacements);
         canonicalize_contract_v2_to_authority(&mut contract_v2, &authority);
         draft.set_contract_v2(contract_v2);
+    }
+}
+
+fn complete_canonical_character_role_repair(
+    existing: &[CharacterContract],
+    incoming: &[CharacterContract],
+) -> bool {
+    existing.len() >= 2
+        && existing.len() == incoming.len()
+        && incoming.iter().all(|candidate| {
+            !value_missing(&candidate.canonical_name)
+                && !value_missing(&candidate.role)
+                && !value_missing(&candidate.desire)
+                && !value_missing(&candidate.fear)
+                && !value_missing(&candidate.bottom_line)
+                && !value_missing(&candidate.arc_start)
+                && !value_missing(&candidate.arc_end)
+                && existing
+                    .iter()
+                    .any(|known| known.canonical_name.trim() == candidate.canonical_name.trim())
+        })
+        && existing.iter().all(|known| {
+            incoming
+                .iter()
+                .filter(|candidate| candidate.canonical_name.trim() == known.canonical_name.trim())
+                .count()
+                == 1
+        })
+        && incoming
+            .iter()
+            .filter(|candidate| candidate.role_looks_primary())
+            .count()
+            == 1
+        && incoming.iter().any(|candidate| {
+            existing.iter().any(|known| {
+                known.canonical_name.trim() == candidate.canonical_name.trim()
+                    && known.role.trim() != candidate.role.trim()
+            })
+        })
+}
+
+fn replace_character_role_authority_fields(
+    target: &mut CharacterContract,
+    incoming: &CharacterContract,
+) {
+    for (target, incoming) in [
+        (&mut target.role, &incoming.role),
+        (&mut target.desire, &incoming.desire),
+        (&mut target.fear, &incoming.fear),
+        (&mut target.bottom_line, &incoming.bottom_line),
+        (&mut target.arc_start, &incoming.arc_start),
+        (&mut target.arc_end, &incoming.arc_end),
+    ] {
+        *target = incoming.trim().to_string();
+    }
+    if !value_missing(&incoming.planned_entry) {
+        target.planned_entry = incoming.planned_entry.trim().to_string();
+    }
+    if !value_missing(&incoming.planned_exit) {
+        target.planned_exit = incoming.planned_exit.trim().to_string();
     }
 }
 
@@ -3837,6 +3955,21 @@ mod tests {
             "{rendered}"
         );
     }
+
+    #[test]
+    fn character_authority_rewrites_quoted_incomplete_primary_name() {
+        let mut contract = NovelCreationContract::default();
+        contract.characters = vec![CharacterContract {
+            canonical_name: "陆晟衡".to_string(),
+            role: "主角".to_string(),
+            ..Default::default()
+        }];
+        contract.premise = "主角“默”是一名底层记忆修复师".to_string();
+
+        canonicalize_novel_contract_to_character_authority(&mut contract);
+
+        assert_eq!(contract.premise, "主角“陆晟衡”是一名底层记忆修复师");
+    }
     use crate::tool::writing::novel_contract_v2::AntagonistRecord;
 
     #[test]
@@ -4385,6 +4518,88 @@ mod tests {
         let report = patch.validate_scope(&draft);
 
         assert!(report.ready(), "unexpected issues: {:?}", report.issues);
+    }
+
+    #[test]
+    fn complete_canonical_character_patch_repairs_wrong_roles_without_renaming() {
+        let mut draft = super::build_initial_creation_draft(
+            "complete-character-role-repair",
+            "fiction",
+            "写一部古代言情小说，每章2500字，一共10万字",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            "name: 叶望真; role: 主角; desire: 保住香药铺; fear: 家业被夺; bottom_line: 不以假香害人; arc_start: 独自守店; arc_end: 重建商号; name_source: generated_by_writing_tool_policy".to_string(),
+            "name: 顾云朔; role: 关键关系对象; desire: 垄断香药行会; fear: 私账曝光; bottom_line: 不失去行会控制; arc_start: 隐身幕后的会首; arc_end: 因私账败露; name_source: generated_by_writing_tool_policy".to_string(),
+            "name: 陶泊衡; role: 对手; desire: 查清贡香账册; fear: 证据被毁; bottom_line: 不以无辜者顶罪; arc_start: 独自查案的官员; arc_end: 与叶望真共同追查真相; name_source: generated_by_writing_tool_policy".to_string(),
+        ];
+
+        let role_repair = CharacterPatch {
+            characters: vec![
+                CharacterContract {
+                    canonical_name: "叶望真".to_string(),
+                    role: "主角".to_string(),
+                    desire: "保住香药铺并查明账册真相".to_string(),
+                    fear: "家业与信誉一同被夺".to_string(),
+                    bottom_line: "不以假香害人".to_string(),
+                    arc_start: "独自承担店铺债务".to_string(),
+                    arc_end: "能与可信之人共同承担责任".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "顾云朔".to_string(),
+                    role: "关键对手".to_string(),
+                    desire: "垄断香药行会并掩盖私账".to_string(),
+                    fear: "贡香私账曝光".to_string(),
+                    bottom_line: "不失去行会控制".to_string(),
+                    arc_start: "隐身幕后的会首".to_string(),
+                    arc_end: "因私账败露而失势".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "陶泊衡".to_string(),
+                    role: "关键关系对象".to_string(),
+                    desire: "与叶望真共同查清贡香账册".to_string(),
+                    fear: "证据被毁且连累叶望真".to_string(),
+                    bottom_line: "不以无辜者顶罪".to_string(),
+                    arc_start: "只相信卷宗的年轻官员".to_string(),
+                    arc_end: "学会信任叶望真的判断".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let mut ordinary_completion_draft = draft.clone();
+        role_repair.apply_to_draft(&mut ordinary_completion_draft);
+        let ordinary_characters = ordinary_completion_draft
+            .fiction_characters
+            .iter()
+            .map(|line| super::draft_character_line_to_contract(line))
+            .collect::<Vec<_>>();
+        assert_eq!(ordinary_characters[1].role, "关键关系对象");
+        assert_eq!(ordinary_characters[2].role, "对手");
+
+        role_repair.apply_to_draft_with_role_repair_policy(&mut draft, true);
+
+        let characters = draft
+            .fiction_characters
+            .iter()
+            .map(|line| super::draft_character_line_to_contract(line))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            characters
+                .iter()
+                .map(|character| character.canonical_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["叶望真", "顾云朔", "陶泊衡"]
+        );
+        assert_eq!(characters[0].role, "主角");
+        assert_eq!(characters[1].role, "对手");
+        assert_eq!(characters[2].role, "关键关系对象");
+        assert_eq!(characters[2].desire, "与叶望真共同查清贡香账册");
+        assert!(characters
+            .iter()
+            .all(|character| { character.name_source == "generated_by_writing_tool_policy" }));
     }
 
     #[test]

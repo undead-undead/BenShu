@@ -41,8 +41,7 @@ struct RawChapterExecutionPackage {
     hook_opened: Option<serde_json::Value>,
     hook_paid_off: Option<serde_json::Value>,
     title_basis: Option<serde_json::Value>,
-    #[serde(default)]
-    new_character_requests: Vec<crate::tool::writing::novel_contract_v2::ChapterCharacterRequest>,
+    new_character_requests: Option<serde_json::Value>,
 }
 
 pub(crate) fn parse_chapter_execution_package(
@@ -55,7 +54,7 @@ pub(crate) fn parse_chapter_execution_package(
         || raw.contains("\"architecture\"");
     if let Some(json) = extract_json(raw) {
         match serde_json::from_str::<serde_json::Value>(&json).and_then(|value| {
-            validate_execution_package_json_shape(&value)
+            validate_execution_package_required_fields(&value)
                 .map_err(|message| serde_json::Error::io(std::io::Error::other(message)))?;
             serde_json::from_value::<RawChapterExecutionPackage>(value)
         }) {
@@ -124,7 +123,9 @@ pub(crate) fn parse_chapter_execution_package(
                             .as_ref()
                             .map(|value| execution_package_value_to_text(value, "meta"))
                             .unwrap_or_default(),
-                        new_character_requests: parsed.new_character_requests,
+                        new_character_requests: execution_package_character_requests(
+                            parsed.new_character_requests.as_ref(),
+                        ),
                         degraded: false,
                         degraded_reason: String::new(),
                     });
@@ -180,7 +181,7 @@ pub(crate) fn parse_chapter_execution_package(
     })
 }
 
-fn validate_execution_package_json_shape(value: &serde_json::Value) -> Result<(), String> {
+fn validate_execution_package_required_fields(value: &serde_json::Value) -> Result<(), String> {
     let object = value
         .as_object()
         .ok_or_else(|| "chapter execution package must be a JSON object".to_string())?;
@@ -206,26 +207,13 @@ fn validate_execution_package_json_shape(value: &serde_json::Value) -> Result<()
             missing.push(field);
         }
     }
-    for field in STRING_FIELDS {
-        match object.get(*field) {
-            Some(serde_json::Value::String(_)) => {}
-            Some(_) => {
-                return Err(format!(
-                    "chapter execution package field `{field}` must be a string"
-                ))
-            }
-            None => missing.push(field),
-        }
-    }
-    for field in ["hook_opened", "hook_paid_off", "new_character_requests"] {
-        match object.get(field) {
-            Some(serde_json::Value::Array(_)) => {}
-            Some(_) => {
-                return Err(format!(
-                    "chapter execution package field `{field}` must be an array"
-                ))
-            }
-            None => missing.push(field),
+    for field in STRING_FIELDS.iter().copied().chain([
+        "hook_opened",
+        "hook_paid_off",
+        "new_character_requests",
+    ]) {
+        if !object.contains_key(field) {
+            missing.push(field);
         }
     }
     if missing.is_empty() {
@@ -236,6 +224,20 @@ fn validate_execution_package_json_shape(value: &serde_json::Value) -> Result<()
             missing.join(", ")
         ))
     }
+}
+
+fn execution_package_character_requests(
+    value: Option<&serde_json::Value>,
+) -> Vec<crate::tool::writing::novel_contract_v2::ChapterCharacterRequest> {
+    let values = match value {
+        Some(serde_json::Value::Array(values)) => values.as_slice(),
+        Some(value @ serde_json::Value::Object(_)) => std::slice::from_ref(value),
+        _ => return Vec::new(),
+    };
+    values
+        .iter()
+        .filter_map(|value| serde_json::from_value(value.clone()).ok())
+        .collect()
 }
 
 fn render_execution_contract_header(parsed: &RawChapterExecutionPackage) -> String {

@@ -252,6 +252,42 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_structural_execution_package_drift_without_losing_valid_fields() {
+        let raw = r#"{
+  "memo_markdown": "目标：推进线索\n\n## 当前任务\n推进。\n\n## 本章目标\n取得线索。\n\n## 该兑现\n兑现。\n\n## 暂不掀\n保留。\n\n## 日常过渡功能\n承接。\n\n## 关键抉择三连问\n行动；代价；因果。\n\n## 章尾必须发生的改变\n取得线索。\n\n## 不要做\n不要改名。",
+  "architecture": [{"scene":"旧站追踪","result":"取得线索"}],
+  "scene_goal": {"action":"取得线索"},
+  "conflict": ["时间压力", "守卫阻拦"],
+  "choice": "继续追踪",
+  "cost": null,
+  "reveal": "旧站仍在运作",
+  "emotional_beat": "从迟疑转为坚定",
+  "chapter_function": "推进主线",
+  "irreversible_event": "取得站内记录",
+  "new_state_after_chapter": "掌握新线索",
+  "character_change": "主角决定继续追踪",
+  "relationship_change": "",
+  "power_delta": "",
+  "resource_delta": "取得站内记录",
+  "hook_opened": "旧站为何仍在运作",
+  "hook_paid_off": null,
+  "title_basis": "旧站记录",
+  "new_character_requests": ["req-guard-001", {"request_id":"req-guide-001","role":"向导","narrative_purpose":"提供旧站入口","planned_exit":"本章结束"}]
+}"#;
+
+        let package = parse_chapter_execution_package(raw, "zh").expect("package");
+
+        assert!(package.scene_goal.contains("取得线索"));
+        assert!(package.conflict.contains("时间压力"));
+        assert_eq!(package.hook_opened, ["旧站为何仍在运作"]);
+        assert_eq!(package.new_character_requests.len(), 1);
+        assert_eq!(
+            package.new_character_requests[0].request_id,
+            "req-guide-001"
+        );
+    }
+
+    #[test]
     fn parses_json_draft_output() {
         let raw = r#"```json
 {"title":"风起","content":"林衡推开雾门。灵脉回应誓言。","summary":"林衡入门。","key_facts":["林衡推开雾门"],"continuity_updates":["灵脉回应誓言"]}
@@ -269,6 +305,31 @@ mod tests {
         let observation = parse_final_chapter_observation(raw).expect("observation");
         assert_eq!(observation.continuity_updates, ["闻庭安持有铜钥匙"]);
         assert_eq!(observation.resolved_hooks.len(), 1);
+    }
+
+    #[test]
+    fn final_chapter_observation_normalizes_structured_summary_fields() {
+        let raw = r#"{
+  "current_state": {"character": "闻庭安带着铜钥匙离开旧站", "location": "北门"},
+  "pending_hooks": ["铜钥匙对应的门仍未找到"],
+  "chapter_summary": {"summary": "闻庭安从旧站取走铜钥匙并避开巡守"},
+  "continuity_updates": [{"fact": "闻庭安持有铜钥匙"}],
+  "resolved_hooks": [],
+  "state_changes": []
+}"#;
+
+        let observation = parse_final_chapter_observation(raw).expect("observation");
+
+        assert!(observation
+            .current_state
+            .contains("character：闻庭安带着铜钥匙离开旧站"));
+        assert!(observation.current_state.contains("location：北门"));
+        assert_eq!(observation.pending_hooks, "铜钥匙对应的门仍未找到");
+        assert_eq!(
+            observation.chapter_summary,
+            "summary：闻庭安从旧站取走铜钥匙并避开巡守"
+        );
+        assert_eq!(observation.continuity_updates, ["fact：闻庭安持有铜钥匙"]);
     }
 
     #[test]

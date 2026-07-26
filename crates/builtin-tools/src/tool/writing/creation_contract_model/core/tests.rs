@@ -45,6 +45,7 @@ fn parses_and_validates_strong_fiction_contract_json() {
             "themes": ["普通人对公共责任的承担"],
             "style_rules": ["保持近距离第三人称视角，线索通过行动逐步显现"],
             "must_avoid": ["不用偶然获得的新能力解决终局危机"],
+            "structured": {"narration_contract":{"pov":"第三人称有限视角"}},
             "outline": {
                 "raw_outline": "第一阶段：夜校异常；第二阶段：灵轨追查；第三阶段：终局接通。",
                 "volumes": [
@@ -115,6 +116,68 @@ fn normalize_world_rules_drops_unstructured_heading_segments() {
 
     assert_eq!(rules.len(), 2, "{rules:?}");
     assert!(rules.iter().all(|rule| rule.chars().count() > 8));
+}
+
+#[test]
+fn normalize_world_rules_rejoins_dependent_cost_and_consequence_clauses() {
+    let mut rules = vec![
+        "义体改造需定期注入冷却液；否则神经会烧毁".to_string(),
+        "商业信誉一旦破产；将永久失去大型竞标资格".to_string(),
+        "天罡劲修炼越深；越需寒玉压制".to_string(),
+    ];
+
+    normalize_world_rules_vec(&mut rules);
+
+    assert_eq!(rules.len(), 3, "{rules:?}");
+    assert_eq!(rules[0], "义体改造需定期注入冷却液；否则神经会烧毁");
+    assert_eq!(rules[1], "商业信誉一旦破产；将永久失去大型竞标资格");
+    assert_eq!(rules[2], "天罡劲修炼越深；越需寒玉压制");
+}
+
+#[test]
+fn normalize_world_rules_rejoins_dependent_array_entries() {
+    let mut rules = vec![
+        "情报传递必须经过两名中间人".to_string(),
+        "否则坐标会暴露".to_string(),
+    ];
+
+    normalize_world_rules_vec(&mut rules);
+
+    assert_eq!(rules, ["情报传递必须经过两名中间人；否则坐标会暴露"]);
+}
+
+#[test]
+fn normalize_world_rules_preserves_complete_rules_beginning_with_yue_or_jiang() {
+    let mut rules = vec![
+        "越级挑战必须登记并支付十枚灵石".to_string(),
+        "将军不得私自调动守城军".to_string(),
+    ];
+
+    normalize_world_rules_vec(&mut rules);
+
+    assert_eq!(
+        rules,
+        ["越级挑战必须登记并支付十枚灵石", "将军不得私自调动守城军"]
+    );
+}
+
+#[test]
+fn normalize_world_rules_rejoins_split_conditional_consequences() {
+    let mut rules = vec![
+        "开发商若隐瞒地基缺陷".to_string(),
+        "需承担双倍修复成本".to_string(),
+        "社区书店享有优先承租权".to_string(),
+    ];
+
+    normalize_world_rules_vec(&mut rules);
+
+    assert_eq!(
+        rules,
+        [
+            "开发商若隐瞒地基缺陷；需承担双倍修复成本",
+            "社区书店享有优先承租权"
+        ]
+    );
 }
 
 #[test]
@@ -1578,7 +1641,7 @@ fn normalize_clears_numbered_task_spec_residue_in_structured_fields() {
                 "raw_outline": "第一卷追查夜校灵轨，终局公开灵籍账册。",
                 "volumes": [
                     {"title": "夜校追查", "objective": "取得灵籍账册异常证据", "ending_change": "主角确认校盟篡改资格"},
-                    {"title": "账册公开", "objective": "公开完整证据并改写规则", "ending_change": "校盟失去考试垄断权"}
+                    {"title": "账册公开", "objective": "主角公开灵轨账册并改写规则", "ending_change": "主角切断校盟对夜校考试的垄断"}
                 ],
                 "near_chapters": [
                     {"number": 1, "title": "夜考异响", "goal": "许照桥参加夜考并发现灵轨异常", "expected_turn": "异常记录指向被删改的灵籍"},
@@ -1587,6 +1650,7 @@ fn normalize_clears_numbered_task_spec_residue_in_structured_fields() {
                 ]
             },
             "structured": {
+                "narration_contract": {"pov":"第三人称有限视角"},
                 "power_progression": {
                     "system_name": "都市玄幻2.作品字数：总字数不少于50,000字3.章节数量：不少于20章4.",
                     "current_ceiling": "",

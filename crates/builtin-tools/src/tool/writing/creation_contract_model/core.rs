@@ -2491,14 +2491,39 @@ fn normalize_string_vec(values: &mut Vec<String>) {
 
 fn normalize_world_rules_vec(values: &mut Vec<String>) {
     let mut normalized: Vec<String> = Vec::new();
+    let mut pending_fragment: Option<String> = None;
     for value in std::mem::take(values) {
         for rule in split_world_rule_segments(&value) {
             let rule = normalize_world_rule_segment(&rule);
-            if rule.is_empty()
-                || world_rule_segment_is_heading(&rule)
-                || typed_contract_gate::world_rule_looks_truncated_or_not_actionable(&rule)
-                || normalized.iter().any(|known| known.as_str() == rule)
+            if rule.is_empty() || world_rule_segment_is_heading(&rule) {
+                continue;
+            }
+            if pending_fragment.is_some()
+                && typed_contract_gate::world_rule_clause_completes_pending(&rule)
             {
+                let mut previous = pending_fragment
+                    .take()
+                    .expect("pending world-rule fragment was checked above");
+                previous.push('；');
+                previous.push_str(&rule);
+                if !typed_contract_gate::world_rule_looks_truncated_or_not_actionable(&previous) {
+                    normalized.push(previous);
+                }
+                continue;
+            }
+            if typed_contract_gate::world_rule_clause_depends_on_previous(&rule) {
+                if let Some(previous) = normalized.last_mut() {
+                    previous.push('；');
+                    previous.push_str(&rule);
+                    continue;
+                }
+            }
+            pending_fragment = None;
+            if typed_contract_gate::world_rule_looks_truncated_or_not_actionable(&rule) {
+                pending_fragment = Some(rule);
+                continue;
+            }
+            if normalized.iter().any(|known| known.as_str() == rule) {
                 continue;
             }
             normalized.push(rule);

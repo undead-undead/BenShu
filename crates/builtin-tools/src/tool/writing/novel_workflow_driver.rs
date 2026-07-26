@@ -61,10 +61,6 @@ const MAX_LLM_REVISION_ATTEMPTS: usize = 2;
 const MAX_CHAPTER_STEP_RETRY_ATTEMPTS: usize = 10;
 const MAX_TAIL_COMPLETION_RECOVERIES: usize = 1;
 
-fn chapter_step_blocker_retry_remaining(attempt: usize) -> bool {
-    attempt < MAX_CHAPTER_STEP_RETRY_ATTEMPTS
-}
-
 #[cfg(test)]
 use super::naming::title_language_mismatch;
 use chapter::*;
@@ -864,11 +860,6 @@ impl benshu_brain::runtime::continuous_task::ContinuousActionHandler for NovelCh
                 }
                 let output = self.run_chapter(&request).await?;
                 if let Some(reason) = chapter_step_blocker_reason(&output) {
-                    if !chapter_step_blocker_requires_state_repair(&output)
-                        && chapter_step_blocker_retry_remaining(request.attempt)
-                    {
-                        anyhow::bail!("chapter quality retry required: {reason}");
-                    }
                     return Err(ContinuousStepBlocker::new(reason, output).into());
                 }
                 Ok(ContinuousStepResult {

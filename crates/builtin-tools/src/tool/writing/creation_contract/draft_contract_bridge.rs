@@ -42,10 +42,14 @@ pub(crate) fn apply_strong_novel_contract_to_creation_draft(
     }
     draft.genre = merge_short_field(&draft.genre, &contract.genre);
     replace_contract_generated_brief(&mut draft.brief, &contract.brief);
-    if !draft.target_units_user_specified {
+    if draft.target_units_user_specified {
+        contract.target_units = draft.target_units;
+    } else {
         draft.target_units = contract.target_units.or(draft.target_units);
     }
-    if !draft.chapter_unit_target_user_specified {
+    if draft.chapter_unit_target_user_specified {
+        contract.chapter_unit_target = draft.chapter_unit_target;
+    } else {
         draft.chapter_unit_target = contract.chapter_unit_target.or(draft.chapter_unit_target);
     }
     draft.max_chapters_per_turn = draft
@@ -1583,6 +1587,8 @@ mod tests {
 
         assert_eq!(draft.target_units, Some(100_000));
         assert_eq!(draft.chapter_unit_target, Some(2500));
+        assert_eq!(contract.target_units, Some(100_000));
+        assert_eq!(contract.chapter_unit_target, Some(2500));
     }
 
     #[test]

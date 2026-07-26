@@ -182,13 +182,15 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
         "章节字数",
         "正文目标",
         "正文字数",
+        "字档位",
+        "字档",
         "chapter",
     ]
     .into_iter()
     .chain(body_is_chapter_scoped.then_some("正文"));
     for marker in markers {
         if let Some(segment) = requested_unit_segment_before_marker(message, marker) {
-            if let Some(value) = DelegateTool::requested_text_target_chars(&segment) {
+            if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
                 return Some(value);
             }
         }
@@ -209,7 +211,7 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
                 "total",
             ],
         ) {
-            if let Some(value) = DelegateTool::requested_text_target_chars(&segment) {
+            if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
                 return Some(value);
             }
         }
@@ -236,7 +238,7 @@ pub fn requested_total_unit_target(message: &str) -> Option<usize> {
     ];
     for marker in total_markers {
         if let Some(segment) = requested_unit_segment_before_marker(message, marker) {
-            if let Some(value) = DelegateTool::requested_text_target_chars(&segment) {
+            if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
                 return Some(value);
             }
         }
@@ -257,8 +259,10 @@ pub fn requested_total_unit_target(message: &str) -> Option<usize> {
                 "section",
             ],
         ) {
-            if let Some(value) = DelegateTool::requested_text_target_chars(&segment) {
-                return Some(value);
+            if !segment_starts_with_continuation(&segment) {
+                if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
+                    return Some(value);
+                }
             }
         }
     }
@@ -271,6 +275,8 @@ pub fn requested_total_unit_target(message: &str) -> Option<usize> {
         "章节",
         "正文目标",
         "正文字数",
+        "字档位",
+        "字档",
         "每节",
         "每段",
         "每部分",
@@ -286,6 +292,24 @@ pub fn requested_total_unit_target(message: &str) -> Option<usize> {
         return None;
     }
     Some(unscoped_target)
+}
+
+fn requested_semantically_scoped_unit_chars(segment: &str) -> Option<usize> {
+    DelegateTool::requested_text_target_chars(segment).or_else(|| {
+        // The surrounding marker already supplies the “字数” semantics, so
+        // natural forms such as “10万总字数” and “总目标字数是100000” do not
+        // need to repeat a trailing “字”. Reuse the existing quantity parser
+        // after restoring only that omitted unit.
+        DelegateTool::requested_text_target_chars(&format!("{}字", segment.trim()))
+    })
+}
+
+fn segment_starts_with_continuation(segment: &str) -> bool {
+    segment
+        .trim_start_matches(|ch: char| {
+            ch.is_whitespace() || matches!(ch, '：' | ':' | '=' | '，' | ',' | '；' | ';')
+        })
+        .starts_with(['和', '与', '及', '并'])
 }
 
 pub fn message_without_scoped_unit_segments(message: &str, scoped_markers: &[&str]) -> String {
@@ -1454,6 +1478,20 @@ mod tests {
         assert_eq!(
             requested_total_unit_target("保持原来的末世题材、10万字总字数和2500字档位"),
             Some(100_000)
+        );
+        assert_eq!(
+            requested_total_unit_target("保持原来的题材、10万总字数和2500字档不变"),
+            Some(100_000)
+        );
+        assert_eq!(
+            requested_total_unit_target(
+                "用户权威保持不变：小说总目标字数是100000，每章档位是2500，预计约40章"
+            ),
+            Some(100_000)
+        );
+        assert_eq!(
+            requested_total_unit_target("保持总字数和2500字档不变"),
+            None
         );
     }
 

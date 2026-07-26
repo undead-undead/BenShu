@@ -526,6 +526,7 @@
         draft.fiction_world_rules = vec!["城市灵能裂缝会把考试失败者的记忆作为燃料。".to_string()];
         draft.fiction_style_rules = vec!["用场景、行动和对话推进，不写提纲式正文。".to_string()];
         draft.fiction_must_avoid = vec!["不要改名，不要把工具日志写入正文。".to_string()];
+        draft.narration_contract.pov = "第三人称有限视角".to_string();
         draft.fiction_ending_direction = "许闻在终局关闭吞噬城市的灵能裂缝。".to_string();
         draft.fiction_protagonist_arc =
             "从被动卷入异常事件的普通人，成长为主动守住城市的人。".to_string();
@@ -536,14 +537,21 @@
             "雨巷取自第一章城市异常的入口场景，灵火取自许闻终局关闭裂缝并守住城市的关键力量。"
                 .to_string();
         draft.fiction_outline =
-            "第01章《雨巷灵火》：本章目标：主角发现城市灵能异常并做出第一次选择；预期转折：主角接受夜校试炼邀请，失去旁观退路。\n\
+            "第1卷《雨巷入局》：本卷目标：许闻进入夜校试炼并取得借灵证黑幕证据；卷尾变化：许闻确认地下灵轨仍在扩大并决定继续追查。\n\
+第2卷《裂缝晨光》：本卷目标：许闻公开借灵证证据、进入裂缝核心并关闭吞噬城市的灵能裂缝；卷尾变化：许闻关闭吞噬城市的灵能裂缝并公开夜校规则。\n\
+第01章《雨巷灵火》：本章目标：主角发现城市灵能异常并做出第一次选择；预期转折：主角接受夜校试炼邀请，失去旁观退路。\n\
 第02章《旧楼试炼》：本章目标：主角付出代价获得入局资格；预期转折：试炼代价留下无法撤销的记忆损耗。\n\
-第03章《玻璃天台》：本章目标：主角识破反派线索；预期转折：对手察觉追查，开始主动封锁证据。\n\
-第04章《夜校钟声》：本章目标：主角进入隐藏训练体系；预期转折：主角被夜校规则正式绑定。\n\
-第05章《裂缝回响》：本章目标：主角承担第一次失败；预期转折：失败令关键同伴暂时失去信任。\n\
-第06章《终局晨光》：本章目标：主角完成结局承诺；预期转折：裂缝关闭，城市与关系进入新秩序。"
+第03章《玻璃天台》：本章目标：主角识破反派线索；预期转折：对手察觉追查并封锁证据，地下灵轨的来源仍未解决。"
                 .to_string();
+        assert!(super::super::rebuild_current_contract_from_visible_draft(
+            &mut draft
+        ));
         draft.refresh_contract_status_from_validation();
+        assert!(
+            super::super::creation_draft_contract_blocking_issues(&draft).is_empty(),
+            "approved start fixture must be contract-ready: {:?}",
+            super::super::creation_draft_contract_blocking_issues(&draft)
+        );
 
         let mut runtime = MockCreationDraftRuntime {
             draft: Some(draft),
@@ -559,8 +567,18 @@
                 .await
                 .expect("handled")
                 .expect("outcome");
-        let super::super::CreationDraftTurnOutcome::ContinueWithMessage(prompt) = outcome else {
-            panic!("start turn should continue to writer");
+        let prompt = match outcome {
+            super::super::CreationDraftTurnOutcome::ContinueWithMessage(prompt) => prompt,
+            super::super::CreationDraftTurnOutcome::Respond(response) => {
+                let persisted = runtime.draft.as_ref().expect("persisted draft");
+                panic!(
+                    "start turn should continue to writer, response was: {}; issues: {:?}; outline: {:?}; authority: {}",
+                    response.response,
+                    super::super::creation_draft_contract_blocking_issues(persisted),
+                    persisted.fiction_outline,
+                    persisted.current_contract.is_some()
+                )
+            }
         };
         assert!(prompt.contains(super::super::DIRECT_WRITER_CONTINUATION_MARKER));
         assert!(prompt.contains("novel_studio"));
