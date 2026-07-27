@@ -98,16 +98,34 @@ fn contains_distinctive_english_span(haystack: &str, source: &str) -> bool {
 }
 
 fn without_shared_leading_cjk_subject(segment: &str, current_seed: &str) -> String {
-    let shared = segment
-        .chars()
+    let segment_chars = segment.chars().collect::<Vec<_>>();
+    let shared = segment_chars
+        .iter()
         .zip(current_seed.chars())
-        .take_while(|(left, right)| left == right)
+        .take_while(|(left, right)| **left == *right)
         .count();
-    if (2..=4).contains(&shared) && segment.chars().count() > shared {
-        segment.chars().skip(shared).collect()
-    } else {
-        segment.to_string()
+    if (2..=4).contains(&shared) && segment_chars.len() > shared {
+        return segment_chars[shared..].iter().collect();
     }
+    for prefix_len in (2..=4).rev() {
+        if segment_chars.len() <= prefix_len {
+            continue;
+        }
+        let prefix = segment_chars[..prefix_len].iter().collect::<String>();
+        let remainder = segment_chars[prefix_len..].iter().collect::<String>();
+        let begins_subject_predicate = [
+            "在", "被", "将", "向", "与", "和", "从", "用", "把", "遭", "因", "为",
+        ]
+        .iter()
+        .any(|marker| remainder.starts_with(marker));
+        if begins_subject_predicate
+            && current_seed.contains(&prefix)
+            && !generic_cjk_anchor(&prefix)
+        {
+            return segment_chars[prefix_len..].iter().collect();
+        }
+    }
+    segment.to_string()
 }
 
 pub(crate) fn event_text_is_grounded_in_current_chapter(
@@ -576,7 +594,7 @@ pub(crate) fn model_authority_projection_payload(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let authority = json!({
+    let mut authority = json!({
         "chapter_number": protected_payload
             .get("chapter_number")
             .cloned()
@@ -613,12 +631,31 @@ pub(crate) fn model_authority_projection_payload(
             .cloned()
             .unwrap_or_else(|| json!([]))
     });
+    remove_internal_character_history(&mut authority);
     json!({
         "schema_version": "benshu.model_authority_projection.v1",
         "role": role,
         "authority_root_fingerprint": authority_root_fingerprint,
         "authority": authority
     })
+}
+
+fn remove_internal_character_history(value: &mut Value) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                remove_internal_character_history(item);
+            }
+        }
+        Value::Object(fields) => {
+            fields.remove("previous_names");
+            fields.remove("forbidden_renames");
+            for item in fields.values_mut() {
+                remove_internal_character_history(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn sealed_authority_version() -> &'static str {
@@ -1454,6 +1491,35 @@ mod tests {
     }
 
     #[test]
+    fn model_projection_hides_internal_character_name_history() {
+        let protected = json!({
+            "chapter_number": 1,
+            "canonical_contract": {
+                "characters": [{
+                    "canonical_name": "顾屿野",
+                    "previous_names": ["阮昭言"],
+                    "forbidden_renames": ["林默"]
+                }]
+            },
+            "working_context": {
+                "character_ledger": [{
+                    "canonical_name": "顾屿野",
+                    "forbidden_renames": ["赵无极"]
+                }]
+            }
+        });
+        let projection =
+            model_authority_projection_payload(AuthorityRole::Writer, &protected, "root");
+        let encoded = serde_json::to_string(&projection).expect("model projection");
+
+        assert!(encoded.contains("顾屿野"));
+        assert!(!encoded.contains("阮昭言"));
+        assert!(!encoded.contains("林默"));
+        assert!(!encoded.contains("赵无极"));
+        assert_eq!(projection["authority_root_fingerprint"], "root");
+    }
+
+    #[test]
     fn final_body_future_boundary_detection_ignores_intent_but_catches_completed_reveal() {
         let current = "闻望宁发现被覆盖的原始共同记忆并私自保留胶囊";
         let next = "闻望宁前往黑市鉴定记忆胶囊来源；确认其源自上层区主脑核心的原始备份；黑市商人透露原主人身份";
@@ -1506,6 +1572,18 @@ mod tests {
         assert_eq!(
             final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
             Some(consumed)
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_detection_ignores_reused_subject_with_different_action() {
+        let current = "天穹特工突袭典当行；陆启朔被迫烧毁店铺，带走义体";
+        let next = "陆启朔在贫民窟遇见秦知禾；秦知禾认出义体，提出合作，但无人机已锁定街区";
+        let body = "跑了大约五分钟，陆启朔在一处岔路口停了下来。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            "a recurring subject plus ordinary grammar must not consume the next event"
         );
     }
 

@@ -13,6 +13,79 @@
     }
 
     #[test]
+    fn approval_keeps_body_validated_display_metadata_when_settlement_projection_is_invalid() {
+        let mut manifest = test_manifest_with_primary_character();
+        ensure_character_authority_ledger(&mut manifest);
+        let body = "黎启洄挂在旧站岩壁上，观察着守卫的动作。他一边后退，一边确认守卫的攻击轨迹。黎启洄侧过身子，艰难地挤进岩缝，并从石缝中取得一枚封印铜环。铜环上的旧印证明封印事故并非偶然。";
+        let mut chapter = ChapterRecord {
+            number: 1,
+            title: "旧站铜环".to_string(),
+            path: "chapters/0001.md".to_string(),
+            status: "state_ready".to_string(),
+            unit_count: body.chars().count(),
+            summary: "黎启洄从旧站岩缝取得封印铜环。".to_string(),
+            key_facts: vec![
+                "黎启洄从旧站岩缝取得封印铜环".to_string(),
+                "铜环旧印证明封印事故并非偶然".to_string(),
+            ],
+            continuity_updates: vec!["黎启洄取得封印铜环".to_string()],
+            created_at: now_iso(),
+            updated_at: now_iso(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+        };
+        normalize_chapter_metadata_against_body(&manifest, &mut chapter, body);
+        let original_gate = chapter_metadata_gate(&manifest, &chapter, body);
+        assert!(
+            !original_gate.needs_repair(),
+            "body-validated metadata must start clean: {:?}",
+            original_gate.findings
+        );
+        let original_summary = chapter.summary.clone();
+        let settlement = SettlementOutput {
+            chapter_fingerprint: String::new(),
+            body_fingerprint: String::new(),
+            authority_fingerprint: String::new(),
+            state_changes: Vec::new(),
+            degraded_reason: String::new(),
+            current_state: "黎启洄持有封印铜环。".to_string(),
+            pending_hooks: "铜环旧印仍待追查。".to_string(),
+            chapter_summary: "黎启洄关闭主引擎并永久封存全部频纹。".to_string(),
+            continuity_updates: vec!["全部频纹已经永久消失。".to_string()],
+            resolved_hooks: Vec::new(),
+        };
+
+        let (selected, selected_settlement, gate) =
+            super::super::approval_transaction::settlement_display_metadata_or_body_validated_best(
+                &manifest,
+                &chapter,
+                &settlement,
+                body,
+            );
+
+        assert!(
+            !gate.needs_repair(),
+            "approval must retain a metadata version that still passes the unchanged gate: {:?}",
+            gate.findings
+        );
+        assert_eq!(
+            selected.summary.trim_end_matches('。'),
+            original_summary.trim_end_matches('。')
+        );
+        assert!(!selected.summary.contains("永久封存"));
+        assert_eq!(selected_settlement.chapter_summary, selected.summary);
+        assert_eq!(
+            selected_settlement.continuity_updates,
+            selected.continuity_updates
+        );
+        assert!(!selected_settlement.chapter_summary.contains("永久封存"));
+        assert!(selected_settlement
+            .continuity_updates
+            .iter()
+            .all(|item| !item.contains("永久消失")));
+    }
+
+    #[test]
     fn prose_surface_gate_blocks_add_json_alias_leakage() {
         let issues =
             prose_surface_contamination_issues("他推开控制室的大门。\n{\"add\":\"新的正文\"}");

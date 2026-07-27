@@ -200,13 +200,19 @@ fn direct_writer_task_from_session_work_target(text: &str) -> Option<String> {
     {
         return None;
     }
-    let project_scale = user_request_requests_project_scale_continuation(user_request);
-    let scope = if project_scale {
-        "本轮范围：按当前合同推进到用户请求的目标规模和结局完成门；每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。"
+    let requested_total_units = super::creation_contract::requested_total_unit_target(user_request);
+    let requests_all_remaining =
+        super::creation_contract::creation_draft_requests_all_remaining(user_request, "fiction");
+    let scope = if let Some(target_units) = requested_total_units {
+        format!(
+            "本轮范围：用户要求按明确总量目标完成作品；目标总字数：{target_units}；按该目标推进章节并完成结局门，每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。"
+        )
+    } else if requests_all_remaining {
+        "本轮范围：用户要求完成全书；按当前合同推进全部剩余章节到目标规模和结局完成门；每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。".to_string()
     } else if direct_writer_requested_chapter_count(user_request).is_some() {
-        ""
+        String::new()
     } else {
-        "本轮默认只推进下一章；完成后返回进度，不要越界连续生成。"
+        "本轮默认只推进下一章；完成后返回进度，不要越界连续生成。".to_string()
     };
     let target_chapter = extract_requested_chapter_number_from_text(user_request);
     let operation = if export_requested {
@@ -245,11 +251,6 @@ fn direct_writer_task_from_session_work_target(text: &str) -> Option<String> {
     } else {
         Some(task)
     }
-}
-
-fn user_request_requests_project_scale_continuation(user_request: &str) -> bool {
-    super::creation_contract::creation_draft_requests_all_remaining(user_request, "fiction")
-        || super::creation_contract::requested_total_unit_target(user_request).is_some()
 }
 
 fn session_work_target_operation_kind(
@@ -649,7 +650,7 @@ USER REQUEST\n\
         assert!(!route.task.contains("本轮默认只推进下一章"));
         assert!(route
             .task
-            .contains("按当前合同推进到用户请求的目标规模和结局完成门"));
+            .contains("用户要求完成全书；按当前合同推进全部剩余章节"));
         let command = super::writing_command_from_task(&route.task).expect("writing command");
         assert_eq!(
             command.project_path,
@@ -674,9 +675,22 @@ USER REQUEST\n\
         let command = super::writing_command_from_task(&route.task).expect("writing command");
         assert!(command.user_request.starts_with("继续完成当前这本小说"));
         assert!(!route.task.contains("本轮默认只推进下一章"));
-        assert!(route
-            .task
-            .contains("按当前合同推进到用户请求的目标规模和结局完成门"));
+        assert!(route.task.contains("目标总字数：50000"), "{}", route.task);
+        assert!(!route.task.contains("按当前合同推进全部剩余章节"));
+    }
+
+    #[test]
+    fn session_work_target_partial_total_does_not_become_full_book_scope() {
+        let message = "SESSION WORK TARGET\n\
+project_path: /home/user/benshu/data/generated/novels/demo\n\n\
+USER REQUEST\n\
+继续写到5万字后先停下，不要直接完成整本。";
+
+        let route = super::direct_writer_route_from_text(message).expect("direct writer route");
+
+        assert!(route.task.contains("目标总字数：50000"));
+        assert!(!route.task.contains("用户要求完成全书"));
+        assert!(!route.task.contains("推进全部剩余章节"));
     }
 
     #[test]

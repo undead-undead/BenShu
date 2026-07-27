@@ -2561,10 +2561,31 @@ fn rewrite_structured_character_references(
     });
     for (old_name, new_name) in ordered_replacements {
         if value.contains(old_name) {
-            *value = crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
-                value, old_name, new_name,
-            );
+            let mut rewritten =
+                crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
+                    value, old_name, new_name,
+                );
+            if rewritten != *value {
+                rewrite_co_referential_family_name(&mut rewritten, old_name, new_name);
+                *value = rewritten;
+            }
         }
+    }
+}
+
+fn rewrite_co_referential_family_name(value: &mut String, old_name: &str, new_name: &str) {
+    let Some(old_surname) = naming::cjk_character_surname(old_name) else {
+        return;
+    };
+    let Some(new_surname) = naming::cjk_character_surname(new_name) else {
+        return;
+    };
+    if old_surname == new_surname {
+        return;
+    }
+    let old_family = format!("{old_surname}家");
+    if value.contains(&old_family) {
+        *value = value.replace(&old_family, &format!("{new_surname}家"));
     }
 }
 
@@ -4085,6 +4106,36 @@ mod tests {
 
         assert_eq!(value, "温昭衡掌控集团，温昭衡最终选择放手。");
         assert!(!value.contains("温昭衡深"));
+    }
+
+    #[test]
+    fn authority_rewrite_updates_a_family_term_co_referential_with_the_replaced_name() {
+        let replacements = BTreeMap::from([("阮昭言".to_string(), "顾屿野".to_string())]);
+        let mut value = "阮昭言决定取回阮家祖传信物。".to_string();
+
+        rewrite_structured_character_references(&mut value, &replacements);
+
+        assert_eq!(value, "顾屿野决定取回顾家祖传信物。");
+    }
+
+    #[test]
+    fn authority_rewrite_preserves_an_unrelated_family_without_the_replaced_name() {
+        let replacements = BTreeMap::from([("阮昭言".to_string(), "顾屿野".to_string())]);
+        let mut value = "顾屿野决定调查阮家失踪案。".to_string();
+
+        rewrite_structured_character_references(&mut value, &replacements);
+
+        assert_eq!(value, "顾屿野决定调查阮家失踪案。");
+    }
+
+    #[test]
+    fn authority_rewrite_updates_compound_surname_family_terms() {
+        let replacements = BTreeMap::from([("欧阳知白".to_string(), "司马望宁".to_string())]);
+        let mut value = "欧阳知白拒绝继承欧阳家旧约。".to_string();
+
+        rewrite_structured_character_references(&mut value, &replacements);
+
+        assert_eq!(value, "司马望宁拒绝继承司马家旧约。");
     }
 
     #[test]

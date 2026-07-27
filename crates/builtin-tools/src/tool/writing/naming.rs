@@ -16,7 +16,9 @@ pub(crate) use chapter_title::{
     title_is_default_chapter_heading, title_matches_project_or_volume, title_template_connector,
     ChapterTitleCandidate, ChapterTitleContext, ChapterTitleEvidence,
 };
-pub(crate) use character::{allocate_character_name, audit_character_name_candidate};
+pub(crate) use character::{
+    allocate_character_name, audit_character_name_candidate, cjk_character_surname,
+};
 #[cfg(test)]
 pub(crate) use title::title_language_mismatch;
 pub(crate) use title::{

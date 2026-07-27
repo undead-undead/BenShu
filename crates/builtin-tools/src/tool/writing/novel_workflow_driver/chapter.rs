@@ -810,14 +810,12 @@ impl NovelChapterRunner {
             usize::from(revision_cycle.state.budget.tail_completion_attempted);
         let mut last_tail_completion_fingerprint = None;
         let mut last_deterministic_cleanup_fingerprint = None;
-        let mut metadata_repair_attempts =
-            usize::from(revision_cycle.state.budget.metadata_repair_attempted);
+        let mut metadata_repair_attempts = revision_cycle.state.budget.metadata_repair_attempts;
         let persisted_revision_attempts = revision_cycle
             .state
             .budget
             .semantic_attempts
             .min(MAX_LLM_REVISION_ATTEMPTS);
-        let mut llm_revision_attempts = persisted_revision_attempts;
         let mut revision_index = persisted_revision_attempts;
         loop {
             self.ensure_not_cancelled().await?;
@@ -856,20 +854,20 @@ impl NovelChapterRunner {
                 }
                 ChapterLoopDecision::MetadataRepair => {
                     match self
-                        .repair_metadata_gate_until_stable(
+                        .repair_metadata_gate_once(
                             chapter_number,
                             &mut current_draft,
                             &mut write_result,
                             &mut audit,
                             &mut metadata_repair_attempts,
-                            1,
-                            false,
+                            MAX_METADATA_REPAIR_ATTEMPTS,
                         )
                         .await?
                     {
                         MetadataRepairFlow::Blocked(result) => return Ok(result),
                         MetadataRepairFlow::Repaired => {
-                            revision_cycle.state.budget.metadata_repair_attempted = true;
+                            revision_cycle.state.budget.metadata_repair_attempts =
+                                metadata_repair_attempts;
                             let (draft, write, reviewed, _, _) = self
                                 .reconcile_submitted_candidate(
                                     &authority,
@@ -1024,11 +1022,7 @@ impl NovelChapterRunner {
             // require a semantic rewrite. Those routes fall through to the same
             // reviser below, so the shared persisted budget must guard this
             // common entry point rather than only the explicit LlmRevision arm.
-            if !revision_cycle
-                .state
-                .budget
-                .can_attempt_semantic_revision(revision_cycle.semantic_improved_after_first)
-            {
+            if !revision_cycle.state.budget.can_attempt_semantic_revision() {
                 return Ok(format_revision_blocker_result(
                     &self.project_path,
                     chapter_number,
@@ -1061,7 +1055,6 @@ impl NovelChapterRunner {
                 &self.language,
             ));
             let reviser_prompt = clean_provider_prompt(&reviser_prompt);
-            llm_revision_attempts += 1;
             revision_cycle.state.budget.semantic_attempts += 1;
             revision_index += 1;
             let revised_output = novel_runner::generate_draft(
@@ -1147,7 +1140,6 @@ impl NovelChapterRunner {
             audit = self
                 .rule_first_audit_or_full_audit(chapter_number, &write_result)
                 .await?;
-            let previous_hard_blockers = revision_cycle.best_candidate.quality_vector.hard_blockers;
             let (candidate_draft, candidate_write, candidate_audit, accepted_as_best, _) = self
                 .reconcile_submitted_candidate(
                     &authority,
@@ -1162,19 +1154,7 @@ impl NovelChapterRunner {
             current_draft = candidate_draft;
             write_result = candidate_write;
             audit = candidate_audit;
-            let hard_blockers_reduced = accepted_as_best
-                && revision_cycle.best_candidate.quality_vector.hard_blockers
-                    < previous_hard_blockers
-                && revision_cycle
-                    .best_candidate
-                    .quality_vector
-                    .new_high_priority_blockers
-                    == 0;
-            if accepted_as_best {
-                if llm_revision_attempts == 1 {
-                    revision_cycle.semantic_improved_after_first = hard_blockers_reduced;
-                }
-            } else {
+            if !accepted_as_best {
                 record_workflow_checkpoint(
                     &self.runtime,
                     chapter_number as u32,
@@ -1225,10 +1205,7 @@ impl NovelChapterRunner {
             if audit_next_action_blocked(&audit)
                 && !only_local_cleanup_issues(&write_result, &audit)
                 && !body_revision_required_after_audit(&write_result, &audit)
-                && !revision_cycle
-                    .state
-                    .budget
-                    .can_attempt_semantic_revision(revision_cycle.semantic_improved_after_first)
+                && !revision_cycle.state.budget.can_attempt_semantic_revision()
             {
                 return Ok(format_revision_blocker_result(
                     &self.project_path,
@@ -1562,7 +1539,7 @@ impl NovelChapterRunner {
         Ok(Some((repaired_draft, repaired_write_result)))
     }
 
-    async fn repair_metadata_gate_until_stable(
+    async fn repair_metadata_gate_once(
         &self,
         chapter_number: usize,
         draft: &mut novel_runner::DraftOutput,
@@ -1570,55 +1547,34 @@ impl NovelChapterRunner {
         audit: &mut Value,
         attempts: &mut usize,
         max_attempts: usize,
-        force_once: bool,
     ) -> anyhow::Result<MetadataRepairFlow> {
-        if !force_once && !metadata_gate_needs_repair(write_result) {
+        if !metadata_gate_needs_repair(write_result) {
             return Ok(MetadataRepairFlow::NotNeeded);
         }
         if !metadata_repair_allowed_with_audit(write_result, audit) {
             return Ok(MetadataRepairFlow::NotNeeded);
         }
-
-        let mut repaired_any = false;
-        while (metadata_gate_needs_repair(write_result) || (force_once && !repaired_any))
-            && quality_gate_body_passed(write_result)
-            && metadata_repair_allowed_with_audit(write_result, audit)
-        {
-            if *attempts >= max_attempts {
-                return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
-                    &self.project_path,
-                    chapter_number,
-                    write_result,
-                )));
-            }
-            *attempts += 1;
-            let Some((repaired_draft, repaired_write_result)) = self
-                .repair_chapter_metadata_with_llm(chapter_number, draft.clone(), write_result)
-                .await?
-            else {
-                return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
-                    &self.project_path,
-                    chapter_number,
-                    write_result,
-                )));
-            };
-            *draft = repaired_draft;
-            *write_result = repaired_write_result;
-            repaired_any = true;
-        }
-
-        if metadata_gate_blocks(write_result) {
+        if !quality_gate_body_passed(write_result) || *attempts >= max_attempts {
             return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
                 &self.project_path,
                 chapter_number,
                 write_result,
             )));
         }
-        if repaired_any || metadata_gate_has_repairable(write_result) {
-            Ok(MetadataRepairFlow::Repaired)
-        } else {
-            Ok(MetadataRepairFlow::NotNeeded)
-        }
+        *attempts += 1;
+        let Some((repaired_draft, repaired_write_result)) = self
+            .repair_chapter_metadata_with_llm(chapter_number, draft.clone(), write_result)
+            .await?
+        else {
+            return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
+                &self.project_path,
+                chapter_number,
+                write_result,
+            )));
+        };
+        *draft = repaired_draft;
+        *write_result = repaired_write_result;
+        Ok(MetadataRepairFlow::Repaired)
     }
 
     async fn approve_chapter_after_validation(

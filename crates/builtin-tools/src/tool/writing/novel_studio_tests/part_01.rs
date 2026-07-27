@@ -2145,6 +2145,52 @@ fn chapter_metadata_summary_rejects_prior_chapter_fact_reuse() {
 }
 
 #[test]
+fn chapter_metadata_does_not_rebuild_summary_from_loosely_supported_stale_facts() {
+    let mut manifest = test_manifest_with_primary_character();
+    if let Some(contract) = manifest.contract.as_mut() {
+        contract.characters = vec![
+            "name: 陆栖宁; role: 主角; desire: 修复灰阶公寓".to_string(),
+            "name: 梁栖言; role: 对手; desire: 提高旧城项目效率".to_string(),
+        ];
+    }
+    ensure_project_governance(&mut manifest);
+    let content = "陆栖宁在灰阶公寓里向梁栖言展示保留旧墙的修复方案。梁栖言坚持商业效率，要求拆除东翼。陆栖宁拒绝退让，并与梁栖言约定用一个月的租金回报证明方案价值。";
+    let stale_summary = "陆栖宁调整呼吸后进入屋内；梁栖言的气息像一道墙隔绝了她熟悉的天地";
+    let mut chapter = ChapterRecord {
+        number: 2,
+        title: "侵入者".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0002.md".to_string(),
+        summary: stale_summary.to_string(),
+        unit_count: 2500,
+        status: "draft".to_string(),
+        key_facts: vec![
+            "陆栖宁调整呼吸后进入屋内".to_string(),
+            "梁栖言的气息像一道墙隔绝了陆栖宁熟悉的天地".to_string(),
+        ],
+        continuity_updates: vec!["陆栖宁与梁栖言之间形成无形隔墙".to_string()],
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+
+    assert!(!chapter_summary_supported_by_content(
+        stale_summary,
+        content,
+        &manifest.language
+    ));
+
+    normalize_chapter_metadata_against_body(&manifest, &mut chapter, content);
+
+    assert_ne!(chapter.summary, stale_summary);
+    assert!(chapter_summary_supported_by_content(
+        &chapter.summary,
+        content,
+        &manifest.language
+    ));
+}
+
+#[test]
 fn chapter_metadata_title_uses_validated_fact_evidence() {
     let mut manifest = test_manifest_with_primary_character();
     if let Some(contract) = manifest.contract.as_mut() {
@@ -3012,6 +3058,71 @@ fn quality_gate_allows_established_character_pronoun_consistency() {
     assert!(
         issues.is_empty(),
         "consistent pronoun use should not be blocked: {issues:?}"
+    );
+}
+
+#[test]
+fn quality_gate_does_not_multiply_one_ambiguous_pronoun_across_overlapping_name_windows() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0001".to_string(),
+            canonical_name: "陆启朔".to_string(),
+            aliases: Vec::new(),
+            identity_markers: vec!["pronoun_profile:masculine".to_string()],
+            role: "主角".to_string(),
+            desire: "追查真相".to_string(),
+            fear: "失去记忆".to_string(),
+            bottom_line: "不伤害无辜".to_string(),
+            arc_start: String::new(),
+            arc_end: String::new(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0002".to_string(),
+            canonical_name: "季砚岚".to_string(),
+            aliases: Vec::new(),
+            identity_markers: vec!["pronoun_profile:feminine".to_string()],
+            role: "对手".to_string(),
+            desire: "维持秩序".to_string(),
+            fear: "城市失控".to_string(),
+            bottom_line: "不放弃中枢".to_string(),
+            arc_start: String::new(),
+            arc_end: String::new(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    ];
+    let chapter = ChapterRecord {
+        number: 2,
+        title: "逃亡".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0002.md".to_string(),
+        summary: String::new(),
+        unit_count: 2500,
+        status: "draft".to_string(),
+        key_facts: Vec::new(),
+        continuity_updates: Vec::new(),
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    let content = "季砚岚站在数据洪流中，她抬手关闭接口。陆启朔逃进贫民窟，那里也许是他唯一的庇护所。季砚岚回到中枢，她命令特工继续追查。";
+
+    let issues = contract_character_pronoun_drift_issues(&manifest, &chapter, content);
+
+    assert!(
+        issues.is_empty(),
+        "one pronoun attached to another established character must not be multiplied by overlapping windows: {issues:?}"
     );
 }
 

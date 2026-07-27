@@ -943,18 +943,17 @@ where
         {
             ModelPatchAttempt::NotApplicable => {}
             ModelPatchAttempt::NoOutput => {
-                model_patch_budget.record(false);
+                model_patch_budget.record();
                 runtime
                     .record_creation_contract_checkpoint(
                         supervisor_task_id,
                         "creation_contract:model_patch_no_output",
                         Some(
-                            "合同模型补丁没有返回候选；本轮未产生净提升，停止继续调用同一模型"
+                            "合同元数据补丁没有返回候选；转入下一次有限 typed stage 尝试"
                                 .to_string(),
                         ),
                     )
                     .await?;
-                break;
             }
             ModelPatchAttempt::Candidate(metadata_repair) => {
                 current_outcome = metadata_repair.outcome;
@@ -963,7 +962,7 @@ where
                 let progressed =
                     ContractRepairProgressSnapshot::new(&current_draft, &current_issues)
                         .improves_on(&before_patch);
-                model_patch_budget.record(progressed);
+                model_patch_budget.record();
                 if metadata_repair.ready {
                     if let Some(issue) = reopen_draft_if_semantics_block(
                         runtime,
@@ -985,19 +984,20 @@ where
                             supervisor_task_id,
                             "creation_contract:model_patch_no_progress",
                             Some(format!(
-                                "合同模型补丁没有减少 blocker 或补齐关键字段，保留当前最佳候选并停止：{}",
+                                "合同元数据补丁没有减少 blocker 或补齐关键字段，保留当前最佳候选并转入下一次有限尝试：{}",
                                 current_issues.join("；")
                             )),
                         )
                         .await?;
-                    break;
-                }
-                if model_patch_budget.can_attempt() {
+                } else if model_patch_budget.can_attempt() {
                     continue;
                 } else {
                     break;
                 }
             }
+        }
+        if !model_patch_budget.can_attempt() {
+            break;
         }
 
         let Some(current_stage) = select_contract_completion_stage_excluding(
@@ -1069,12 +1069,21 @@ where
                     );
                     current_issues.push("合同修复输出没有形成可审查合同候选");
                     current_issues.sort_dedup();
-                    model_patch_budget.record(false);
+                    model_patch_budget.record();
+                    if prepare_next_contract_stage_attempt(
+                        &current_draft,
+                        &current_issues,
+                        &mut exhausted_stages,
+                        current_stage,
+                        &model_patch_budget,
+                    ) {
+                        continue;
+                    }
                     break;
                 };
                 if repaired_submission.is_ready() {
                     let mut render_draft = render_draft;
-                    model_patch_budget.record(true);
+                    model_patch_budget.record();
                     if let Some(issue) = reopen_draft_if_semantics_block(
                         runtime,
                         session_id,
@@ -1124,13 +1133,13 @@ where
                     .await?
                     {
                         current_issues = issue;
-                        model_patch_budget.record(true);
+                        model_patch_budget.record();
                         if model_patch_budget.can_attempt() {
                             continue;
                         }
                         break;
                     }
-                    model_patch_budget.record(true);
+                    model_patch_budget.record();
                     current_outcome.response = stabilize_creation_contract_user_response(
                         &current_draft,
                         &current_outcome.response,
@@ -1140,7 +1149,7 @@ where
                 let progressed =
                     ContractRepairProgressSnapshot::new(&current_draft, &current_issues)
                         .improves_on(&before_patch);
-                model_patch_budget.record(progressed);
+                model_patch_budget.record();
                 if !progressed {
                     let submission_diagnostics = repaired_submission.gate.actionable_issues();
                     let current_issue_messages = current_issues.messages();
@@ -1153,13 +1162,27 @@ where
                             supervisor_task_id,
                             "creation_contract:auto_repair_no_progress",
                             Some(format!(
-                                "{current_stage:?} 阶段没有产生新的结构化进展，保留当前最佳候选并停止：{}{}",
+                                "{current_stage:?} 阶段没有产生新的结构化进展，保留当前最佳候选并转入下一次有限尝试：{}{}",
                                 current_issues.join("；"),
                                 submission_diagnostic_suffix
                             )),
                         )
                         .await?;
-                    push_exhausted_contract_stage(&mut exhausted_stages, current_stage);
+                    append_contract_patch_feedback(
+                        &mut current_issues,
+                        current_stage,
+                        &current_issue_messages,
+                        &submission_diagnostics,
+                    );
+                    if prepare_next_contract_stage_attempt(
+                        &current_draft,
+                        &current_issues,
+                        &mut exhausted_stages,
+                        current_stage,
+                        &model_patch_budget,
+                    ) {
+                        continue;
+                    }
                     break;
                 }
                 exhausted_stages.clear();
@@ -1168,8 +1191,16 @@ where
                 }
             }
             Ok(None) => {
-                model_patch_budget.record(false);
-                push_exhausted_contract_stage(&mut exhausted_stages, current_stage);
+                model_patch_budget.record();
+                if prepare_next_contract_stage_attempt(
+                    &current_draft,
+                    &current_issues,
+                    &mut exhausted_stages,
+                    current_stage,
+                    &model_patch_budget,
+                ) {
+                    continue;
+                }
                 break;
             }
             Err(error) => {
@@ -1303,6 +1334,32 @@ fn contract_repair_submission_diagnostic_suffix(
     }
 }
 
+fn append_contract_patch_feedback(
+    issues: &mut ContractIssueList,
+    stage: ContractCompletionStage,
+    authoritative_issues: &[String],
+    submission_issues: &[String],
+) {
+    let stage_key = super::patch_prompt::contract_completion_stage_key(stage);
+    let feedback_code = format!("contract.patch_feedback.{stage_key}");
+    issues.retain(|issue| issue.code != feedback_code);
+    for diagnostic in submission_issues
+        .iter()
+        .filter(|diagnostic| !authoritative_issues.contains(diagnostic))
+    {
+        issues.push_issue(ContractIssue::new(
+            feedback_code.clone(),
+            ContractIssueKind::Diagnostic,
+            ContractIssueEvidence::new(
+                format!("previous_model_patch:{stage_key}"),
+                diagnostic.clone(),
+            ),
+            format!("上一轮 typed patch 被拒原因：{diagnostic}"),
+        ));
+    }
+    issues.sort_dedup();
+}
+
 fn push_exhausted_contract_stage(
     exhausted_stages: &mut Vec<ContractCompletionStage>,
     stage: ContractCompletionStage,
@@ -1310,6 +1367,23 @@ fn push_exhausted_contract_stage(
     if !exhausted_stages.contains(&stage) {
         exhausted_stages.push(stage);
     }
+}
+
+fn prepare_next_contract_stage_attempt(
+    draft: &SessionCreationDraftState,
+    issues: &ContractIssueList,
+    exhausted_stages: &mut Vec<ContractCompletionStage>,
+    current_stage: ContractCompletionStage,
+    budget: &ContractModelPatchBudget,
+) -> bool {
+    push_exhausted_contract_stage(exhausted_stages, current_stage);
+    if !budget.can_attempt() {
+        return false;
+    }
+    if select_contract_completion_stage_excluding(draft, issues, exhausted_stages).is_none() {
+        exhausted_stages.clear();
+    }
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1349,26 +1423,22 @@ impl ContractRepairProgressSnapshot {
 #[derive(Debug, Default, PartialEq, Eq)]
 struct ContractModelPatchBudget {
     completed_attempts: usize,
-    next_attempt_allowed: bool,
 }
 
 impl ContractModelPatchBudget {
     const ABSOLUTE_MAX_ATTEMPTS: usize = 5;
 
     fn can_attempt(&self) -> bool {
-        self.completed_attempts == 0
-            || (self.completed_attempts < Self::ABSOLUTE_MAX_ATTEMPTS && self.next_attempt_allowed)
+        self.completed_attempts < Self::ABSOLUTE_MAX_ATTEMPTS
     }
 
     fn next_attempt_number(&self) -> usize {
         self.completed_attempts + 1
     }
 
-    fn record(&mut self, net_improvement: bool) {
+    fn record(&mut self) {
         debug_assert!(self.can_attempt());
         self.completed_attempts = (self.completed_attempts + 1).min(Self::ABSOLUTE_MAX_ATTEMPTS);
-        self.next_attempt_allowed =
-            self.completed_attempts < Self::ABSOLUTE_MAX_ATTEMPTS && net_improvement;
     }
 }
 
@@ -2311,26 +2381,27 @@ mod tests {
     }
 
     #[test]
-    fn contract_model_patch_budget_stops_after_first_non_improving_attempt() {
+    fn contract_model_patch_budget_keeps_bounded_alternative_attempts_after_no_progress() {
         let mut budget = ContractModelPatchBudget::default();
         assert!(budget.can_attempt());
         assert_eq!(budget.next_attempt_number(), 1);
 
-        budget.record(false);
+        budget.record();
 
         assert_eq!(budget.completed_attempts, 1);
-        assert!(!budget.can_attempt());
+        assert!(budget.can_attempt());
+        assert_eq!(budget.next_attempt_number(), 2);
     }
 
     #[test]
     fn contract_model_patch_budget_allows_bounded_follow_ups_while_each_attempt_improves() {
         let mut budget = ContractModelPatchBudget::default();
         for completed in 1..ContractModelPatchBudget::ABSOLUTE_MAX_ATTEMPTS {
-            budget.record(true);
+            budget.record();
             assert!(budget.can_attempt());
             assert_eq!(budget.next_attempt_number(), completed + 1);
         }
-        budget.record(true);
+        budget.record();
 
         assert_eq!(
             budget.completed_attempts,
@@ -2340,14 +2411,51 @@ mod tests {
     }
 
     #[test]
-    fn contract_model_patch_budget_stops_follow_ups_on_first_non_improving_attempt() {
+    fn contract_model_patch_budget_remains_finite_when_attempts_do_not_improve() {
         let mut budget = ContractModelPatchBudget::default();
-        budget.record(true);
-        assert!(budget.can_attempt());
+        for _ in 0..ContractModelPatchBudget::ABSOLUTE_MAX_ATTEMPTS {
+            assert!(budget.can_attempt());
+            budget.record();
+        }
 
-        budget.record(false);
-
-        assert_eq!(budget.completed_attempts, 2);
+        assert_eq!(
+            budget.completed_attempts,
+            ContractModelPatchBudget::ABSOLUTE_MAX_ATTEMPTS
+        );
         assert!(!budget.can_attempt());
+    }
+
+    #[test]
+    fn rejected_patch_feedback_is_available_to_the_next_typed_stage_prompt() {
+        let mut issues = ContractIssueList::single(
+            "contract.outline",
+            ContractIssueKind::Plot,
+            "outline",
+            "ContractBlocker: 小说合同末卷没有执行权威终局",
+        );
+        let authoritative = issues.messages();
+        append_contract_patch_feedback(
+            &mut issues,
+            ContractCompletionStage::Plot,
+            &authoritative,
+            &["plot_patch 分卷规划混入 JSON 结构残片".to_string()],
+        );
+
+        assert!(issues.iter().any(|issue| {
+            issue.code == "contract.patch_feedback.plot"
+                && issue.text.contains("分卷规划混入 JSON 结构残片")
+        }));
+        assert!(super::super::patch_prompt::stage_relevant_contract_issues(
+            ContractCompletionStage::Plot,
+            &issues,
+        )
+        .iter()
+        .any(|issue| issue.contains("上一轮 typed patch 被拒原因")));
+        assert!(super::super::patch_prompt::stage_relevant_contract_issues(
+            ContractCompletionStage::Characters,
+            &issues,
+        )
+        .iter()
+        .all(|issue| !issue.contains("上一轮 typed patch 被拒原因")));
     }
 }

@@ -50,6 +50,22 @@ pub(crate) fn allocate_character_name(
     })
 }
 
+pub(crate) fn cjk_character_surname(name: &str) -> Option<&str> {
+    let name = name.trim();
+    if name.chars().count() < 2 || !name.chars().all(is_cjk_unified) {
+        return None;
+    }
+    const COMPOUND_SURNAMES: &[&str] = &[
+        "欧阳", "司马", "上官", "诸葛", "东方", "皇甫", "尉迟", "公孙", "慕容", "宇文", "长孙",
+        "司徒", "司空", "南宫", "夏侯",
+    ];
+    COMPOUND_SURNAMES
+        .iter()
+        .copied()
+        .find(|surname| name.starts_with(surname))
+        .or_else(|| name.get(..name.char_indices().nth(1)?.0))
+}
+
 fn character_name_is_distinct_from_used(candidate: &str, used_names: &BTreeSet<String>) -> bool {
     if used_names.contains(candidate) {
         return false;
@@ -253,6 +269,13 @@ mod tests {
         assert!(!character_name_is_distinct_from_used("梁知弦", &used));
         assert!(character_name_is_distinct_from_used("林望安", &used));
         assert!(character_name_is_distinct_from_used("梁知白", &used));
+    }
+
+    #[test]
+    fn extracts_single_and_compound_cjk_character_surnames() {
+        assert_eq!(cjk_character_surname("阮昭言"), Some("阮"));
+        assert_eq!(cjk_character_surname("欧阳知白"), Some("欧阳"));
+        assert_eq!(cjk_character_surname("Mara Vale"), None);
     }
 }
 use std::collections::BTreeSet;

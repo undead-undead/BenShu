@@ -242,7 +242,9 @@ pub(super) fn restore_recovered_attempt_budget(
         CandidateProvenance::TailCompletion | CandidateProvenance::TruncatedRecovery => {
             budget.tail_completion_attempted = true
         }
-        CandidateProvenance::MetadataRepair => budget.metadata_repair_attempted = true,
+        CandidateProvenance::MetadataRepair => {
+            budget.metadata_repair_attempts = budget.metadata_repair_attempts.saturating_add(1)
+        }
         CandidateProvenance::SemanticRevision | CandidateProvenance::Regenerated => {
             budget.semantic_attempts += 1
         }

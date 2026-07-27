@@ -184,7 +184,7 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
         "正文字数",
         "字档位",
         "字档",
-        "chapter",
+        "chapter target",
     ]
     .into_iter()
     .chain(body_is_chapter_scoped.then_some("正文"));
@@ -272,7 +272,8 @@ pub fn requested_total_unit_target(message: &str) -> Option<usize> {
         "一章",
         "单章",
         "本章",
-        "章节",
+        "章节目标",
+        "章节字数",
         "正文目标",
         "正文字数",
         "字档位",
@@ -1534,6 +1535,18 @@ mod tests {
         assert_eq!(
             requested_total_unit_target("全书2500字，每章2500字。"),
             Some(2500)
+        );
+        assert_eq!(
+            requested_raw_chapter_unit_target(
+                "按照当前合同和已批准章节继续写到至少5万字，最后要有完整结局。"
+            ),
+            None
+        );
+        assert_eq!(
+            requested_total_unit_target(
+                "按照当前合同和已批准章节继续写到至少5万字，最后要有完整结局。"
+            ),
+            Some(50_000)
         );
     }
 

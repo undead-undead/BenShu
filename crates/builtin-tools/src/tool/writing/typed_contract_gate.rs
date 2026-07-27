@@ -993,6 +993,9 @@ pub(crate) fn world_rule_clause_depends_on_previous(value: &str) -> bool {
         ]
         .iter()
         .any(|prefix| compact.starts_with(prefix))
+        || ["代价是", "代价为", "限制是", "限制为", "后果是", "后果为"]
+            .iter()
+            .any(|prefix| compact.starts_with(prefix))
         || [
             "则会",
             "则必须",
@@ -1198,6 +1201,12 @@ mod tests {
         ));
         assert!(world_rule_looks_truncated_or_not_actionable(
             "将永久失去大型竞标资格"
+        ));
+        assert!(world_rule_looks_truncated_or_not_actionable(
+            "代价是寿元减半"
+        ));
+        assert!(world_rule_looks_truncated_or_not_actionable(
+            "后果为永久失去资格"
         ));
     }
 

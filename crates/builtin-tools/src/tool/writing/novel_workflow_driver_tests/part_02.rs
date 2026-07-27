@@ -146,7 +146,7 @@ fn persisted_rejected_length_topup_still_exhausts_the_one_shot_budget() {
 }
 
 #[test]
-fn persisted_rejected_semantic_revision_exhausts_the_default_budget() {
+fn persisted_rejected_semantic_revision_leaves_exactly_one_alternative_attempt() {
     let mut budget = RevisionBudget::default();
 
     super::super::chapter_runtime::restore_recovered_attempt_budget(
@@ -155,7 +155,27 @@ fn persisted_rejected_semantic_revision_exhausts_the_default_budget() {
     );
 
     assert_eq!(budget.semantic_attempts, 1);
-    assert!(!budget.can_attempt_semantic_revision(false));
+    assert!(budget.can_attempt_semantic_revision());
+    super::super::chapter_runtime::restore_recovered_attempt_budget(
+        &mut budget,
+        CandidateProvenance::SemanticRevision,
+    );
+    assert_eq!(budget.semantic_attempts, 2);
+    assert!(!budget.can_attempt_semantic_revision());
+}
+
+#[test]
+fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
+    let mut budget = RevisionBudget::default();
+
+    for _ in 0..4 {
+        super::super::chapter_runtime::restore_recovered_attempt_budget(
+            &mut budget,
+            CandidateProvenance::MetadataRepair,
+        );
+    }
+
+    assert_eq!(budget.metadata_repair_attempts, 4);
 }
 
     #[test]

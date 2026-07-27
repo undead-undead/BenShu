@@ -220,6 +220,8 @@ fn validate_and_bind_settlement(
         accepted_changes.push(change);
     }
     settlement.state_changes = accepted_changes;
+    settlement.resolved_hooks =
+        validated_resolved_hook_labels(authority, &settlement.state_changes);
 
     validation.warnings.sort();
     validation.warnings.dedup();
@@ -227,6 +229,34 @@ fn validate_and_bind_settlement(
     validation.advisories.dedup();
     validation.passed = validation.warnings.is_empty();
     validation
+}
+
+fn validated_resolved_hook_labels(
+    authority: &governance::SealedChapterAuthority,
+    state_changes: &[novel_bible::ChapterStateChange],
+) -> Vec<String> {
+    let mut labels = Vec::new();
+    for change in state_changes.iter().filter(|change| {
+        change.event_type == novel_bible::ChapterStateEventType::HookPayOff
+            && matches!(
+                change.allowance,
+                novel_bible::StateChangeAllowance::Contract
+                    | novel_bible::StateChangeAllowance::BoundedIncidental
+            )
+    }) {
+        let Some((_, label)) =
+            authority_values(authority, novel_bible::ChapterStateEventType::HookPayOff)
+                .into_iter()
+                .find(|(path, _)| path == change.authority_path.trim())
+        else {
+            continue;
+        };
+        let label = label.trim();
+        if !label.is_empty() && !labels.iter().any(|existing| existing == label) {
+            labels.push(label.to_string());
+        }
+    }
+    labels
 }
 
 fn state_change_claims_forbidden_transition(change: &novel_bible::ChapterStateChange) -> bool {
@@ -1088,6 +1118,87 @@ mod tests {
 
         assert!(parse_error.is_none());
         assert!(validation.passed, "{:?}", validation.warnings);
+    }
+
+    #[test]
+    fn display_hook_resolution_without_typed_payoff_is_discarded() {
+        let authority = hook_authority("", json!([]));
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 12,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "沈砚在城门外停下。";
+        let raw = json!({
+            "current_state": "沈砚仍在城门外。",
+            "chapter_summary": "沈砚在城门外停下。",
+            "resolved_hooks": ["旧城密钥已回收"],
+            "state_changes": []
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body(&raw, body, &chapter, &authority);
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert!(settlement.resolved_hooks.is_empty());
+    }
+
+    #[test]
+    fn resolved_hooks_are_derived_from_the_matching_validated_typed_payoff() {
+        let mut authority = hook_authority(
+            "",
+            json!([{"id": "hook-old-city-key", "title": "旧城密钥已回收"}]),
+        );
+        authority.chapter_contract.hook_paid_off = vec!["旧城密钥已回收".to_string()];
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 12,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "沈砚从石匣中取出旧城密钥，确认封锁已经解除。";
+        let raw = json!({
+            "current_state": "沈砚已经取回旧城密钥。",
+            "chapter_summary": "沈砚取回旧城密钥并解除封锁。",
+            "resolved_hooks": ["模型自行改写的错误标签"],
+            "state_changes": [{
+                "entity_id": "model-invented-hook-id",
+                "event_type": "hook_pay_off",
+                "value": body,
+                "evidence": {"excerpt": body},
+                "authority_path": "chapter_contract.hook_paid_off/0",
+                "authority_excerpt": "模型自行改写的错误标签"
+            }]
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body(&raw, body, &chapter, &authority);
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(settlement.resolved_hooks, ["旧城密钥已回收"]);
+        assert_eq!(settlement.state_changes.len(), 1);
+        assert_eq!(settlement.state_changes[0].entity_id, "hook-old-city-key");
     }
 
     #[test]

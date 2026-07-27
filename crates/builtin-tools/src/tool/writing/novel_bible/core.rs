@@ -95,7 +95,11 @@ pub(crate) fn apply_approved_chapter_delta(
     );
     ensure_character_anchors_from_chapter(bible, chapter);
     apply_typed_state_changes(bible, chapter);
-    super::contract_settlement::apply_approved_chapter(&mut bible.structured_contract_v2, chapter);
+    super::contract_settlement::apply_approved_chapter(
+        &mut bible.structured_contract_v2,
+        &bible.character_ledger,
+        chapter,
+    );
     sanitize_character_ledger(&mut bible.character_ledger);
     bible.updated_at = now;
 }

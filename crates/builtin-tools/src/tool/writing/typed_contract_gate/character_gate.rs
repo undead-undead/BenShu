@@ -1470,12 +1470,8 @@ fn role_prefixed_character_references(text: &str) -> Vec<String> {
 }
 
 fn reference_starts_with_compound_surname(reference: &str) -> bool {
-    [
-        "欧阳", "司马", "上官", "诸葛", "东方", "皇甫", "尉迟", "公孙", "慕容", "宇文", "长孙",
-        "司徒", "司空", "南宫", "夏侯",
-    ]
-    .iter()
-    .any(|surname| reference.starts_with(surname))
+    crate::tool::writing::naming::cjk_character_surname(reference)
+        .is_some_and(|surname| surname.chars().count() == 2)
 }
 
 fn direct_role_reference_name(after_marker: &str) -> Option<String> {

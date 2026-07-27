@@ -364,25 +364,22 @@ fn character_pronoun_evidence_near_name(
     name: &str,
     other_character_names: &BTreeSet<String>,
 ) -> CharacterPronounEvidence {
-    let windows = cjk_windows_around_term(content, name, 64);
-    let mut evidence = CharacterPronounEvidence::default();
-    for window in windows {
-        evidence.feminine += direct_identity_marker_count_for_name(
-            &window,
+    CharacterPronounEvidence {
+        feminine: direct_identity_marker_count_for_name(
+            content,
             name,
             other_character_names,
             FEMININE_IDENTITY_MARKERS,
             FEMININE_ROLE_MARKERS,
-        );
-        evidence.masculine += direct_identity_marker_count_for_name(
-            &window,
+        ),
+        masculine: direct_identity_marker_count_for_name(
+            content,
             name,
             other_character_names,
             MASCULINE_IDENTITY_MARKERS,
             MASCULINE_ROLE_MARKERS,
-        );
+        ),
     }
-    evidence
 }
 
 fn direct_identity_marker_count_for_name(
@@ -621,41 +618,6 @@ fn identity_marker_occurrence_is_explicit(content: &str, index: usize, marker: &
                         '人' | '者' | '方' | '乡' | '处' | '物' | '国' | '校' | '日' | '年'
                     )
                 })))
-}
-
-fn cjk_windows_around_term(content: &str, term: &str, radius: usize) -> Vec<String> {
-    let term = term.trim();
-    if term.is_empty() {
-        return Vec::new();
-    }
-    let chars = content.chars().collect::<Vec<_>>();
-    let term_chars = term.chars().collect::<Vec<_>>();
-    if term_chars.is_empty() || term_chars.len() > chars.len() {
-        return Vec::new();
-    }
-    let mut windows = Vec::new();
-    for index in 0..=chars.len() - term_chars.len() {
-        if chars[index..index + term_chars.len()] != term_chars {
-            continue;
-        }
-        let start = index.saturating_sub(radius);
-        let after_term = index + term_chars.len();
-        let mut end = (after_term + radius).min(chars.len());
-        if let Some(boundary_offset) = chars[after_term..]
-            .iter()
-            .position(|ch| matches!(ch, '。' | '！' | '？' | '；' | '\n'))
-        {
-            let after_boundary = after_term + boundary_offset + 1;
-            let next_boundary = chars[after_boundary..]
-                .iter()
-                .position(|ch| matches!(ch, '。' | '！' | '？' | '；' | '\n'))
-                .map(|offset| after_boundary + offset + 1)
-                .unwrap_or(chars.len());
-            end = end.max(next_boundary);
-        }
-        windows.push(chars[start..end].iter().collect());
-    }
-    windows
 }
 
 pub(in crate::tool::writing::novel_studio) async fn approved_chapter_integrity_blockers(

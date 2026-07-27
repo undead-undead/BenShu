@@ -191,7 +191,7 @@ fn character_patch_prompt(
     let patch_scope_guidance = if repairs_locked_roles {
         "当前角色姓名权威已锁定，但质量门明确指出角色定位与用户故事权威冲突。本轮必须输出完整角色表：所有 canonical_name 必须原样保留且每人恰好出现一次，不得新建、删除、合并或互换姓名；必须按用户权威和稳定故事锚点纠正 role，并同步重写与新 role 一致的欲望、恐惧、底线、弧线和计划登场/离场字段。这是角色功能权威纠错，不是改名。"
     } else if repairs_existing_authority {
-        "当前角色权威表已经建立。本轮只输出质量门点名角色的局部修复：canonical_name 必须原样复用；只填写需要替换的欲望、恐惧、底线、弧线、计划登场或计划离场字段，未出错字段可以省略。如果质量门点名计划登场/离场，补丁必须返回对应的 planned_entry/planned_exit，并引用稳定锚点中的实际分卷。不得新建角色或改变角色定位。"
+        "当前角色权威表已经建立。本轮只输出质量门点名角色的局部修复：canonical_name 必须原样复用；只填写需要替换的欲望、恐惧、底线、弧线、计划登场或计划离场字段，未出错字段可以省略。如果质量门点名计划登场/离场，补丁必须返回对应的 planned_entry/planned_exit，并引用稳定锚点中的实际分卷。不得新建角色或改变角色定位。如果缺口点名权威表外人物姓名，必须在该锚点中删除这个姓名并保留准确的无姓名身份泛称（例如“妹妹”“导师”“对手”），或者改用角色权威表中语义确实对应的 canonical_name；不得原样返回含表外姓名的旧锚点，也不得为绕过质量门而虚构替代姓名。"
     } else {
         "当前尚未建立角色权威表，必须一次生成完整角色表。"
     };
@@ -548,7 +548,9 @@ pub(super) fn stage_relevant_contract_issues(
         filtered = issue_set
             .iter()
             .filter(|issue| {
-                issue.kind.is_diagnostic() || matches!(issue.kind, ContractIssueKind::Other)
+                (issue.kind.is_diagnostic()
+                    && contract_issue_matches_completion_stage(stage, issue))
+                    || matches!(issue.kind, ContractIssueKind::Other)
             })
             .map(|issue| issue.text.clone())
             .collect();
@@ -562,6 +564,9 @@ fn contract_issue_matches_completion_stage(
     stage: ContractCompletionStage,
     issue: ClassifiedContractIssue<'_>,
 ) -> bool {
+    if let Some(feedback_stage) = issue.code.strip_prefix("contract.patch_feedback.") {
+        return feedback_stage == contract_completion_stage_key(stage);
+    }
     if issue.kind.is_diagnostic() {
         return true;
     }
@@ -592,6 +597,15 @@ fn contract_issue_matches_completion_stage(
         ContractCompletionStage::Governance => {
             matches!(issue.kind, ContractIssueKind::Governance)
         }
+    }
+}
+
+pub(super) const fn contract_completion_stage_key(stage: ContractCompletionStage) -> &'static str {
+    match stage {
+        ContractCompletionStage::Skeleton => "skeleton",
+        ContractCompletionStage::Characters => "characters",
+        ContractCompletionStage::Plot => "plot",
+        ContractCompletionStage::Governance => "governance",
     }
 }
 
@@ -883,6 +897,48 @@ mod tests {
 
         assert_eq!(patch.characters.len(), 3);
         assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn locked_character_repair_prompt_requires_external_names_to_be_generalized() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-character-external-name-repair",
+            "fiction",
+            "写一部都市重生小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            "姓名：季望真；角色：主角；欲望：找回妹妹林瑶；恐惧：被彻底遗忘；底线：不牺牲盟友；弧线起点：被动接受；弧线终点：主动重构".to_string(),
+            "姓名：商云野；角色：关键关系对象；欲望：建立独立记忆库；恐惧：数据被篡改；底线：守住原始代码；弧线起点：多疑疏离；弧线终点：信任交付".to_string(),
+            "姓名：阮星安；角色：对手；欲望：垄断全城记忆；恐惧：失去控制；底线：不放弃核心服务器；弧线起点：傲慢掌控；弧线终点：失控崩塌".to_string(),
+        ];
+        let issues = ContractIssueList::single(
+            "contract.character_reference",
+            ContractIssueKind::Characters,
+            "characters",
+            "ContractBlocker: 角色 `季望真` 的欲望锚点引用了权威表外角色 `林瑶`",
+        );
+
+        let prompt = character_patch_prompt(
+            &draft,
+            "继续修复当前合同",
+            &issues,
+            "稳定锚点",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(prompt.contains("保留准确的无姓名身份泛称"), "{prompt}");
+        assert!(
+            prompt.contains("不得原样返回含表外姓名的旧锚点"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("不得为绕过质量门而虚构替代姓名"),
+            "{prompt}"
+        );
     }
 
     #[test]

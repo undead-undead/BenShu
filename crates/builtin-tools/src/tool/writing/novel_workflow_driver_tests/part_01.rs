@@ -1255,6 +1255,29 @@
     }
 
     #[test]
+    fn routed_full_book_scope_remains_project_scale_authority() {
+        let task = "用户要求继续当前写作项目。不要重新规划合同，不要新开项目。\n\
+USER REQUEST\n\
+继续自动处理当前阻塞，并按已确认合同连续完成、审稿和保存整本小说，直到全书完结。\n\
+本轮范围：用户要求完成全书；按当前合同推进全部剩余章节到目标规模和结局完成门；每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。";
+
+        assert!(task_requests_project_scale_generation(task));
+        assert!(!task_requests_single_chapter_turn(task));
+        assert_eq!(
+            existing_project_turn_chapter_count(
+                1,
+                8_575,
+                Some(100_000),
+                Some(2_500),
+                true,
+                false,
+                true,
+            ),
+            37
+        );
+    }
+
+    #[test]
     fn target_gate_uses_approved_units_not_draft_units() {
         let state = json!({
             "approved_units": 96_000,

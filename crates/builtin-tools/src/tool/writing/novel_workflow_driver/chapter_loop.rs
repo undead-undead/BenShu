@@ -2,8 +2,7 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const DEFAULT_SEMANTIC_REVISION_BUDGET: usize = 1;
-const ABSOLUTE_SEMANTIC_REVISION_BUDGET: usize = 2;
+const SEMANTIC_REVISION_BUDGET: usize = 2;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct RevisionBudget {
@@ -14,7 +13,7 @@ pub(super) struct RevisionBudget {
     #[serde(default)]
     pub(super) tail_completion_attempted: bool,
     #[serde(default)]
-    pub(super) metadata_repair_attempted: bool,
+    pub(super) metadata_repair_attempts: usize,
     #[serde(default)]
     pub(super) semantic_attempts: usize,
 }
@@ -35,7 +34,6 @@ pub(super) struct BoundedRevisionCycle {
     pub(super) best_candidate: DraftCandidateRecord,
     pub(super) state: RevisionState,
     pub(super) next_iteration: usize,
-    pub(super) semantic_improved_after_first: bool,
 }
 
 impl RevisionBudget {
@@ -43,9 +41,8 @@ impl RevisionBudget {
         !self.local_cleanup_fingerprints.contains(body_fingerprint)
     }
 
-    pub(super) fn can_attempt_semantic_revision(&self, improved_after_first: bool) -> bool {
-        self.semantic_attempts < DEFAULT_SEMANTIC_REVISION_BUDGET
-            || (self.semantic_attempts < ABSOLUTE_SEMANTIC_REVISION_BUDGET && improved_after_first)
+    pub(super) fn can_attempt_semantic_revision(&self) -> bool {
+        self.semantic_attempts < SEMANTIC_REVISION_BUDGET
     }
 }
 
@@ -471,7 +468,6 @@ impl NovelChapterRunner {
             best_candidate,
             state: persisted_state,
             next_iteration,
-            semantic_improved_after_first: false,
         })
     }
 
@@ -704,14 +700,13 @@ mod tests {
     }
 
     #[test]
-    fn semantic_budget_defaults_to_one_and_never_exceeds_two() {
+    fn semantic_budget_allows_one_alternative_after_a_bad_candidate_and_stops_at_two() {
         let mut budget = RevisionBudget::default();
-        assert!(budget.can_attempt_semantic_revision(false));
+        assert!(budget.can_attempt_semantic_revision());
         budget.semantic_attempts = 1;
-        assert!(!budget.can_attempt_semantic_revision(false));
-        assert!(budget.can_attempt_semantic_revision(true));
+        assert!(budget.can_attempt_semantic_revision());
         budget.semantic_attempts = 2;
-        assert!(!budget.can_attempt_semantic_revision(true));
+        assert!(!budget.can_attempt_semantic_revision());
     }
 
     #[test]

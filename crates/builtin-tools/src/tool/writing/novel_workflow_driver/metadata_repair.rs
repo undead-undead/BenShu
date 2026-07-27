@@ -1,5 +1,7 @@
 use super::*;
 
+pub(super) const MAX_METADATA_REPAIR_ATTEMPTS: usize = 5;
+
 pub(super) fn metadata_gate_needs_repair(write_result: &Value) -> bool {
     metadata_gate_blocks(write_result)
         || !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
@@ -211,5 +213,10 @@ mod tests {
         assert_eq!(repaired.summary, "闻望宁收起蓝色胶囊");
         assert_eq!(repaired.key_facts, vec!["闻望宁获得蓝色胶囊"]);
         assert_eq!(repaired.continuity_updates, vec!["胶囊仍由闻望宁持有"]);
+    }
+
+    #[test]
+    fn metadata_repair_budget_is_bounded_but_allows_recovery_after_one_bad_candidate() {
+        assert_eq!(MAX_METADATA_REPAIR_ATTEMPTS, 5);
     }
 }

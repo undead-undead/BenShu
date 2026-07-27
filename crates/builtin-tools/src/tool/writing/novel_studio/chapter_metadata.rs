@@ -92,10 +92,12 @@ pub(super) fn normalize_chapter_metadata_against_body(
     if chapter_summary_is_body_prefix(&chapter.summary, content, &manifest.language)
         || chapter_summary_looks_like_prose_fragment(&chapter.summary, &manifest.language)
     {
-        if let Some(summary) = summary_from_truth_items(manifest, &chapter.key_facts) {
+        if let Some(summary) =
+            supported_summary_from_truth_items(manifest, &chapter.key_facts, content)
+        {
             chapter.summary = summary;
         } else if let Some(summary) =
-            summary_from_truth_items(manifest, &chapter.continuity_updates)
+            supported_summary_from_truth_items(manifest, &chapter.continuity_updates, content)
         {
             chapter.summary = summary;
         }
@@ -105,20 +107,24 @@ pub(super) fn normalize_chapter_metadata_against_body(
     ensure_chapter_continuity_updates(manifest, chapter, content);
 
     if !chapter_summary_has_authority_anchor(manifest, &chapter.summary) {
-        if let Some(summary) = summary_from_truth_items(manifest, &chapter.key_facts) {
+        if let Some(summary) =
+            supported_summary_from_truth_items(manifest, &chapter.key_facts, content)
+        {
             chapter.summary = summary;
         } else if let Some(summary) =
-            summary_from_truth_items(manifest, &chapter.continuity_updates)
+            supported_summary_from_truth_items(manifest, &chapter.continuity_updates, content)
         {
             chapter.summary = summary;
         }
     }
 
     if !chapter_summary_supported_by_content(&chapter.summary, content, &manifest.language) {
-        if let Some(summary) = summary_from_truth_items(manifest, &chapter.key_facts) {
+        if let Some(summary) =
+            supported_summary_from_truth_items(manifest, &chapter.key_facts, content)
+        {
             chapter.summary = summary;
         } else if let Some(summary) =
-            summary_from_truth_items(manifest, &chapter.continuity_updates)
+            supported_summary_from_truth_items(manifest, &chapter.continuity_updates, content)
         {
             chapter.summary = summary;
         } else {
@@ -851,6 +857,16 @@ fn summary_from_truth_items(manifest: &NovelProjectManifest, items: &[String]) -
             "; "
         });
     non_empty(&compact_chapter_summary(&joined, &manifest.language))
+}
+
+fn supported_summary_from_truth_items(
+    manifest: &NovelProjectManifest,
+    items: &[String],
+    content: &str,
+) -> Option<String> {
+    summary_from_truth_items(manifest, items).filter(|summary| {
+        chapter_summary_supported_by_content(summary, content, &manifest.language)
+    })
 }
 
 fn compact_for_prefix_match(value: &str) -> String {

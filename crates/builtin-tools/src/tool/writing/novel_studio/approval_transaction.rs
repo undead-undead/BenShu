@@ -351,22 +351,13 @@ impl NovelStudioTool {
             }));
         }
 
-        let mut final_chapter = chapter.clone();
-        if !settlement.chapter_summary.trim().is_empty() {
-            final_chapter.summary =
-                compact_chapter_summary(&settlement.chapter_summary, &manifest.language);
-        }
-        let mut continuity_updates = settlement.continuity_updates.clone();
-        continuity_updates.extend(
-            clean_list(&settlement.resolved_hooks)
-                .into_iter()
-                .map(|hook| payoff_continuity_update(&hook)),
-        );
-        final_chapter.continuity_updates =
-            compact_truth_items(continuity_updates, CHAPTER_CONTINUITY_LIMIT);
-        normalize_chapter_metadata_against_body(&manifest, &mut final_chapter, &body);
-
-        let metadata_gate = chapter_metadata_gate(&manifest, &final_chapter, &body);
+        let (final_chapter, settlement, metadata_gate) =
+            settlement_display_metadata_or_body_validated_best(
+                &manifest,
+                &chapter,
+                &settlement,
+                &body,
+            );
         if metadata_gate.needs_repair() {
             return Ok(json!({
                 "success": false,
@@ -511,6 +502,58 @@ impl NovelStudioTool {
             "audit": audit_manifest(&manifest)
         }))
     }
+}
+
+pub(super) fn settlement_display_metadata_or_body_validated_best(
+    manifest: &NovelProjectManifest,
+    chapter: &ChapterRecord,
+    settlement: &SettlementOutput,
+    body: &str,
+) -> (ChapterRecord, SettlementOutput, ChapterMetadataGate) {
+    let settlement_updates = settlement
+        .continuity_updates
+        .iter()
+        .cloned()
+        .chain(
+            clean_list(&settlement.resolved_hooks)
+                .into_iter()
+                .map(|hook| payoff_continuity_update(&hook)),
+        )
+        .collect::<Vec<_>>();
+    let mut projected = chapter.clone();
+    if !settlement.chapter_summary.trim().is_empty() {
+        projected.summary =
+            compact_chapter_summary(&settlement.chapter_summary, &manifest.language);
+    }
+    projected.continuity_updates =
+        compact_truth_items(settlement_updates.clone(), CHAPTER_CONTINUITY_LIMIT);
+    normalize_chapter_metadata_against_body(manifest, &mut projected, body);
+    let projected_gate = chapter_metadata_gate(manifest, &projected, body);
+    if !projected_gate.needs_repair() {
+        let selected_settlement = settlement_with_selected_display_metadata(settlement, &projected);
+        return (projected, selected_settlement, projected_gate);
+    }
+
+    let body_validated = chapter.clone();
+    let body_validated_gate = chapter_metadata_gate(manifest, &body_validated, body);
+    if !body_validated_gate.needs_repair() {
+        let selected_settlement =
+            settlement_with_selected_display_metadata(settlement, &body_validated);
+        (body_validated, selected_settlement, body_validated_gate)
+    } else {
+        let selected_settlement = settlement_with_selected_display_metadata(settlement, &projected);
+        (projected, selected_settlement, projected_gate)
+    }
+}
+
+fn settlement_with_selected_display_metadata(
+    settlement: &SettlementOutput,
+    selected: &ChapterRecord,
+) -> SettlementOutput {
+    let mut selected_settlement = settlement.clone();
+    selected_settlement.chapter_summary = selected.summary.clone();
+    selected_settlement.continuity_updates = selected.continuity_updates.clone();
+    selected_settlement
 }
 
 async fn cleanup_approval_backup(

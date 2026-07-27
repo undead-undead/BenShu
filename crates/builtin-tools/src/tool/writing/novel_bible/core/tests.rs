@@ -667,6 +667,214 @@ fn approved_chapter_updates_structured_contract_v2_evidence() {
 }
 
 #[test]
+fn approved_power_delta_resolves_character_id_and_upserts_missing_progression_state() {
+    let mut contract = contract();
+    contract
+        .structured_contract_v2
+        .power_progression
+        .character_current_levels
+        .clear();
+    let mut bible = build_story_bible(
+        "星门试炼",
+        "zh-CN",
+        "玄幻",
+        "brief",
+        &contract,
+        "now".to_string(),
+    );
+    let protagonist = bible
+        .character_ledger
+        .iter()
+        .find(|character| character.name == "沈砚")
+        .expect("沈砚 character anchor")
+        .clone();
+    let chapter = ApprovedChapterDelta {
+        number: 2,
+        state_changes: vec![ChapterStateChange {
+            entity_id: protagonist.id,
+            event_type: ChapterStateEventType::Power,
+            value: "沈砚将星门剑意稳定在第二阶。".to_string(),
+            allowance: StateChangeAllowance::Contract,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    apply_approved_chapter_delta(&mut bible, &chapter, "later".to_string());
+
+    let states = &bible
+        .structured_contract_v2
+        .power_progression
+        .character_current_levels;
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].character, "沈砚");
+    assert!(states[0].level.contains("第二阶"));
+    assert!(states[0].evidence.contains("chapter 2"));
+}
+
+#[test]
+fn approved_relationship_delta_resolves_stable_character_id() {
+    let mut contract = contract();
+    contract
+        .structured_contract_v2
+        .relationship_ledger
+        .push(RelationshipLedgerEntry {
+            characters: vec!["沈砚".to_string(), "季澜".to_string()],
+            current_state: "互相试探".to_string(),
+            ..Default::default()
+        });
+    let mut bible = build_story_bible(
+        "星门试炼",
+        "zh-CN",
+        "玄幻",
+        "brief",
+        &contract,
+        "now".to_string(),
+    );
+    let protagonist = bible
+        .character_ledger
+        .iter()
+        .find(|character| character.name == "沈砚")
+        .expect("沈砚 character anchor")
+        .clone();
+    let chapter = ApprovedChapterDelta {
+        number: 2,
+        state_changes: vec![ChapterStateChange {
+            entity_id: protagonist.id,
+            event_type: ChapterStateEventType::Relationship,
+            value: "沈砚与季澜在共担风险后建立了有限信任。".to_string(),
+            allowance: StateChangeAllowance::Contract,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    apply_approved_chapter_delta(&mut bible, &chapter, "later".to_string());
+
+    let relation = &bible.structured_contract_v2.relationship_ledger[0];
+    assert!(relation.current_state.contains("有限信任"));
+    assert_eq!(relation.last_changed_chapter, Some(2));
+}
+
+#[test]
+fn approved_relationship_delta_updates_only_the_named_counterparty_relation() {
+    let mut contract = contract();
+    contract.structured_contract_v2.relationship_ledger = vec![
+        RelationshipLedgerEntry {
+            character_ids: vec![
+                "character-shen-yan".to_string(),
+                "character-ji-lan".to_string(),
+            ],
+            characters: vec!["沈砚".to_string(), "季澜".to_string()],
+            current_state: "互相试探".to_string(),
+            ..Default::default()
+        },
+        RelationshipLedgerEntry {
+            character_ids: vec![
+                "character-shen-yan".to_string(),
+                "character-lu-zhou".to_string(),
+            ],
+            characters: vec!["沈砚".to_string(), "陆舟".to_string()],
+            current_state: "彼此戒备".to_string(),
+            ..Default::default()
+        },
+    ];
+    let mut bible = build_story_bible(
+        "星门试炼",
+        "zh-CN",
+        "玄幻",
+        "brief",
+        &contract,
+        "now".to_string(),
+    );
+    let protagonist = bible
+        .character_ledger
+        .iter()
+        .find(|character| character.name == "沈砚")
+        .expect("沈砚 character anchor")
+        .clone();
+    let chapter = ApprovedChapterDelta {
+        number: 2,
+        state_changes: vec![ChapterStateChange {
+            entity_id: protagonist.id,
+            event_type: ChapterStateEventType::Relationship,
+            authority_excerpt: "沈砚与陆舟因争夺星盘而公开决裂。".to_string(),
+            value: "沈砚与陆舟因争夺星盘而公开决裂。".to_string(),
+            allowance: StateChangeAllowance::Contract,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    apply_approved_chapter_delta(&mut bible, &chapter, "later".to_string());
+
+    let relationships = &bible.structured_contract_v2.relationship_ledger;
+    assert_eq!(relationships[0].current_state, "互相试探");
+    assert_eq!(relationships[0].last_changed_chapter, None);
+    assert!(relationships[1].current_state.contains("公开决裂"));
+    assert_eq!(relationships[1].last_changed_chapter, Some(2));
+}
+
+#[test]
+fn ambiguous_relationship_delta_does_not_modify_an_arbitrary_relation() {
+    let mut contract = contract();
+    contract.structured_contract_v2.relationship_ledger = vec![
+        RelationshipLedgerEntry {
+            character_ids: vec![
+                "character-shen-yan".to_string(),
+                "character-ji-lan".to_string(),
+            ],
+            characters: vec!["沈砚".to_string(), "季澜".to_string()],
+            current_state: "互相试探".to_string(),
+            ..Default::default()
+        },
+        RelationshipLedgerEntry {
+            character_ids: vec![
+                "character-shen-yan".to_string(),
+                "character-lu-zhou".to_string(),
+            ],
+            characters: vec!["沈砚".to_string(), "陆舟".to_string()],
+            current_state: "彼此戒备".to_string(),
+            ..Default::default()
+        },
+    ];
+    let mut bible = build_story_bible(
+        "星门试炼",
+        "zh-CN",
+        "玄幻",
+        "brief",
+        &contract,
+        "now".to_string(),
+    );
+    let protagonist = bible
+        .character_ledger
+        .iter()
+        .find(|character| character.name == "沈砚")
+        .expect("沈砚 character anchor")
+        .clone();
+    let chapter = ApprovedChapterDelta {
+        number: 2,
+        state_changes: vec![ChapterStateChange {
+            entity_id: protagonist.id,
+            event_type: ChapterStateEventType::Relationship,
+            authority_excerpt: "沈砚与同伴的关系发生改变。".to_string(),
+            value: "沈砚不再信任同行者。".to_string(),
+            allowance: StateChangeAllowance::Contract,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    apply_approved_chapter_delta(&mut bible, &chapter, "later".to_string());
+
+    let relationships = &bible.structured_contract_v2.relationship_ledger;
+    assert_eq!(relationships[0].current_state, "互相试探");
+    assert_eq!(relationships[0].last_changed_chapter, None);
+    assert_eq!(relationships[1].current_state, "彼此戒备");
+    assert_eq!(relationships[1].last_changed_chapter, None);
+}
+
+#[test]
 fn approved_chapter_registers_only_explicit_characters_and_does_not_infer_world_facts() {
     let mut bible = build_story_bible(
         "试验书",

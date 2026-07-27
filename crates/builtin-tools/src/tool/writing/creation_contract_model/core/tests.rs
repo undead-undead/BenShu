@@ -139,11 +139,19 @@ fn normalize_world_rules_rejoins_dependent_array_entries() {
     let mut rules = vec![
         "情报传递必须经过两名中间人".to_string(),
         "否则坐标会暴露".to_string(),
+        "每突破一小境界需消耗百年灵药".to_string(),
+        "代价是寿元减半".to_string(),
     ];
 
     normalize_world_rules_vec(&mut rules);
 
-    assert_eq!(rules, ["情报传递必须经过两名中间人；否则坐标会暴露"]);
+    assert_eq!(
+        rules,
+        [
+            "情报传递必须经过两名中间人；否则坐标会暴露",
+            "每突破一小境界需消耗百年灵药；代价是寿元减半"
+        ]
+    );
 }
 
 #[test]
