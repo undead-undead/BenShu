@@ -1049,6 +1049,8 @@ where
             Ok(Some(repaired_text)) => {
                 let before_patch =
                     ContractRepairProgressSnapshot::new(&current_draft, &current_issues);
+                let before_candidate_fingerprint =
+                    creation_contract_repair_candidate_fingerprint(&current_draft);
                 let mut repaired = current_outcome.clone();
                 repaired.response = repaired_text;
                 let Some((render_draft, repaired_submission)) =
@@ -1115,11 +1117,28 @@ where
                 }
                 current_outcome = repaired;
                 current_draft = render_draft;
+                let was_repairing_semantic_authority =
+                    creation_contract_issues_require_semantic_stage(&current_issues);
                 current_issues = next_stage_creation_contract_repair_issues(
                     &current_issues,
                     &current_draft,
                     &repaired_submission,
+                    creation_contract_repair_candidate_fingerprint(&current_draft)
+                        != before_candidate_fingerprint,
                 );
+                if was_repairing_semantic_authority && repaired_submission.committed {
+                    if let Some(issue) = reopen_draft_if_semantics_block(
+                        runtime,
+                        session_id,
+                        &mut current_draft,
+                        supervisor_task_id,
+                        &mut reviewed_semantic_verdicts,
+                    )
+                    .await?
+                    {
+                        current_issues = issue;
+                    }
+                }
                 if current_issues.is_empty()
                     && creation_contract_draft_is_confirmable(&current_draft)
                 {
@@ -1279,15 +1298,10 @@ fn next_stage_creation_contract_repair_issues(
     unresolved_issues: &ContractIssueList,
     draft: &SessionCreationDraftState,
     submission: &ContractSubmissionOutcome,
+    candidate_changed: bool,
 ) -> ContractIssueList {
     let mut next = next_creation_contract_repair_issues(draft, submission);
-    let submission_issues = submission.gate.actionable_issues();
-    let patch_was_rejected = !submission.committed
-        && !submission_issues.is_empty()
-        && submission_issues
-            .iter()
-            .all(|issue| creation_contract_issue_is_patch_scope_noise(issue));
-    if patch_was_rejected && !unresolved_issues.is_empty() {
+    if !submission.committed && !candidate_changed && !unresolved_issues.is_empty() {
         next.retain(|issue| issue.code != "contract.readiness_unresolved");
         next.extend_findings(unresolved_issues.iter().cloned());
         next.sort_dedup();
@@ -1601,6 +1615,14 @@ fn creation_contract_repair_progress_fingerprint(
         .collect::<Vec<_>>();
     issue_keys.sort();
     issue_keys.dedup();
+    format!(
+        "{}\n{}",
+        creation_contract_repair_candidate_fingerprint(draft),
+        issue_keys.join("\n")
+    )
+}
+
+fn creation_contract_repair_candidate_fingerprint(draft: &SessionCreationDraftState) -> String {
     let current_contract = draft
         .current_contract
         .as_ref()
@@ -1623,7 +1645,7 @@ fn creation_contract_repair_progress_fingerprint(
         draft.fiction_characters.join("\n"),
         draft.fiction_outline.trim(),
         current_contract,
-        [pending_contract, issue_keys.join("\n")].join("\n")
+        pending_contract
     )
 }
 
@@ -2149,12 +2171,73 @@ mod tests {
             committed: false,
         };
 
-        let issues = next_stage_creation_contract_repair_issues(&unresolved, &draft, &submission);
+        let issues =
+            next_stage_creation_contract_repair_issues(&unresolved, &draft, &submission, false);
 
         assert!(issues
             .iter()
             .any(|issue| issue.contains("semantic.outline_character_authority")));
         assert!(creation_contract_issues_require_semantic_stage(&issues));
+    }
+
+    #[test]
+    fn rejected_unparseable_stage_patch_does_not_erase_unresolved_semantic_owner() {
+        let draft = repair_test_draft();
+        let unresolved = ContractIssueList::single(
+            "semantic.outline_character_authority",
+            ContractIssueKind::Plot,
+            "outline.near_chapters[2].expected_turn",
+            "ContractBlocker[semantic.outline_character_authority]: 第3章事件违反世界规则",
+        );
+        let submission = ContractSubmissionOutcome {
+            gate: ContractGateResult {
+                status: ContractGateStatus::NeedsRepair,
+                blocking_issues: Vec::new(),
+                repairable_issues: vec![
+                    "合同输出不能解析为 JSON，也没有形成可归位的合同字段包".to_string()
+                ],
+                warnings: Vec::new(),
+            },
+            committed: false,
+        };
+
+        let issues =
+            next_stage_creation_contract_repair_issues(&unresolved, &draft, &submission, false);
+
+        assert!(issues.iter().any(|issue| {
+            issue.code == "semantic.outline_character_authority"
+                && issue.kind == ContractIssueKind::Plot
+        }));
+    }
+
+    #[test]
+    fn applied_partial_stage_patch_drops_resolved_stale_owner_findings() {
+        let draft = repair_test_draft();
+        let unresolved = ContractIssueList::single(
+            "semantic.outline_character_authority",
+            ContractIssueKind::Plot,
+            "outline.near_chapters[2].expected_turn",
+            "ContractBlocker[semantic.outline_character_authority]: 第3章事件违反世界规则",
+        );
+        let submission = ContractSubmissionOutcome {
+            gate: ContractGateResult {
+                status: ContractGateStatus::NeedsRepair,
+                blocking_issues: Vec::new(),
+                repairable_issues: vec!["ContractBlocker: 小说合同缺少可锁定书名".to_string()],
+                warnings: Vec::new(),
+            },
+            committed: false,
+        };
+
+        let issues =
+            next_stage_creation_contract_repair_issues(&unresolved, &draft, &submission, true);
+
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.code == "semantic.outline_character_authority"));
+        assert!(issues.iter().any(|issue| {
+            issue.code.starts_with("contract.title") || issue.text.contains("书名")
+        }));
     }
 
     #[test]

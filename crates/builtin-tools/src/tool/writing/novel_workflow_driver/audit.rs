@@ -1,5 +1,7 @@
 use super::*;
 
+const MAX_FINAL_STATE_OBSERVER_ATTEMPTS: usize = 5;
+
 fn required_observer_change_count(authority: &SealedChapterAuthority) -> usize {
     [
         authority.chapter_contract.character_change.as_str(),
@@ -79,7 +81,7 @@ impl NovelChapterRunner {
     ) -> anyhow::Result<Value> {
         let mut feedback = None;
         let mut last_settlement = None;
-        for attempt in 1..=2 {
+        for attempt in 1..=MAX_FINAL_STATE_OBSERVER_ATTEMPTS {
             let observation = self
                 .observe_final_chapter_state(chapter_number, write_result, feedback.as_deref())
                 .await;
@@ -108,7 +110,7 @@ impl NovelChapterRunner {
             {
                 return Ok(settlement);
             }
-            if attempt < 2 {
+            if attempt < MAX_FINAL_STATE_OBSERVER_ATTEMPTS {
                 let mut errors =
                     collect_string_array_to_vec(settlement.pointer("/validation/warnings"));
                 if let Some(error) = settlement.get("observer_error").and_then(Value::as_str) {
@@ -123,7 +125,9 @@ impl NovelChapterRunner {
                     &self.runtime,
                     chapter_number as u32,
                     "novel-chapter:state-observer:repair",
-                    format!("第 {chapter_number} 章状态观察结果未通过，使用同一最终正文进行一次有界证据纠错。"),
+                    format!(
+                        "第 {chapter_number} 章状态观察结果未通过，使用同一最终正文进行第 {attempt}/{MAX_FINAL_STATE_OBSERVER_ATTEMPTS} 次有界证据纠错。"
+                    ),
                 )
                 .await;
             }
@@ -301,12 +305,17 @@ impl NovelChapterRunner {
 
 #[cfg(test)]
 mod tests {
-    use super::final_observer_token_budget;
+    use super::{final_observer_token_budget, MAX_FINAL_STATE_OBSERVER_ATTEMPTS};
 
     #[test]
     fn observer_budget_scales_with_required_typed_transitions_and_stays_bounded() {
         assert_eq!(final_observer_token_budget(0), 1_600);
         assert_eq!(final_observer_token_budget(7), 3_140);
         assert_eq!(final_observer_token_budget(100), 3_600);
+    }
+
+    #[test]
+    fn deterministic_final_state_observer_has_five_bounded_attempts() {
+        assert_eq!(MAX_FINAL_STATE_OBSERVER_ATTEMPTS, 5);
     }
 }

@@ -638,15 +638,11 @@ pub(super) fn chapter_metadata_gate(
             chapter_title_body_fragment_metadata_issues(manifest, chapter, content),
         ),
         (
-            "chapter_title_fatigue",
-            chapter_title_fatigue_issues(manifest, chapter),
-        ),
-        (
             "chapter_title_completion",
             chapter_title_completion_issues(manifest, chapter, content),
         ),
     ];
-    let findings = checks
+    let mut findings = checks
         .into_iter()
         .flat_map(|(source, messages)| {
             findings_from_messages(
@@ -660,7 +656,17 @@ pub(super) fn chapter_metadata_gate(
                 content,
             )
         })
-        .collect();
+        .collect::<Vec<_>>();
+    findings.extend(findings_from_messages(
+        chapter_title_fatigue_issues(manifest, chapter),
+        "chapter_title_fatigue_advisory",
+        chapter_quality::ChapterFindingClass::Advisory,
+        chapter_quality::ChapterFindingDisposition::Warning,
+        chapter_quality::FindingEvidenceGrade::Heuristic,
+        "chapter_title_fatigue",
+        authority_fingerprint,
+        content,
+    ));
     ChapterMetadataGate::from_findings(findings)
 }
 

@@ -1312,6 +1312,7 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
         "辞职",
         "辞官",
         "牺牲",
+        "隐藏",
         "隐瞒",
         "揭露",
         "调查",
@@ -2068,6 +2069,16 @@ fn candidate_looks_like_abstract_domain_noun(candidate: &str) -> bool {
 mod tests {
     use super::*;
     use crate::tool::writing::creation_contract_model::{CharacterContract, OutlineContract};
+
+    #[test]
+    fn authority_name_followed_by_hide_action_is_not_a_new_character() {
+        let text = "梁晏白隐藏了账本原件，等待听证会公开证据。";
+        assert!(reference_matches_authority_name_in_text(
+            "梁晏白隐",
+            text,
+            &["梁晏白"]
+        ));
+    }
 
     #[test]
     fn ambiguous_superseded_two_character_name_is_left_for_semantic_review() {

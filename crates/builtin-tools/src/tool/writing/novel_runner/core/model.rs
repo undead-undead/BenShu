@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::tool::writing::creation_contract_model::ChapterSeedContract;
 use crate::tool::writing::novel_bible::ChapterStateChange;
 use crate::tool::writing::novel_contract_v2::ChapterCharacterRequest;
 
@@ -68,6 +69,8 @@ pub(crate) struct ChapterExecutionPackage {
     pub hook_paid_off: Vec<String>,
     #[serde(default)]
     pub title_basis: String,
+    #[serde(default)]
+    pub future_chapters: Vec<ChapterSeedContract>,
     #[serde(default)]
     pub new_character_requests: Vec<ChapterCharacterRequest>,
     #[serde(default)]

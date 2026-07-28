@@ -18,16 +18,9 @@ pub(super) struct NovelChapterRunner {
 
 enum MetadataRepairFlow {
     NotNeeded,
+    Retry,
     Repaired,
     Blocked(String),
-}
-
-fn runner_revision_mode(write_result: &Value, audit: &Value) -> novel_runner::RevisionMode {
-    if body_revision_required_after_audit(write_result, audit) {
-        novel_runner::RevisionMode::FullRewrite
-    } else {
-        novel_runner::RevisionMode::LocalRepair
-    }
 }
 
 async fn record_runner_parse_provenance(
@@ -94,6 +87,10 @@ fn apply_character_registrations_to_package(
             *hook = hook.replace(request_id, name);
         }
         package.title_basis = package.title_basis.replace(request_id, name);
+        for seed in &mut package.future_chapters {
+            seed.goal = seed.goal.replace(request_id, name);
+            seed.expected_turn = seed.expected_turn.replace(request_id, name);
+        }
     }
     let cast = registrations
         .iter()
@@ -176,6 +173,7 @@ fn execution_package_from_sealed_authority(
     package.hook_opened = authority.chapter_contract.hook_opened.clone();
     package.hook_paid_off = authority.chapter_contract.hook_paid_off.clone();
     package.new_character_requests = authority.chapter_contract.new_character_requests.clone();
+    package.future_chapters.clear();
     package.degraded = false;
     package.degraded_reason.clear();
     Ok(package)
@@ -545,7 +543,7 @@ impl NovelChapterRunner {
                     "project_path": self.project_path,
                     "chapter_number": chapter_number,
                     "plan": package.memo.body.clone(),
-                    "summary": package.memo.goal.clone(),
+                    "summary": package.scene_goal.clone(),
                     "content": package.architecture.clone(),
                     "notes": package.title_basis.clone(),
                     "scene_goal": package.scene_goal.clone(),
@@ -562,6 +560,7 @@ impl NovelChapterRunner {
                     "character_change": package.character_change.clone(),
                     "relationship_delta": package.relationship_change.clone(),
                     "payoff_target": package.chapter_function.clone(),
+                    "future_chapters": package.future_chapters.clone(),
                     "new_character_requests": package.new_character_requests.clone()
                 }),
                 local_tool_stage_timeout_secs(),
@@ -811,6 +810,7 @@ impl NovelChapterRunner {
         let mut last_tail_completion_fingerprint = None;
         let mut last_deterministic_cleanup_fingerprint = None;
         let mut metadata_repair_attempts = revision_cycle.state.budget.metadata_repair_attempts;
+        let mut rejected_metadata_titles = Vec::new();
         let persisted_revision_attempts = revision_cycle
             .state
             .budget
@@ -860,11 +860,17 @@ impl NovelChapterRunner {
                             &mut write_result,
                             &mut audit,
                             &mut metadata_repair_attempts,
+                            &mut rejected_metadata_titles,
                             MAX_METADATA_REPAIR_ATTEMPTS,
                         )
                         .await?
                     {
                         MetadataRepairFlow::Blocked(result) => return Ok(result),
+                        MetadataRepairFlow::Retry => {
+                            revision_cycle.state.budget.metadata_repair_attempts =
+                                metadata_repair_attempts;
+                            continue;
+                        }
                         MetadataRepairFlow::Repaired => {
                             revision_cycle.state.budget.metadata_repair_attempts =
                                 metadata_repair_attempts;
@@ -1031,6 +1037,7 @@ impl NovelChapterRunner {
                 ));
             }
             let revision_issues = revision_issues(&write_result, &audit);
+            let revision_mode = revision_mode_for_results(&write_result, &audit);
             let mut reviser_prompt = novel_runner::reviser_prompt(
                 &self.language,
                 &title,
@@ -1041,7 +1048,7 @@ impl NovelChapterRunner {
                 &context_json,
                 &current_draft.content,
                 &revision_issues,
-                runner_revision_mode(&write_result, &audit),
+                revision_mode,
                 &character_authority,
             );
             if let Some(gate) = self.completion_gate.as_ref() {
@@ -1053,6 +1060,7 @@ impl NovelChapterRunner {
                 &write_result,
                 &audit,
                 &self.language,
+                revision_mode,
             ));
             let reviser_prompt = clean_provider_prompt(&reviser_prompt);
             revision_cycle.state.budget.semantic_attempts += 1;
@@ -1471,6 +1479,7 @@ impl NovelChapterRunner {
         chapter_number: usize,
         draft: novel_runner::DraftOutput,
         write_result: &Value,
+        rejected_titles: &[String],
     ) -> anyhow::Result<Option<(novel_runner::DraftOutput, Value)>> {
         record_workflow_checkpoint(
             &self.runtime,
@@ -1484,6 +1493,7 @@ impl NovelChapterRunner {
             chapter_number,
             &draft,
             &metadata_issue_summary(write_result),
+            rejected_titles,
         );
         let raw = self
             .agent
@@ -1494,27 +1504,47 @@ impl NovelChapterRunner {
             )
             .await?;
         self.ensure_not_cancelled().await?;
-        let repaired_metadata = parse_metadata_repair_output(
-            &clean_model_output(&raw),
-            chapter_number,
-            &self.language,
-            &draft,
+        let cleaned_raw = clean_model_output(&raw);
+        let repaired_metadata =
+            parse_metadata_repair_output(&cleaned_raw, chapter_number, &self.language, &draft);
+        let title_candidates = metadata_repair_title_candidates(
+            &cleaned_raw,
+            &repaired_metadata.title,
+            rejected_titles,
         );
-        let repaired_write_result = call_novel_studio_json(
-            &self.tool,
-            json!({
-                "action": "repair_chapter_metadata",
-                "candidate_only": true,
-                "project_path": self.project_path,
-                "chapter_number": chapter_number,
-                "chapter_title": repaired_metadata.title,
-                "summary": repaired_metadata.summary,
-                "key_facts": repaired_metadata.key_facts,
-                "continuity_updates": repaired_metadata.continuity_updates
-            }),
-        )
-        .await?;
-        let mut repaired_draft = draft;
+        let mut selected = None::<(usize, novel_runner::DraftOutput, Value)>;
+        for title in title_candidates {
+            let mut candidate_metadata = repaired_metadata.clone();
+            candidate_metadata.title = title;
+            let candidate_result = call_novel_studio_json(
+                &self.tool,
+                json!({
+                    "action": "repair_chapter_metadata",
+                    "candidate_only": true,
+                    "project_path": self.project_path,
+                    "chapter_number": chapter_number,
+                    "chapter_title": candidate_metadata.title,
+                    "summary": candidate_metadata.summary,
+                    "key_facts": candidate_metadata.key_facts,
+                    "continuity_updates": candidate_metadata.continuity_updates
+                }),
+            )
+            .await?;
+            let title_issue_count = metadata_title_issue_count(&candidate_result);
+            let replace = selected
+                .as_ref()
+                .is_none_or(|(best_count, _, _)| title_issue_count < *best_count);
+            if replace {
+                selected = Some((title_issue_count, candidate_metadata, candidate_result));
+            }
+            if title_issue_count == 0 {
+                break;
+            }
+        }
+        let Some((_, repaired_metadata, repaired_write_result)) = selected else {
+            return Ok(None);
+        };
+        let mut repaired_draft = repaired_metadata;
         if let Some(chapter) = repaired_write_result.get("chapter").or_else(|| {
             repaired_write_result
                 .get("repaired_chapters")
@@ -1546,6 +1576,7 @@ impl NovelChapterRunner {
         write_result: &mut Value,
         audit: &mut Value,
         attempts: &mut usize,
+        rejected_titles: &mut Vec<String>,
         max_attempts: usize,
     ) -> anyhow::Result<MetadataRepairFlow> {
         if !metadata_gate_needs_repair(write_result) {
@@ -1562,10 +1593,26 @@ impl NovelChapterRunner {
             )));
         }
         *attempts += 1;
+        let current_title = draft.title.trim();
+        if !current_title.is_empty()
+            && !rejected_titles
+                .iter()
+                .any(|title| title.trim() == current_title)
+        {
+            rejected_titles.push(current_title.to_string());
+        }
         let Some((repaired_draft, repaired_write_result)) = self
-            .repair_chapter_metadata_with_llm(chapter_number, draft.clone(), write_result)
+            .repair_chapter_metadata_with_llm(
+                chapter_number,
+                draft.clone(),
+                write_result,
+                rejected_titles,
+            )
             .await?
         else {
+            if *attempts < max_attempts {
+                return Ok(MetadataRepairFlow::Retry);
+            }
             return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
                 &self.project_path,
                 chapter_number,
@@ -1644,12 +1691,13 @@ impl NovelChapterRunner {
         }
 
         let mut expanded = draft.clone();
-        let desired_rounds = chapter_expansion_round_budget(target, current_units).min(1);
+        let desired_rounds = chapter_expansion_round_budget(target, current_units);
         let mut accepted_rounds = 0usize;
         let mut rejected_attempts = 0usize;
-        // One accepted top-up is enough, but the existing rejection policy promises a
-        // second, different attempt before giving up. Keep that retry reachable.
-        let max_attempts = desired_rounds.saturating_add(1);
+        // Length is a deterministic contract. Permit a finite set of distinct
+        // top-up attempts before the quality gate blocks the chapter.
+        const MAX_EXPANSION_ATTEMPTS: usize = 5;
+        let max_attempts = MAX_EXPANSION_ATTEMPTS;
         let mut attempts = 0usize;
         let mut previous_rejection: Option<String> = None;
         let authority_context = self
@@ -1706,7 +1754,7 @@ impl NovelChapterRunner {
                 .await;
                 rejected_attempts += 1;
                 previous_rejection = Some(reason);
-                if rejected_attempts >= 2 {
+                if rejected_attempts >= MAX_EXPANSION_ATTEMPTS {
                     self.record_expansion_blocked(chapter_number, rejected_attempts, "被拒绝")
                         .await;
                     break;
@@ -1733,7 +1781,7 @@ impl NovelChapterRunner {
                 .await;
                 rejected_attempts += 1;
                 previous_rejection = Some(reason);
-                if rejected_attempts >= 2 {
+                if rejected_attempts >= MAX_EXPANSION_ATTEMPTS {
                     self.record_expansion_blocked(chapter_number, rejected_attempts, "被拒绝")
                         .await;
                     break;
@@ -1746,7 +1794,7 @@ impl NovelChapterRunner {
                 previous_rejection = Some(format!(
                     "扩写片段过短：仅 {addition_units} 字，未达到本次最少追加量"
                 ));
-                if rejected_attempts >= 2 {
+                if rejected_attempts >= MAX_EXPANSION_ATTEMPTS {
                     self.record_expansion_blocked(chapter_number, rejected_attempts, "过短")
                         .await;
                     break;
@@ -1758,7 +1806,7 @@ impl NovelChapterRunner {
             if after_units <= before_units {
                 rejected_attempts += 1;
                 previous_rejection = Some("扩写片段没有增加正文".to_string());
-                if rejected_attempts >= 2 {
+                if rejected_attempts >= MAX_EXPANSION_ATTEMPTS {
                     self.record_expansion_blocked(
                         chapter_number,
                         rejected_attempts,

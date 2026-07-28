@@ -165,6 +165,37 @@ fn prefix_negates_requested_unit_count(prefix: &str) -> bool {
     ]
     .iter()
     .any(|term| compact.contains(term) || lowered.contains(term))
+        || clause_negates_limited_unit_generation(&compact, &lowered)
+}
+
+fn clause_negates_limited_unit_generation(compact: &str, lowered: &str) -> bool {
+    let limited_markers = ["只写", "仅写", "只生成", "仅生成", "只创作", "仅创作"];
+    let negation_markers = [
+        "不要", "别", "不能", "不应", "不是", "并非", "不许", "不可", "禁止",
+    ];
+    let chinese_negated = limited_markers.iter().any(|limited| {
+        compact.find(limited).is_some_and(|limited_index| {
+            negation_markers.iter().any(|negation| {
+                compact
+                    .find(negation)
+                    .is_some_and(|negation_index| negation_index < limited_index)
+            })
+        })
+    });
+    if chinese_negated {
+        return true;
+    }
+    let english_limited = ["justwrite", "onlywrite", "justgenerate", "onlygenerate"];
+    let english_negation = ["not", "donot", "don't", "cannot", "cant", "never"];
+    english_limited.iter().any(|limited| {
+        lowered.find(limited).is_some_and(|limited_index| {
+            english_negation.iter().any(|negation| {
+                lowered
+                    .find(negation)
+                    .is_some_and(|negation_index| negation_index < limited_index)
+            })
+        })
+    })
 }
 
 fn prefix_has_generation_unit_action(prefix: &str) -> bool {
@@ -431,6 +462,21 @@ mod tests {
         assert_eq!(
             creation_draft_turn_scope(message, "fiction"),
             CreationDraftTurnScope::FirstUnit
+        );
+    }
+
+    #[test]
+    fn negated_do_not_convert_task_to_first_three_chapters_keeps_full_book_scope() {
+        let message = "请从零创建并完整写完一本中文重生都市题材长篇小说。总字数10万字，选择每章2500字档；先生成完整合同让我确认，确认后请自动连续写作、审稿、保存并导出整本书，不要在前三章停止，也不要把任务改成只写前三章。";
+
+        assert_eq!(
+            creation_draft_turn_scope(message, "fiction"),
+            CreationDraftTurnScope::AllRemaining
+        );
+        let note = creation_execution_scope_note(message, "fiction").expect("scope note");
+        assert_eq!(
+            persisted_creation_execution_scope(&[note]),
+            Some(CreationDraftTurnScope::AllRemaining)
         );
     }
 }

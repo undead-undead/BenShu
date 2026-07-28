@@ -146,21 +146,20 @@ fn persisted_rejected_length_topup_still_exhausts_the_one_shot_budget() {
 }
 
 #[test]
-fn persisted_rejected_semantic_revision_leaves_exactly_one_alternative_attempt() {
+fn persisted_rejected_semantic_revision_restores_the_shared_five_attempt_budget() {
     let mut budget = RevisionBudget::default();
 
-    super::super::chapter_runtime::restore_recovered_attempt_budget(
-        &mut budget,
-        CandidateProvenance::SemanticRevision,
-    );
-
-    assert_eq!(budget.semantic_attempts, 1);
-    assert!(budget.can_attempt_semantic_revision());
-    super::super::chapter_runtime::restore_recovered_attempt_budget(
-        &mut budget,
-        CandidateProvenance::SemanticRevision,
-    );
-    assert_eq!(budget.semantic_attempts, 2);
+    for expected in 1..=MAX_LLM_REVISION_ATTEMPTS {
+        super::super::chapter_runtime::restore_recovered_attempt_budget(
+            &mut budget,
+            CandidateProvenance::SemanticRevision,
+        );
+        assert_eq!(budget.semantic_attempts, expected);
+        assert_eq!(
+            budget.can_attempt_semantic_revision(),
+            expected < MAX_LLM_REVISION_ATTEMPTS
+        );
+    }
     assert!(!budget.can_attempt_semantic_revision());
 }
 
@@ -1638,10 +1637,54 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
             }
         });
 
-        let guidance = revision_guidance(5, &write_result, &audit, "zh-CN");
+        let mode = revision_mode_for_results(&write_result, &audit);
+        let guidance = revision_guidance(5, &write_result, &audit, "zh-CN", mode);
 
         assert!(guidance.contains("审稿意见只是待核对的问题"));
         assert!(guidance.contains("不得覆盖章节 memo 和架构"));
         assert!(guidance.contains("下一章边界"));
         assert!(guidance.contains("保持未发生"));
+    }
+
+    #[test]
+    fn future_boundary_revision_is_not_mislabeled_as_a_finale() {
+        let write_result = json!({
+            "quality_gate": {
+                "findings": [{
+                    "code": "future_chapter_consumed",
+                    "disposition": "hard_block"
+                }]
+            }
+        });
+        let audit = json!({});
+
+        let mode = revision_mode_for_results(&write_result, &audit);
+        let guidance = revision_guidance(1, &write_result, &audit, "zh-CN", mode);
+
+        assert!(guidance.contains("章节边界"));
+        assert!(guidance.contains("不代表全书进入终局或尾声"));
+        assert!(guidance.contains("下一章事件可以被预示或准备"));
+        assert!(!guidance.contains("这是终局/尾声修订"));
+        assert_eq!(mode, novel_runner::RevisionMode::LocalRepair);
+        assert!(guidance.contains("以当前正文为底稿做局部修补"));
+        assert!(!guidance.contains("从头生成一版完整正文"));
+    }
+
+    #[test]
+    fn replaced_chapter_goal_still_requires_a_full_rewrite() {
+        let write_result = json!({
+            "quality_gate": {
+                "findings": [{
+                    "code": "chapter_goal_replaced",
+                    "disposition": "hard_block"
+                }]
+            }
+        });
+        let audit = json!({});
+
+        let mode = revision_mode_for_results(&write_result, &audit);
+        let guidance = revision_guidance(1, &write_result, &audit, "zh-CN", mode);
+
+        assert_eq!(mode, novel_runner::RevisionMode::FullRewrite);
+        assert!(guidance.contains("按同一章 memo"));
     }

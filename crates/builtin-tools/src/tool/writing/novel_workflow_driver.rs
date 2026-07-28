@@ -57,7 +57,7 @@ mod provider;
 mod quality;
 mod result_format;
 
-const MAX_LLM_REVISION_ATTEMPTS: usize = 2;
+const MAX_LLM_REVISION_ATTEMPTS: usize = 5;
 const MAX_CHAPTER_STEP_RETRY_ATTEMPTS: usize = 10;
 const MAX_TAIL_COMPLETION_RECOVERIES: usize = 1;
 

@@ -2583,9 +2583,58 @@ fn rewrite_co_referential_family_name(value: &mut String, old_name: &str, new_na
     if old_surname == new_surname {
         return;
     }
-    let old_family = format!("{old_surname}家");
-    if value.contains(&old_family) {
-        *value = value.replace(&old_family, &format!("{new_surname}家"));
+    for suffix in ["家", "府", "父", "母", "氏"] {
+        let old_reference = format!("{old_surname}{suffix}");
+        if value.contains(&old_reference) {
+            *value = value.replace(&old_reference, &format!("{new_surname}{suffix}"));
+        }
+    }
+}
+
+fn rewrite_unambiguous_household_references_to_authority(
+    value: &mut String,
+    authority: &CharacterAuthority,
+) {
+    let Some(primary) = authority.primary.as_deref() else {
+        return;
+    };
+    let mut targets_by_superseded_surname = BTreeMap::<String, BTreeSet<String>>::new();
+    for (old_name, new_name) in &authority.superseded_names {
+        let (Some(old_surname), Some(new_surname)) = (
+            naming::cjk_character_surname(old_name),
+            naming::cjk_character_surname(new_name),
+        ) else {
+            continue;
+        };
+        if old_surname != new_surname {
+            targets_by_superseded_surname
+                .entry(old_surname.to_string())
+                .or_default()
+                .insert(new_name.to_string());
+        }
+    }
+    for (old_surname, targets) in targets_by_superseded_surname {
+        let target = if targets.len() == 1 {
+            targets.iter().next().map(String::as_str)
+        } else if targets.contains(primary) {
+            // A bare household anchor has no local character subject. When a
+            // superseded surname belonged to several model candidates, the
+            // contract's primary-character authority is the only deterministic
+            // owner. Explicit "old full name + household" references have
+            // already been handled by rewrite_co_referential_family_name above.
+            Some(primary)
+        } else {
+            None
+        };
+        let Some(new_surname) = target.and_then(naming::cjk_character_surname) else {
+            continue;
+        };
+        for suffix in ["家", "府", "父", "母", "氏"] {
+            let old_reference = format!("{old_surname}{suffix}");
+            if value.contains(&old_reference) {
+                *value = value.replace(&old_reference, &format!("{new_surname}{suffix}"));
+            }
+        }
     }
 }
 
@@ -3464,6 +3513,7 @@ fn rewrite_external_character_references_to_authority(
         return;
     }
     rewrite_structured_character_references(value, &authority.superseded_names);
+    rewrite_unambiguous_household_references_to_authority(value, authority);
     rewrite_primary_role_references_to_authority(value, authority);
 }
 
@@ -3482,6 +3532,7 @@ fn rewrite_known_stale_character_references_to_authority(
         return;
     }
     rewrite_structured_character_references(value, &authority.superseded_names);
+    rewrite_unambiguous_household_references_to_authority(value, authority);
     rewrite_primary_role_references_to_authority(value, authority);
 }
 
@@ -4136,6 +4187,93 @@ mod tests {
         rewrite_structured_character_references(&mut value, &replacements);
 
         assert_eq!(value, "司马望宁拒绝继承司马家旧约。");
+    }
+
+    #[test]
+    fn authority_rewrite_updates_bare_household_anchors_to_primary_authority() {
+        let authority = CharacterAuthority {
+            names: vec!["顾维澜".to_string(), "裴予川".to_string()],
+            superseded_names: BTreeMap::from([
+                ("沈长风".to_string(), "顾维澜".to_string()),
+                ("沈清婉".to_string(), "裴予川".to_string()),
+                ("祝承言".to_string(), "顾维澜".to_string()),
+            ]),
+            primary: Some("顾维澜".to_string()),
+            secondary: Some("裴予川".to_string()),
+            ..Default::default()
+        };
+        let mut value = "重振沈家；从沈府救出沈父；重夺祝家兵权。".to_string();
+
+        rewrite_external_character_references_to_authority(&mut value, &authority);
+
+        assert_eq!(value, "重振顾家；从顾府救出顾父；重夺顾家兵权。");
+    }
+
+    #[test]
+    fn explicit_non_primary_household_reference_wins_before_bare_primary_fallback() {
+        let authority = CharacterAuthority {
+            names: vec!["顾维澜".to_string(), "裴予川".to_string()],
+            superseded_names: BTreeMap::from([
+                ("沈长风".to_string(), "顾维澜".to_string()),
+                ("沈清婉".to_string(), "裴予川".to_string()),
+            ]),
+            primary: Some("顾维澜".to_string()),
+            secondary: Some("裴予川".to_string()),
+            ..Default::default()
+        };
+        let mut value = "沈清婉返回沈府处理自己的族产。".to_string();
+
+        rewrite_external_character_references_to_authority(&mut value, &authority);
+
+        assert_eq!(value, "裴予川返回裴府处理自己的族产。");
+    }
+
+    #[test]
+    fn contract_canonicalization_rewrites_stale_household_anchors_in_every_story_scope() {
+        let mut contract = NovelCreationContract {
+            characters: vec![
+                CharacterContract {
+                    canonical_name: "顾维澜".to_string(),
+                    name_source: "generated_by_writing_tool_policy".to_string(),
+                    previous_names: vec!["沈长风".to_string(), "祝承言".to_string()],
+                    role: "主角".to_string(),
+                    desire: "重振沈家".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "裴予川".to_string(),
+                    name_source: "generated_by_writing_tool_policy".to_string(),
+                    previous_names: vec!["沈清婉".to_string()],
+                    role: "关键关系对象".to_string(),
+                    bottom_line: "守住沈家最后的血脉".to_string(),
+                    ..Default::default()
+                },
+            ],
+            outline: OutlineContract {
+                raw_outline: "顾维澜在沈府醒来并重夺祝家兵权".to_string(),
+                volumes: vec![VolumeContract {
+                    objective: "重夺祝家兵权".to_string(),
+                    ..Default::default()
+                }],
+                near_chapters: vec![ChapterSeedContract {
+                    number: Some(1),
+                    goal: "从沈府救出沈父".to_string(),
+                    ..Default::default()
+                }],
+            },
+            ..Default::default()
+        };
+
+        canonicalize_novel_contract_to_character_authority(&mut contract);
+
+        let serialized = serde_json::to_string(&contract).expect("contract json");
+        assert!(!serialized.contains("沈家"), "{serialized}");
+        assert!(!serialized.contains("沈府"), "{serialized}");
+        assert!(!serialized.contains("沈父"), "{serialized}");
+        assert!(!serialized.contains("祝家"), "{serialized}");
+        assert!(serialized.contains("顾家"), "{serialized}");
+        assert!(serialized.contains("顾府"), "{serialized}");
+        assert!(serialized.contains("顾父"), "{serialized}");
     }
 
     #[test]

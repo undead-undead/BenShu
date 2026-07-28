@@ -379,7 +379,9 @@ fn align_primary_name_authority(contract: &mut NovelCreationContract) -> bool {
     contract.align_primary_name_authority_surfaces()
 }
 
-fn reconcile_character_plan_anchors_with_outline(contract: &mut NovelCreationContract) -> bool {
+pub(super) fn reconcile_character_plan_anchors_with_outline(
+    contract: &mut NovelCreationContract,
+) -> bool {
     let volume_count = contract.outline.volumes.len();
     if volume_count == 0 {
         return false;

@@ -108,6 +108,19 @@ pub(super) fn rebuild_story_bible_from_contract_only(manifest: &mut NovelProject
     ));
 }
 
+pub(super) fn invalidate_story_bible_planning_after(
+    bible: Option<&mut novel_bible::StoryBible>,
+    authority_cutoff_chapter: usize,
+) {
+    let Some(bible) = bible else {
+        return;
+    };
+    bible
+        .narrative_graph
+        .chapter_goals
+        .retain(|goal| goal.chapter_number <= authority_cutoff_chapter);
+}
+
 pub(super) fn ensure_project_governance(manifest: &mut NovelProjectManifest) {
     ensure_contract_character_identity_fields(manifest);
     ensure_structured_contract_v2(manifest);
@@ -121,6 +134,33 @@ pub(super) fn ensure_project_governance(manifest: &mut NovelProjectManifest) {
     ensure_chapter_volume_assignments(manifest);
     ensure_volume_summaries(manifest);
     ensure_title_state(manifest);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalidating_descendants_removes_only_future_planning_nodes() {
+        let mut bible = novel_bible::StoryBible::default();
+        bible.narrative_graph.chapter_goals = vec![
+            novel_bible::ChapterGoal {
+                chapter_number: 3,
+                goal: "保留已批准边界".to_string(),
+                ..Default::default()
+            },
+            novel_bible::ChapterGoal {
+                chapter_number: 4,
+                goal: "删除失效滚动目标".to_string(),
+                ..Default::default()
+            },
+        ];
+        invalidate_story_bible_planning_after(Some(&mut bible), 3);
+
+        let goals = &bible.narrative_graph.chapter_goals;
+        assert_eq!(goals.len(), 1);
+        assert_eq!(goals[0].chapter_number, 3);
+    }
 }
 
 fn ensure_contract_character_identity_fields(manifest: &mut NovelProjectManifest) {
@@ -1204,11 +1244,14 @@ pub(super) fn clean_manifest_volume_title(title: &str, index: usize, language: &
 }
 
 fn expected_project_chapter_count(manifest: &NovelProjectManifest) -> Option<usize> {
-    if let (Some(target), Some(chapter_target)) = (
-        manifest.target_units.filter(|value| *value > 0),
-        manifest.chapter_unit_target.filter(|value| *value > 0),
-    ) {
-        return Some(target.div_ceil(chapter_target).max(1));
+    if let Some(expected) = manifest
+        .target_units
+        .zip(manifest.chapter_unit_target)
+        .and_then(|(target, chapter_target)| {
+            longform_policy::expected_chapter_count(target, chapter_target)
+        })
+    {
+        return Some(expected);
     }
     manifest
         .chapter_plans

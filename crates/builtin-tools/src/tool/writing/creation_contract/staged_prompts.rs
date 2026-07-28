@@ -202,10 +202,13 @@ pub fn final_prompt_from_initial_contract_batch(
                 longform_policy::novel_chapter_unit_band_label()
             )
         });
-    let expected_chapters = match (effective.target_units, effective.chapter_unit_target) {
-        (Some(total), Some(per_chapter)) if per_chapter > 0 => total.div_ceil(per_chapter),
-        _ => 0,
-    };
+    let expected_chapters = effective
+        .target_units
+        .zip(effective.chapter_unit_target)
+        .and_then(|(total, per_chapter)| {
+            longform_policy::expected_chapter_count(total, per_chapter)
+        })
+        .unwrap_or_default();
     super::patch_prompt::initial_contract_batch_prompt(
         effective,
         user_message,
@@ -238,10 +241,13 @@ pub fn final_prompt_from_staged_contract_completion_stage(
                 longform_policy::novel_chapter_unit_band_label()
             )
         });
-    let expected_chapters = match (effective.target_units, effective.chapter_unit_target) {
-        (Some(total), Some(per_chapter)) if per_chapter > 0 => total.div_ceil(per_chapter),
-        _ => 0,
-    };
+    let expected_chapters = effective
+        .target_units
+        .zip(effective.chapter_unit_target)
+        .and_then(|(total, per_chapter)| {
+            longform_policy::expected_chapter_count(total, per_chapter)
+        })
+        .unwrap_or_default();
     let stable_anchor = staged_contract_anchor(effective, issues);
     super::patch_prompt::final_prompt_from_patch_completion(
         effective,

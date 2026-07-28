@@ -41,6 +41,7 @@ struct CreationArtifactProfile {
 
 const CREATION_VERBS: &[&str] = &[
     "写",
+    "创作",
     "生成",
     "创建",
     "做",
@@ -689,6 +690,15 @@ mod tests {
     fn specified_or_autonomous_creation_requests_proceed() {
         assert!(!evaluate_creation_intake("帮我写一个草根逆袭的玄幻小说").should_clarify());
         assert!(!evaluate_creation_intake("帮我写小说，你来定").should_clarify());
+        assert!(
+            !evaluate_creation_intake("请创作一本10万字的都市言情长篇小说，每章2500字")
+                .should_clarify()
+        );
+        assert_eq!(
+            detect_creation_artifact_kind("请创作一本10万字的都市言情长篇小说，每章2500字")
+                .as_deref(),
+            Some("fiction")
+        );
         assert!(!evaluate_creation_intake("写一个 React 登录页面代码").should_clarify());
         assert!(!evaluate_creation_intake("帮我做PPT").should_clarify());
     }

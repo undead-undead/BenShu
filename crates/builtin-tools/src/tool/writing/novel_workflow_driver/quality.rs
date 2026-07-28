@@ -2267,7 +2267,11 @@ pub(super) fn only_small_length_shortfall(
     }
     let mut hard_codes = finding_codes_with_disposition(write_result, "hard_block");
     hard_codes.extend(finding_codes_with_disposition(audit, "hard_block"));
-    if hard_codes.iter().any(|code| code != "length_below_minimum")
+    let explicit_length_shortfall = hard_codes.iter().any(|code| code == "length_below_minimum")
+        || value_reports_length_shortfall(write_result)
+        || value_reports_length_shortfall(audit);
+    if !explicit_length_shortfall
+        || hard_codes.iter().any(|code| code != "length_below_minimum")
         || value_has_non_metadata_deterministic_repairs(write_result)
         || value_has_non_metadata_deterministic_repairs(audit)
         || !json_array_is_empty(write_result.pointer("/truth_validation/issues"))
@@ -2278,6 +2282,36 @@ pub(super) fn only_small_length_shortfall(
 
     let shortfall = target.saturating_sub(current);
     shortfall <= length_topup_shortfall_limit(target, language)
+}
+
+fn value_reports_length_shortfall(value: &Value) -> bool {
+    [
+        "/quality_gate/findings",
+        "/quality_gate/issues",
+        "/quality_gate/warnings",
+        "/quality_gate/repairable",
+        "/review/findings",
+        "/review/issues",
+        "/issues",
+    ]
+    .iter()
+    .filter_map(|path| value.pointer(path))
+    .any(length_shortfall_node)
+}
+
+fn length_shortfall_node(value: &Value) -> bool {
+    match value {
+        Value::String(text) => {
+            text.contains("chapter length is below minimum target")
+                || text.contains("length_below_minimum")
+        }
+        Value::Array(items) => items.iter().any(length_shortfall_node),
+        Value::Object(fields) => fields
+            .get("code")
+            .and_then(Value::as_str)
+            .is_some_and(|code| code == "length_below_minimum"),
+        _ => false,
+    }
 }
 
 pub(super) fn chapter_length_current_and_target(
@@ -2295,7 +2329,7 @@ pub(super) fn chapter_length_current_and_target(
 }
 
 pub(super) fn length_topup_shortfall_limit(target: usize, language: &str) -> usize {
-    let percent = target.saturating_mul(20).div_ceil(100);
+    let percent = target.saturating_mul(50).div_ceil(100);
     let floor = if language_looks_cjk(language) {
         600
     } else {
@@ -2378,6 +2412,16 @@ pub(super) fn govern_generated_execution_package(
             .checked_add(1)
             .and_then(|number| fallback_chapter_seed_from_near_chapters(value, number))
     });
+    package.future_chapters = parsed_context
+        .as_ref()
+        .map(|value| {
+            govern_rolling_future_chapters(
+                value,
+                chapter_number,
+                std::mem::take(&mut package.future_chapters),
+            )
+        })
+        .unwrap_or_default();
     if let Some(next_seed) = next_seed.as_deref() {
         let cjk = language_looks_cjk(language);
         let current_seed = current_seed.as_deref().unwrap_or_default();
@@ -2583,6 +2627,7 @@ pub(super) fn fallback_chapter_execution_package(
         hook_opened: Vec::new(),
         hook_paid_off,
         title_basis: chapter_seed.unwrap_or_default(),
+        future_chapters: Vec::new(),
         new_character_requests: Vec::new(),
         degraded: false,
         degraded_reason: String::new(),
@@ -2832,11 +2877,18 @@ pub(super) fn fallback_chapter_seed_from_near_chapters(
     for pointer in [
         "/canonical_contract/outline/near_chapters",
         "/authority/canonical_contract/outline/near_chapters",
+        "/current_chapter_goal",
+        "/authority/current_chapter_goal",
+        "/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
+        "/authority/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
         "/project_context/story_bible/narrative_graph/chapter_goals",
         "/story_bible/narrative_graph/chapter_goals",
         "/narrative_graph/chapter_goals",
         "/project_context/next_chapter_boundary",
         "/next_chapter_boundary",
+        "/authority/working_context/next_chapter_boundary",
+        "/rolling_outline_window",
+        "/authority/rolling_outline_window",
         "/project_context/contract/outline/near_chapters",
         "/contract/outline/near_chapters",
         "/outline/near_chapters",
@@ -2874,6 +2926,147 @@ pub(super) fn fallback_chapter_seed_from_near_chapters(
         }
     }
     None
+}
+
+fn expected_chapters_from_execution_context(value: &Value) -> Option<usize> {
+    for pointer in [
+        "/narrative_progress/expected_chapters",
+        "/project_context/narrative_progress/expected_chapters",
+        "/authority/working_context/narrative_progress/expected_chapters",
+    ] {
+        if let Some(expected) = value.pointer(pointer).and_then(Value::as_u64) {
+            return usize::try_from(expected)
+                .ok()
+                .filter(|expected| *expected > 0);
+        }
+    }
+    let target = [
+        "/canonical_contract/target_units",
+        "/authority/canonical_contract/target_units",
+        "/project_context/project/target_units",
+    ]
+    .iter()
+    .find_map(|pointer| value.pointer(pointer).and_then(Value::as_u64))?;
+    let per_chapter = [
+        "/canonical_contract/chapter_unit_target",
+        "/authority/canonical_contract/chapter_unit_target",
+        "/project_context/project/chapter_unit_target",
+    ]
+    .iter()
+    .find_map(|pointer| value.pointer(pointer).and_then(Value::as_u64))?;
+    let target = usize::try_from(target).ok()?;
+    let per_chapter = usize::try_from(per_chapter).ok()?;
+    longform_policy::expected_chapter_count(target, per_chapter)
+}
+
+fn chapter_seed_contract_from_context(
+    value: &Value,
+    chapter_number: usize,
+) -> Option<crate::tool::writing::creation_contract_model::ChapterSeedContract> {
+    for pointer in [
+        "/canonical_contract/outline/near_chapters",
+        "/authority/canonical_contract/outline/near_chapters",
+        "/current_chapter_goal",
+        "/authority/current_chapter_goal",
+        "/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
+        "/authority/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
+        "/project_context/story_bible/narrative_graph/chapter_goals",
+        "/story_bible/narrative_graph/chapter_goals",
+        "/narrative_graph/chapter_goals",
+        "/project_context/next_chapter_boundary",
+        "/next_chapter_boundary",
+        "/authority/working_context/next_chapter_boundary",
+        "/rolling_outline_window",
+        "/authority/rolling_outline_window",
+        "/project_context/contract/outline/near_chapters",
+        "/contract/outline/near_chapters",
+        "/outline/near_chapters",
+        "/creation_contract/outline/near_chapters",
+    ] {
+        let Some(items) = value.pointer(pointer).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            let number = item
+                .get("number")
+                .or_else(|| item.get("chapter_number"))
+                .and_then(Value::as_u64)
+                .and_then(|value| usize::try_from(value).ok());
+            if number != Some(chapter_number) {
+                continue;
+            }
+            let goal = ["goal", "objective", "summary"]
+                .into_iter()
+                .find_map(|key| item.get(key).and_then(Value::as_str))
+                .map(str::trim)
+                .unwrap_or_default();
+            let expected_turn = ["expected_turn", "moves_toward_ending"]
+                .into_iter()
+                .find_map(|key| item.get(key).and_then(Value::as_str))
+                .map(str::trim)
+                .unwrap_or_default();
+            if !goal.is_empty() && !expected_turn.is_empty() {
+                return Some(
+                    crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                        number: Some(chapter_number),
+                        goal: goal.to_string(),
+                        expected_turn: expected_turn.to_string(),
+                    },
+                );
+            }
+        }
+    }
+    None
+}
+
+fn govern_rolling_future_chapters(
+    context: &Value,
+    chapter_number: usize,
+    generated: Vec<crate::tool::writing::creation_contract_model::ChapterSeedContract>,
+) -> Vec<crate::tool::writing::creation_contract_model::ChapterSeedContract> {
+    let expected_chapters = expected_chapters_from_execution_context(context);
+    let last_allowed = chapter_number
+        .saturating_add(governance::ROLLING_OUTLINE_LOOKAHEAD_CHAPTERS)
+        .min(expected_chapters.unwrap_or(usize::MAX));
+    let mut generated = generated
+        .into_iter()
+        .filter_map(|mut seed| {
+            let number = seed.number?;
+            seed.goal = seed.goal.trim().to_string();
+            seed.expected_turn = seed.expected_turn.trim().to_string();
+            (number > chapter_number
+                && number <= last_allowed
+                && !seed.goal.is_empty()
+                && !seed.expected_turn.is_empty())
+            .then_some((number, seed))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut governed = Vec::new();
+    for number in chapter_number.saturating_add(1)..=last_allowed {
+        let seed = chapter_seed_contract_from_context(context, number)
+            .or_else(|| generated.remove(&number));
+        let Some(seed) = seed else {
+            continue;
+        };
+        let fingerprint = format!(
+            "{}|{}",
+            normalize_repetition_segment(&seed.goal),
+            normalize_repetition_segment(&seed.expected_turn)
+        );
+        if governed.iter().any(
+            |existing: &crate::tool::writing::creation_contract_model::ChapterSeedContract| {
+                format!(
+                    "{}|{}",
+                    normalize_repetition_segment(&existing.goal),
+                    normalize_repetition_segment(&existing.expected_turn)
+                ) == fingerprint
+            },
+        ) {
+            continue;
+        }
+        governed.push(seed);
+    }
+    governed
 }
 
 pub(super) fn fallback_chapter_seed_from_outline_texts(
@@ -3136,7 +3329,10 @@ pub(super) fn chapter_expansion_round_budget(target: usize, current: usize) -> u
     } else {
         3
     };
-    missing.div_ceil(segment_target).clamp(1, max_rounds)
+    missing
+        .div_ceil(segment_target)
+        .saturating_add(1)
+        .clamp(1, max_rounds)
 }
 
 pub(super) fn chapter_expansion_segment_target(target: usize, remaining: usize) -> usize {
@@ -5289,6 +5485,68 @@ mod tests {
     }
 
     #[test]
+    fn fallback_execution_package_reads_current_truth_goal_and_rolling_future_boundary() {
+        let context = serde_json::json!({
+            "truth_as_of_chapter": {
+                "story_state": {
+                    "narrative_graph": {
+                        "chapter_goals": [{
+                            "chapter_number": 7,
+                            "goal": "商队因灵石配额排斥岑星澜",
+                            "moves_toward_ending": "岑星澜被迫选择新的同行者"
+                        }]
+                    }
+                }
+            },
+            "rolling_outline_window": [{
+                "number": 8,
+                "goal": "众人进入荒野寻找失落驿站",
+                "expected_turn": "发现驿站曾被人为抹去"
+            }]
+        })
+        .to_string();
+
+        let package =
+            fallback_chapter_execution_package("zh-CN", "灵脉行旅", 7, &context, false, None);
+
+        assert!(package.memo.body.contains("商队因灵石配额排斥岑星澜"));
+        assert!(package.memo.body.contains("岑星澜被迫选择新的同行者"));
+        assert!(package.memo.body.contains("下一章边界（只作为禁区"));
+        assert!(package.memo.body.contains("众人进入荒野寻找失落驿站"));
+        assert!(package.architecture.contains("众人进入荒野寻找失落驿站"));
+    }
+
+    #[test]
+    fn fallback_execution_package_reads_explicit_current_goal_when_truth_excludes_planning() {
+        let context = serde_json::json!({
+            "truth_as_of_chapter": {
+                "story_state": {
+                    "character_ledger": [{"name": "闻雪渡", "role": "主角"}]
+                }
+            },
+            "current_chapter_goal": [{
+                "number": 4,
+                "goal": "闻雪渡进入封山矿洞寻找失踪的勘探队",
+                "expected_turn": "闻雪渡在矿壁内发现仍在运转的古代升降机"
+            }],
+            "rolling_outline_window": [{
+                "number": 5,
+                "goal": "闻雪渡沿升降机进入地下城",
+                "expected_turn": "地下城的照明系统因她到来而重启"
+            }]
+        })
+        .to_string();
+
+        let package =
+            fallback_chapter_execution_package("zh-CN", "封山旧井", 4, &context, false, None);
+
+        assert!(package.memo.body.contains("进入封山矿洞寻找失踪的勘探队"));
+        assert!(package.memo.body.contains("发现仍在运转的古代升降机"));
+        assert!(package.memo.body.contains("下一章边界（只作为禁区"));
+        assert!(package.memo.body.contains("沿升降机进入地下城"));
+    }
+
+    #[test]
     fn generated_execution_package_cannot_promote_the_next_chapter_into_current_authority() {
         let context = serde_json::json!({
             "canonical_contract": {
@@ -5373,6 +5631,131 @@ mod tests {
         assert!(governed.scene_goal.contains("进入废弃山门"));
         assert!(governed.architecture.contains("下一章边界"));
         assert!(governed.architecture.contains("模型给出的五个具体场景"));
+    }
+
+    #[test]
+    fn rolling_outline_preserves_existing_next_boundary_and_only_adds_missing_nodes() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "outline": {
+                    "near_chapters": [
+                        {
+                            "number": 3,
+                            "goal": "主角确认账本被替换",
+                            "expected_turn": "取得伪造页的压痕证据"
+                        },
+                        {
+                            "number": 4,
+                            "goal": "沿压痕寻找印刷作坊",
+                            "expected_turn": "锁定作坊夜班经手人"
+                        }
+                    ]
+                }
+            },
+            "next_chapter_boundary": [
+                {
+                    "number": 4,
+                    "goal": "沿压痕寻找印刷作坊",
+                    "expected_turn": "锁定作坊夜班经手人"
+                }
+            ],
+            "rolling_outline_window": [
+                {
+                    "number": 4,
+                    "goal": "沿压痕寻找印刷作坊",
+                    "expected_turn": "锁定作坊夜班经手人"
+                },
+                {
+                    "number": 5,
+                    "goal": "跟踪夜班经手人的交货路线",
+                    "expected_turn": "发现货物被送入市政档案馆"
+                },
+                {
+                    "number": 6,
+                    "goal": "潜入档案馆核对原始登记",
+                    "expected_turn": "确认换页命令来自清退专案组"
+                }
+            ]
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "旧账夜印", 3, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(4),
+                goal: "覆盖旧权威的错误目标".to_string(),
+                expected_turn: "覆盖旧权威的错误变化".to_string(),
+            },
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(5),
+                goal: "覆盖第五章旧权威的错误目标".to_string(),
+                expected_turn: "覆盖第五章旧权威的错误变化".to_string(),
+            },
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(6),
+                goal: "覆盖第六章旧权威的错误目标".to_string(),
+                expected_turn: "覆盖第六章旧权威的错误变化".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "旧账夜印",
+            3,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 3);
+        assert_eq!(governed.future_chapters[0].number, Some(4));
+        assert_eq!(governed.future_chapters[0].goal, "沿压痕寻找印刷作坊");
+        assert_eq!(governed.future_chapters[1].number, Some(5));
+        assert_eq!(governed.future_chapters[1].goal, "跟踪夜班经手人的交货路线");
+        assert_eq!(governed.future_chapters[2].number, Some(6));
+        assert_eq!(governed.future_chapters[2].goal, "潜入档案馆核对原始登记");
+    }
+
+    #[test]
+    fn rolling_outline_stops_at_expected_book_length_and_drops_duplicate_nodes() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 10_000,
+                "chapter_unit_target": 2_500,
+                "outline": {"near_chapters": []}
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "四章短篇", 3, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(4),
+                goal: "公开账本原件".to_string(),
+                expected_turn: "产权清退被永久叫停".to_string(),
+            },
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(5),
+                goal: "不应超出全书长度".to_string(),
+                expected_turn: "不应保存".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "四章短篇",
+            3,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 1);
+        assert_eq!(governed.future_chapters[0].number, Some(4));
     }
 
     #[test]

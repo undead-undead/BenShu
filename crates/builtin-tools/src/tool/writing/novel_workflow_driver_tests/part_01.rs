@@ -766,9 +766,9 @@
         assert_eq!(required_chapter_units(5000), 5000);
         assert_eq!(required_chapter_units(2500), 2500);
         assert_eq!(chapter_step_duration_secs(Some(5000), Some(500_000)), 1554);
-        assert_eq!(chapter_expansion_round_budget(5000, 3600), 1);
+        assert_eq!(chapter_expansion_round_budget(5000, 3600), 2);
         assert_eq!(chapter_expansion_segment_target(5000, 1400), 1820);
-        assert_eq!(chapter_expansion_round_budget(2500, 2499), 1);
+        assert_eq!(chapter_expansion_round_budget(2500, 2499), 2);
     }
 
     #[test]

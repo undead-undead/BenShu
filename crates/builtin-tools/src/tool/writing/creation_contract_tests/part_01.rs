@@ -871,6 +871,43 @@
     }
 
     #[tokio::test]
+    async fn contract_ready_natural_full_book_confirmation_approves_before_writer_routing() {
+        let draft = ready_fiction_draft("session-a");
+        let mut runtime = MockCreationDraftRuntime {
+            draft: Some(draft),
+            recovered_draft: None,
+            continuation_project_path: None,
+            project_path: "data/generated/novels/test-project".to_string(),
+            saved: 0,
+            approved: 0,
+        };
+
+        let outcome = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-a",
+            "我确认这个合同。现在按正常自动化流程持续写完整本小说，中途不需要逐章询问我；不要只写前三章，也不要在聊天中显示 JSON、内部路径或工具参数。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+
+        let message = match outcome {
+            super::super::CreationDraftTurnOutcome::ContinueWithMessage(message) => message,
+            super::super::CreationDraftTurnOutcome::Respond(response) => panic!(
+                "contract-ready confirmation should approve and route to writer: {}",
+                response.response
+            ),
+        };
+        assert!(message.contains(super::super::DIRECT_WRITER_CONTINUATION_MARKER));
+        assert!(message.contains("project_path: data/generated/novels/test-project"));
+        assert_eq!(runtime.approved, 1);
+        assert_eq!(
+            runtime.draft.expect("approved draft").lifecycle_status(),
+            super::super::CreationDraftLifecycleStatus::Approved
+        );
+    }
+
+    #[tokio::test]
     async fn continuation_in_new_session_restores_authority_before_routing_to_writer() {
         let mut recovered = ready_fiction_draft("previous-session");
         recovered.project_path = "data/generated/novels/recovered-project".to_string();

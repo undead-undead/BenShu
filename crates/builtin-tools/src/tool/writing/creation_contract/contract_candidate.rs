@@ -625,6 +625,7 @@ fn submit_novel_creation_contract_candidate_from_preapplied_draft(
     normalized_value: serde_json::Value,
 ) -> ContractSubmissionOutcome {
     normalize_candidate_creative_surface(&mut contract);
+    metadata_repair::reconcile_character_plan_anchors_with_outline(&mut contract);
     contract.normalize();
     let normalized_contract_text =
         serde_json::to_string(&contract).unwrap_or_else(|_| normalized_text.clone());
@@ -964,6 +965,59 @@ mod patch_base_selection_tests {
             4,
             "the patch merge base must be the same four-volume candidate selected for the draft"
         );
+    }
+
+    #[test]
+    fn plot_patch_reuses_local_anchor_reconciliation_after_volume_count_changes() {
+        let mut draft = build_initial_creation_draft(
+            "plot-anchor-reconciliation",
+            "fiction",
+            "写一部异界冒险小说，总字数10万字，每章2500字",
+        )
+        .expect("draft");
+        let mut visible = visible_four_volume_contract();
+        apply_strong_novel_contract_to_creation_draft(&mut draft, &mut visible);
+        let patch = serde_json::json!({
+            "patch_type": "plot_patch",
+            "outline": {
+                "volumes": [
+                    volume(1),
+                    volume(2),
+                    volume(3),
+                    volume(4),
+                    {
+                        "title": "动态航图",
+                        "objective": "主角完成动态航图并阻止航路战争",
+                        "ending_change": "各岛群共同维护动态航图，航路战争被终结"
+                    }
+                ]
+            }
+        });
+
+        let outcome = submit_generated_contract_candidate_to_draft(&mut draft, &patch.to_string());
+        let merged = draft
+            .pending_contract_candidate
+            .as_ref()
+            .and_then(|candidate| candidate.get("normalized"))
+            .or(draft.current_contract.as_ref())
+            .and_then(|value| NovelCreationContract::parse_json_boundary(&value.to_string()))
+            .expect("merged plot candidate");
+        let primary = merged
+            .characters
+            .iter()
+            .find(|character| character.role_looks_primary())
+            .expect("primary character");
+
+        assert!(
+            !outcome
+                .gate
+                .actionable_issues()
+                .iter()
+                .any(|issue| { issue.contains("计划离场锚点") && issue.contains("第4卷") }),
+            "the existing local reconciliation must remove the stale anchor: {:?}",
+            outcome.gate.actionable_issues()
+        );
+        assert_eq!(primary.planned_exit, "持续至第5卷终局");
     }
 
     #[test]

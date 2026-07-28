@@ -1,4 +1,5 @@
 use super::*;
+use crate::tool::writing::creation_contract_model::ChapterSeedContract;
 use crate::tool::writing::novel_contract_v2::{
     ChapterCharacterRegistration, ChapterCharacterRequest, ChapterEndingRotation,
     CharacterVoiceProfile, ConflictPressureCurve, MotifLedgerEntry, ReaderPromise,
@@ -192,6 +193,8 @@ pub(super) struct NovelStudioArgs {
     pub(super) world_change: String,
     #[serde(default)]
     pub(super) payoff_target: String,
+    #[serde(default)]
+    pub(super) future_chapters: Vec<ChapterSeedContract>,
     #[serde(default)]
     pub(super) new_character_requests: Vec<ChapterCharacterRequest>,
     #[serde(default)]

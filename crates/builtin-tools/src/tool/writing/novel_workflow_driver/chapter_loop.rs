@@ -2,8 +2,6 @@ use super::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const SEMANTIC_REVISION_BUDGET: usize = 2;
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(super) struct RevisionBudget {
     #[serde(default)]
@@ -42,7 +40,7 @@ impl RevisionBudget {
     }
 
     pub(super) fn can_attempt_semantic_revision(&self) -> bool {
-        self.semantic_attempts < SEMANTIC_REVISION_BUDGET
+        self.semantic_attempts < MAX_LLM_REVISION_ATTEMPTS
     }
 }
 
@@ -173,6 +171,13 @@ pub(super) fn revision_quality_vector(
         .filter(|target| *target > 0)
         .map(|target| target.saturating_sub(units))
         .unwrap_or(0);
+    let length_topup_eligible =
+        chapter_unit_target
+            .filter(|target| *target > 0)
+            .is_none_or(|target| {
+                length_shortfall == 0
+                    || length_shortfall <= length_topup_shortfall_limit(target, language)
+            });
     RevisionQualityVector {
         hard_blockers: hard.len(),
         authority_conflicts: hard
@@ -201,6 +206,7 @@ pub(super) fn revision_quality_vector(
             .iter()
             .filter(|finding| finding.code == "length_below_minimum")
             .count(),
+        length_topup_eligible,
         deterministic_repairs: findings
             .iter()
             .filter(|finding| finding.disposition == ChapterFindingDisposition::DeterministicRepair)
@@ -300,6 +306,23 @@ pub(super) fn candidate_is_strict_improvement(
         return false;
     }
     if candidate.hard_blockers < current.hard_blockers {
+        return true;
+    }
+    if candidate.hard_blockers == current.hard_blockers
+        && (candidate.authority_conflicts, candidate.state_conflicts)
+            < (current.authority_conflicts, current.state_conflicts)
+        && (candidate.length_blockers == 0 || candidate.length_topup_eligible)
+    {
+        // Contract/continuity/state conflicts can poison every later chapter.
+        // A bounded, recoverable length blocker is therefore a strict net
+        // improvement when it replaces one of those conflicts; the existing
+        // length-top-up route can then repair the remaining shortfall.
+        return true;
+    }
+    if candidate.hard_blockers == current.hard_blockers
+        && candidate.required_outcomes_missing < current.required_outcomes_missing
+        && (candidate.length_blockers == 0 || candidate.length_topup_eligible)
+    {
         return true;
     }
     if current.hard_blockers > 0
@@ -700,12 +723,13 @@ mod tests {
     }
 
     #[test]
-    fn semantic_budget_allows_one_alternative_after_a_bad_candidate_and_stops_at_two() {
+    fn semantic_budget_uses_the_shared_five_attempt_limit() {
         let mut budget = RevisionBudget::default();
-        assert!(budget.can_attempt_semantic_revision());
-        budget.semantic_attempts = 1;
-        assert!(budget.can_attempt_semantic_revision());
-        budget.semantic_attempts = 2;
+        for attempt in 0..MAX_LLM_REVISION_ATTEMPTS {
+            budget.semantic_attempts = attempt;
+            assert!(budget.can_attempt_semantic_revision());
+        }
+        budget.semantic_attempts = MAX_LLM_REVISION_ATTEMPTS;
         assert!(!budget.can_attempt_semantic_revision());
     }
 
@@ -729,6 +753,74 @@ mod tests {
         assert!(!candidate_is_strict_improvement(
             &improved,
             &improved,
+            CandidateProvenance::SemanticRevision,
+        ));
+    }
+
+    #[test]
+    fn resolving_authority_conflict_can_hand_off_a_shortfall_to_existing_topup() {
+        let current = RevisionQualityVector {
+            hard_blockers: 1,
+            authority_conflicts: 1,
+            new_high_priority_blockers: 1,
+            ..Default::default()
+        };
+        let candidate = RevisionQualityVector {
+            hard_blockers: 1,
+            length_blockers: 1,
+            length_shortfall: 386,
+            length_topup_eligible: true,
+            material_deletion_ratio: 328,
+            ..Default::default()
+        };
+
+        assert!(candidate_is_strict_improvement(
+            &current,
+            &candidate,
+            CandidateProvenance::SemanticRevision,
+        ));
+    }
+
+    #[test]
+    fn authority_improvement_cannot_hand_off_an_unrecoverable_length_shortfall() {
+        let current = RevisionQualityVector {
+            hard_blockers: 1,
+            authority_conflicts: 1,
+            ..Default::default()
+        };
+        let candidate = RevisionQualityVector {
+            hard_blockers: 1,
+            length_blockers: 1,
+            length_shortfall: 1_330,
+            length_topup_eligible: false,
+            material_deletion_ratio: 350,
+            ..Default::default()
+        };
+
+        assert!(!candidate_is_strict_improvement(
+            &current,
+            &candidate,
+            CandidateProvenance::SemanticRevision,
+        ));
+    }
+
+    #[test]
+    fn authority_improvement_still_rejects_excessive_material_deletion() {
+        let current = RevisionQualityVector {
+            hard_blockers: 1,
+            authority_conflicts: 1,
+            ..Default::default()
+        };
+        let candidate = RevisionQualityVector {
+            hard_blockers: 1,
+            length_blockers: 1,
+            material_deletion_ratio: 351,
+            ..Default::default()
+        };
+
+        assert!(!candidate_is_strict_improvement(
+            &current,
+            &candidate,
             CandidateProvenance::SemanticRevision,
         ));
     }
@@ -871,6 +963,40 @@ mod tests {
             write_result: &write_result,
             audit: &audit,
             body_fingerprint: 11,
+            last_cleanup_fingerprint: None,
+            attempted_tail_completion: false,
+            attempted_length_topup: false,
+            chapter_unit_target: Some(2500),
+            language: "zh-CN",
+        });
+
+        assert_eq!(decision, ChapterLoopDecision::LengthTopup);
+    }
+
+    #[test]
+    fn loop_tops_up_length_only_draft_that_reaches_half_the_contract_target() {
+        let write_result = json!({
+            "unit_count": 1719,
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "class": "length",
+                    "code": "length_below_minimum",
+                    "disposition": "hard_block"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+        let audit = json!({
+            "review": {"verdict": "needs_revision", "findings": []},
+            "truth_validation": {"issues": []}
+        });
+
+        let decision = decide_chapter_loop_step(ChapterLoopDecisionInput {
+            write_result: &write_result,
+            audit: &audit,
+            body_fingerprint: 17,
             last_cleanup_fingerprint: None,
             attempted_tail_completion: false,
             attempted_length_topup: false,

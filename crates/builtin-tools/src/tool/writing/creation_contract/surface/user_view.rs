@@ -177,13 +177,15 @@ pub fn render_creation_draft_compact_status(draft: &SessionCreationDraftState) -
         if let Some(turns) = draft.max_chapters_per_turn {
             lines.push(format!("- 每轮章节数：{turns}"));
         }
-        if let (Some(total), Some(per_chapter)) = (draft.target_units, draft.chapter_unit_target) {
-            if per_chapter > 0 {
-                lines.push(format!(
-                    "- 预计章节数：约 {} 章",
-                    total.div_ceil(per_chapter)
-                ));
-            }
+        if let Some(expected) =
+            draft
+                .target_units
+                .zip(draft.chapter_unit_target)
+                .and_then(|(total, per_chapter)| {
+                    longform_policy::expected_chapter_count(total, per_chapter)
+                })
+        {
+            lines.push(format!("- 预计章节数：约 {expected} 章"));
         }
         let structured_status = render_structured_contract_v2_status(draft, false);
         if !structured_status.trim().is_empty() {
@@ -310,13 +312,15 @@ pub(crate) fn render_full_fiction_contract_view(draft: &SessionCreationDraftStat
     } else {
         lines.push("- 每轮章节数：未指定".to_string());
     }
-    if let (Some(total), Some(per_chapter)) = (draft.target_units, draft.chapter_unit_target) {
-        if per_chapter > 0 {
-            lines.push(format!(
-                "- 预计章节数：约 {} 章",
-                total.div_ceil(per_chapter)
-            ));
-        }
+    if let Some(expected) =
+        draft
+            .target_units
+            .zip(draft.chapter_unit_target)
+            .and_then(|(total, per_chapter)| {
+                longform_policy::expected_chapter_count(total, per_chapter)
+            })
+    {
+        lines.push(format!("- 预计章节数：约 {expected} 章"));
     }
 
     push_contract_line(&mut lines, "故事前提", &draft.fiction_premise);

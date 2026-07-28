@@ -916,6 +916,24 @@
         compact_longform_state(project_dir, &mut manifest)
             .await
             .expect("compact");
+        write_approved_settlement(
+            project_dir,
+            30,
+            &SettlementOutput {
+                chapter_fingerprint: String::new(),
+                body_fingerprint: String::new(),
+                authority_fingerprint: String::new(),
+                state_changes: Vec::new(),
+                degraded_reason: String::new(),
+                current_state: "主角留在钟楼，异常仍在持续，手中的钥匙已经断裂。".to_string(),
+                pending_hooks: "钟楼下方仍有未开启的暗门。".to_string(),
+                chapter_summary: "主角抵达钟楼并以钥匙断裂为代价确认暗门。".to_string(),
+                continuity_updates: vec!["钥匙已经断裂。".to_string()],
+                resolved_hooks: Vec::new(),
+            },
+        )
+        .await
+        .expect("approved settlement");
         let context = build_context_payload(project_dir, &manifest, 31)
             .await
             .expect("context");
@@ -926,6 +944,12 @@
             .expect("continuity");
 
         assert_eq!(recent.len(), CONTEXT_RECENT_CHAPTER_LIMIT);
+        assert_eq!(recent[0]["number"], 30);
+        assert_eq!(recent[0]["source"], "approved_final_body_settlement");
+        assert!(recent[0]["current_state"]
+            .as_str()
+            .is_some_and(|value| value.contains("钥匙已经断裂")));
+        assert!(recent[0].get("key_facts").is_none());
         assert!(!archives.is_empty());
         assert!(manifest
             .archives
@@ -1525,6 +1549,35 @@
         )
         .await
         .expect("add chapter");
+
+        let rejected_candidate = tool
+            .call(
+                &serde_json::json!({
+                    "action": "repair_chapter_metadata",
+                    "project_path": project_path,
+                    "chapter_number": 1,
+                    "chapter_title": "祖碑深处",
+                    "summary": "闻朔砺被判为弃徒后，在祖碑底部发现残纹和凡骨古法，并于杂役处第一次引气入脉。",
+                    "key_facts": ["闻朔砺被判为弃徒。", "祖碑底部出现残纹和凡骨古法。"],
+                    "continuity_updates": ["闻朔砺获得凡骨古法线索。"],
+                    "candidate_only": true
+                })
+                .to_string(),
+            )
+            .await
+            .expect("evaluate rejected metadata candidate");
+        let rejected_candidate: serde_json::Value = serde_json::from_str(&rejected_candidate)
+            .expect("rejected metadata candidate json");
+        assert_eq!(rejected_candidate["candidate_only"], true);
+        assert_eq!(rejected_candidate["chapter"]["title"], "祖碑深处");
+        assert_ne!(rejected_candidate["chapter"]["title"], "第1章");
+        assert_eq!(
+            rejected_candidate["metadata_gate"]["repairable"]
+                .as_array()
+                .is_some_and(|issues| !issues.is_empty()),
+            true,
+            "the real rejected candidate must reach the metadata gate so the next retry receives useful feedback"
+        );
 
         let repaired = tool
             .call(

@@ -732,7 +732,10 @@ pub(crate) fn fatigue_issues(
             .iter()
             .filter(|(_, _, template)| *template == current_template)
             .collect::<Vec<_>>();
-        if !same_template.is_empty() {
+        // A single neighbouring title with the same broad Chinese syntax is
+        // normal. Treat the shape as fatigued only after it has already been
+        // used twice in the short recent window.
+        if same_template.len() >= 2 {
             let examples = same_template
                 .iter()
                 .take(3)
@@ -914,8 +917,18 @@ pub(crate) fn has_story_evidence(
     if anchored_segments.len() >= 2 {
         return anchored_segments.iter().all(|segment| {
             let segment_tokens = story_tokens(segment);
-            !segment_tokens.is_empty()
-                && segment_tokens.iter().any(|token| evidence.contains(token))
+            if segment_tokens.is_empty() {
+                // Generic title words (for example, "代价") are deliberately
+                // excluded from the token matcher so they cannot ground a title
+                // by themselves.  In a compound title they are still legitimate
+                // when the final chapter evidence contains that exact segment.
+                // Treating an empty filtered token set as automatically
+                // unsupported made real, body-grounded titles impossible to
+                // repair and sent the metadata loop through every bounded retry.
+                evidence.contains(segment)
+            } else {
+                segment_tokens.iter().any(|token| evidence.contains(token))
+            }
         });
     }
     tokens.iter().any(|token| evidence.contains(token))
@@ -1966,6 +1979,29 @@ mod tests {
         assert!(has_story_evidence(
             "zh-CN",
             "校验室的碎片",
+            summary,
+            &[],
+            &[],
+            body
+        ));
+    }
+
+    #[test]
+    fn compound_title_accepts_exact_body_evidence_for_filtered_generic_segment() {
+        let summary = "唐谨遥发现残缺刻印，并以一段记忆作为驱动代价。";
+        let body = "唐谨遥从废墟中挖出残缺刻印。为了驱动刻印，他必须支付记忆作为代价。";
+
+        assert!(has_story_evidence(
+            "zh-CN",
+            "刻印的代价",
+            summary,
+            &[],
+            &[],
+            body
+        ));
+        assert!(!has_story_evidence(
+            "zh-CN",
+            "刻印的胜利",
             summary,
             &[],
             &[],

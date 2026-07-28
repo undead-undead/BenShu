@@ -104,6 +104,9 @@ pub(super) fn malformed_anchor_phrase(content: &str, anchor: &str) -> Option<Str
             continue;
         }
         let next = chars.get(particle_index + 1).copied();
+        if malformed_anchor_particle_starts_normal_word(&chars, particle_index) {
+            continue;
+        }
         if next.is_some_and(is_cjk_unified) {
             let end = (particle_index + 6).min(chars.len());
             return Some(chars[index..end].iter().collect());
@@ -130,6 +133,13 @@ pub(super) fn malformed_anchor_phrase(content: &str, anchor: &str) -> Option<Str
         return Some(chars[index..end].iter().collect());
     }
     None
+}
+
+fn malformed_anchor_particle_starts_normal_word(chars: &[char], particle_index: usize) -> bool {
+    matches!(
+        (chars.get(particle_index), chars.get(particle_index + 1)),
+        (Some('呢'), Some('喃'))
+    )
 }
 
 fn malformed_anchor_has_left_name_boundary(content: &str, byte_index: usize) -> bool {

@@ -1,10 +1,19 @@
 use super::*;
 use crate::tool::writing::chapter_quality;
 use crate::tool::writing::creation_contract::issue::ContractIssueList;
+use crate::tool::writing::longform_policy;
 
 const TERMINAL_RESOLUTION_MARKERS: &[&str] = &[
     "建立", "确立", "接受", "进入", "完成", "实现", "达成", "终结", "瓦解", "崩塌", "击败", "消灭",
-    "摧毁", "激活", "牺牲", "放弃", "公开", "切断", "关闭", "转为", "成为",
+    "摧毁", "激活", "牺牲", "舍身", "献祭", "放弃", "公开", "切断", "关闭", "转为", "成为", "化身",
+    "化作", "重塑", "重建", "恢复", "复苏",
+];
+const TERMINAL_RESOLUTION_MARKER_GROUPS: &[&[&str]] = &[
+    &["转为", "成为", "化身", "化作"],
+    &["建立", "确立", "重塑", "重建"],
+    &["恢复", "复苏"],
+    &["牺牲", "舍身", "献祭", "放弃"],
+    &["终结", "瓦解", "崩塌", "击败", "消灭", "摧毁"],
 ];
 const DEFERRED_TERMINAL_MARKERS: &[&str] = &[
     "准备",
@@ -519,7 +528,9 @@ pub(super) fn longform_plan_position_issue_expected_chapters(
     let expected_chapters = contract
         .target_units
         .zip(contract.chapter_unit_target)
-        .and_then(|(total, per_chapter)| (per_chapter > 0).then(|| total.div_ceil(per_chapter)))?;
+        .and_then(|(total, per_chapter)| {
+            longform_policy::expected_chapter_count(total, per_chapter)
+        })?;
     let last_near_chapter = contract
         .outline
         .near_chapters
@@ -827,7 +838,7 @@ fn clause_has_terminal_resolution_signal(value: &str) -> bool {
 }
 
 fn clauses_share_terminal_resolution_marker(left: &str, right: &str) -> bool {
-    TERMINAL_RESOLUTION_MARKERS.iter().any(|marker| {
+    let exact_marker_match = TERMINAL_RESOLUTION_MARKERS.iter().any(|marker| {
         let Some((_, left_effect)) = left.split_once(marker) else {
             return false;
         };
@@ -835,7 +846,21 @@ fn clauses_share_terminal_resolution_marker(left: &str, right: &str) -> bool {
             return false;
         };
         chapter_quality::shared_distinctive_bigram_count(left_effect, right_effect) >= 1
-    })
+    });
+    exact_marker_match
+        || TERMINAL_RESOLUTION_MARKER_GROUPS.iter().any(|group| {
+            group.iter().any(|left_marker| {
+                let Some((_, left_effect)) = left.split_once(left_marker) else {
+                    return false;
+                };
+                group.iter().any(|right_marker| {
+                    let Some((_, right_effect)) = right.split_once(right_marker) else {
+                        return false;
+                    };
+                    chapter_quality::shared_distinctive_bigram_count(left_effect, right_effect) >= 1
+                })
+            })
+        })
 }
 
 fn outline_text_has_dangling_conjunction_particle(value: &str) -> bool {
@@ -1548,6 +1573,41 @@ mod tests {
                 .iter()
                 .any(|issue| issue.contains("outline.terminal_coverage")),
             "an epilogue cannot replace the missing authoritative terminal action: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn final_volume_accepts_synonymous_irreversible_transformation_language() {
+        let mut contract = NovelCreationContract::default();
+        contract.target_units = Some(100_000);
+        contract.chapter_unit_target = Some(2_500);
+        contract.characters.push(CharacterContract {
+            canonical_name: "许照野".to_string(),
+            role: "主角".to_string(),
+            ..Default::default()
+        });
+        contract.ending.desired_resolution = "许照野化身信标照亮失联航路并恢复全境通讯".to_string();
+        contract.outline.volumes = vec![
+            VolumeContract {
+                title: "静默航线".to_string(),
+                objective: "许照野确认全境通讯断裂的源头".to_string(),
+                ending_change: "许照野取得修复信标所需的核心".to_string(),
+            },
+            VolumeContract {
+                title: "长夜信标".to_string(),
+                objective: "许照野以自身为代价完成从搜救者到信标化身的转变".to_string(),
+                ending_change: "许照野舍身化作信标，照亮失联航路并使全境通讯复苏".to_string(),
+            },
+        ];
+
+        let mut issues = ContractIssueList::default();
+        validate_longform_plan_position(&contract, &mut issues);
+
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.contains("outline.terminal_coverage")),
+            "equivalent irreversible transformation verbs must preserve terminal coverage: {issues:?}"
         );
     }
 

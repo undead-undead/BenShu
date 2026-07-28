@@ -335,7 +335,7 @@ where
         } else {
             None
         };
-        let view_only = creation_draft_view_only_requested(message);
+        let view_only = !approval && !execution && creation_draft_view_only_requested(message);
         if view_only {
             return Ok(Some(CreationDraftTurnOutcome::Respond(
                 creation_draft_planning_response(&draft, message),

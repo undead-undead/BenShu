@@ -368,6 +368,9 @@ impl NovelStudioTool {
             .unwrap_or_default();
         let body = normalize_chapter_body_for_record(&strip_frontmatter(&raw), &before.title);
         let mut repaired = before.clone();
+        let explicit_candidate_title = (args.candidate_only
+            && !args.chapter_title.trim().is_empty())
+        .then(|| repair_contract_character_name_typos(&manifest, args.chapter_title.trim()));
         if !args.chapter_title.trim().is_empty() {
             repaired.title = args.chapter_title.trim().to_string();
         } else {
@@ -401,17 +404,25 @@ impl NovelStudioTool {
         repaired.continuity_updates =
             clean_contract_character_name_typos(&manifest, repaired.continuity_updates);
         normalize_chapter_metadata_against_body(&manifest, &mut repaired, &body);
-        let title_after_body = final_chapter_title_from_body_with_metadata(
-            &manifest,
-            number,
-            &repair_contract_character_name_typos(&manifest, &repaired.title),
-            &repaired.summary,
-            &repaired.key_facts,
-            &repaired.continuity_updates,
-            &body,
-        );
-        if title_after_body != repaired.title {
-            repaired.title = title_after_body;
+        if let Some(explicit_candidate_title) = explicit_candidate_title {
+            // Candidate evaluation must expose the model's actual title to the
+            // metadata gate. Replacing a rejected candidate with the default
+            // chapter heading here destroys the repair feedback and makes every
+            // bounded retry repair the same synthetic placeholder.
+            repaired.title = explicit_candidate_title;
+        } else {
+            let title_after_body = final_chapter_title_from_body_with_metadata(
+                &manifest,
+                number,
+                &repair_contract_character_name_typos(&manifest, &repaired.title),
+                &repaired.summary,
+                &repaired.key_facts,
+                &repaired.continuity_updates,
+                &body,
+            );
+            if title_after_body != repaired.title {
+                repaired.title = title_after_body;
+            }
         }
         repaired.updated_at = now_iso();
         let metadata_gate = chapter_metadata_gate(&manifest, &repaired, &body);

@@ -37,6 +37,55 @@ pub(super) async fn source_material_excerpt(
     Ok(preview_chars(&body, max_chars))
 }
 
+pub(super) async fn approved_chapter_context_view(
+    project_dir: &Path,
+    manifest: &NovelProjectManifest,
+    chapter: &ChapterRecord,
+) -> anyhow::Result<serde_json::Value> {
+    let settlement = read_approved_settlement(project_dir, chapter.number).await?;
+    Ok(match settlement {
+        Some(settlement) => json!({
+            "number": chapter.number,
+            "title": chapter.title,
+            "status": chapter.status,
+            "unit_count": chapter.unit_count,
+            "current_state": repair_contract_character_name_typos(
+                manifest,
+                &settlement.current_state
+            ),
+            "chapter_summary": repair_contract_character_name_typos(
+                manifest,
+                &settlement.chapter_summary
+            ),
+            "pending_hooks": repair_contract_character_name_typos(
+                manifest,
+                &settlement.pending_hooks
+            ),
+            "continuity_updates": clean_contract_character_name_typos(
+                manifest,
+                settlement.continuity_updates
+            ),
+            "source": "approved_final_body_settlement"
+        }),
+        None => json!({
+            "number": chapter.number,
+            "title": chapter.title,
+            "status": chapter.status,
+            "unit_count": chapter.unit_count,
+            "chapter_summary": repair_contract_character_name_typos(manifest, &chapter.summary),
+            "key_facts": clean_contract_character_name_typos(
+                manifest,
+                chapter.key_facts.clone()
+            ),
+            "continuity_updates": clean_contract_character_name_typos(
+                manifest,
+                chapter.continuity_updates.clone()
+            ),
+            "source": "legacy_approved_manifest_summary"
+        }),
+    })
+}
+
 pub(super) async fn build_context_payload(
     project_dir: &Path,
     manifest: &NovelProjectManifest,
@@ -61,27 +110,15 @@ pub(super) async fn build_context_payload(
             "content": content
         }));
     }
-    let recent_chapters = approved_prior_chapters(manifest, chapter_number)
+    let recent_chapter_records = approved_prior_chapters(manifest, chapter_number)
         .rev()
         .take(CONTEXT_RECENT_CHAPTER_LIMIT)
-        .map(|chapter| {
-            json!({
-                "number": chapter.number,
-                "title": chapter.title,
-                "summary": repair_contract_character_name_typos(manifest, &chapter.summary),
-                "status": chapter.status,
-                "key_facts": clean_contract_character_name_typos(
-                    manifest,
-                    chapter.key_facts.clone()
-                ),
-                "continuity_updates": clean_contract_character_name_typos(
-                    manifest,
-                    chapter.continuity_updates.clone()
-                ),
-                "unit_count": chapter.unit_count
-            })
-        })
+        .cloned()
         .collect::<Vec<_>>();
+    let mut recent_chapters = Vec::with_capacity(recent_chapter_records.len());
+    for chapter in &recent_chapter_records {
+        recent_chapters.push(approved_chapter_context_view(project_dir, manifest, chapter).await?);
+    }
     let mut sources = Vec::new();
     for source in manifest.sources.iter().rev().take(CONTEXT_SOURCE_LIMIT) {
         sources.push(json!({
@@ -221,12 +258,8 @@ pub(super) fn build_minimal_context_payload(
             json!({
                 "number": chapter.number,
                 "title": chapter.title,
-                "summary": repair_contract_character_name_typos(manifest, &chapter.summary),
-                "key_facts": clean_contract_character_name_typos(manifest, chapter.key_facts.clone()),
-                "continuity_updates": clean_contract_character_name_typos(
-                    manifest,
-                    chapter.continuity_updates.clone()
-                )
+                "status": chapter.status,
+                "unit_count": chapter.unit_count
             })
         })
         .collect::<Vec<_>>();
@@ -286,9 +319,12 @@ pub(super) fn narrative_progress_contract(
         .map(|chapter| chapter.unit_count)
         .sum::<usize>();
     let target_units = manifest.target_units.filter(|value| *value > 0);
-    let expected_chapters = target_units
-        .zip(manifest.chapter_unit_target.filter(|value| *value > 0))
-        .map(|(target, per_chapter)| target.div_ceil(per_chapter).max(1));
+    let expected_chapters =
+        target_units
+            .zip(manifest.chapter_unit_target)
+            .and_then(|(target, per_chapter)| {
+                longform_policy::expected_chapter_count(target, per_chapter)
+            });
     let unit_progress_percent = target_units
         .map(|target| approved_units.saturating_mul(100).saturating_div(target))
         .unwrap_or(0)
@@ -345,7 +381,30 @@ fn next_chapter_boundary_view(
     let Some(next_number) = chapter_number.checked_add(1) else {
         return Vec::new();
     };
-    manifest
+    chapter_boundary_seed_view(manifest, next_number)
+        .into_iter()
+        .collect()
+}
+
+pub(super) fn rolling_outline_window_view(
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+    lookahead: usize,
+) -> Vec<ChapterSeedContract> {
+    (1..=lookahead)
+        .filter_map(|offset| {
+            chapter_number
+                .checked_add(offset)
+                .and_then(|number| chapter_boundary_seed_view(manifest, number))
+        })
+        .collect()
+}
+
+pub(super) fn chapter_boundary_seed_view(
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+) -> Option<ChapterSeedContract> {
+    let contract_seed = manifest
         .contract
         .as_ref()
         .and_then(|contract| contract.authority_contract.as_ref())
@@ -354,11 +413,27 @@ fn next_chapter_boundary_view(
                 .outline
                 .near_chapters
                 .iter()
-                .find(|chapter| chapter.number == Some(next_number))
+                .find(|chapter| chapter.number == Some(chapter_number))
         })
-        .cloned()
-        .into_iter()
-        .collect()
+        .cloned();
+    if let Some(seed) = contract_seed {
+        return Some(seed);
+    }
+    manifest
+        .story_bible
+        .as_ref()
+        .and_then(|bible| {
+            bible
+                .narrative_graph
+                .chapter_goals
+                .iter()
+                .find(|goal| goal.chapter_number == chapter_number)
+        })
+        .map(|goal| ChapterSeedContract {
+            number: Some(goal.chapter_number),
+            goal: goal.goal.clone(),
+            expected_turn: goal.moves_toward_ending.clone(),
+        })
 }
 
 pub(super) fn relevant_character_subgraph(
@@ -367,6 +442,9 @@ pub(super) fn relevant_character_subgraph(
     plan: Option<&ChapterPlanRecord>,
 ) -> Vec<CharacterAuthorityRecord> {
     let evidence = [
+        chapter_boundary_seed_view(manifest, chapter_number)
+            .map(|seed| [seed.goal, seed.expected_turn].join("\n"))
+            .unwrap_or_default(),
         plan.map(|value| current_chapter_authority_text(&value.plan))
             .unwrap_or_default(),
         manifest
@@ -1142,17 +1220,11 @@ pub(super) async fn build_context_governance(
         .rev()
         .take(CONTEXT_RECENT_CHAPTER_LIMIT)
     {
+        let context_view = approved_chapter_context_view(project_dir, manifest, chapter).await?;
         selected_context.push(governance::context_source(
             &chapter.path,
-            "Use recent chapter continuity, not the full prose, to avoid drift.",
-            Some(format!(
-                "title: {}\nsummary: {}\nkey_facts: {}\ncontinuity_updates: {}",
-                chapter.title,
-                repair_contract_character_name_typos(manifest, &chapter.summary),
-                clean_contract_character_name_typos(manifest, chapter.key_facts.clone()).join("; "),
-                clean_contract_character_name_typos(manifest, chapter.continuity_updates.clone())
-                    .join("; ")
-            )),
+            "Use the approved final-body settlement as recent continuity; do not replay its wording as prose.",
+            Some(serde_json::to_string(&context_view)?),
         ));
         composer_inputs.push(chapter.path.clone());
     }

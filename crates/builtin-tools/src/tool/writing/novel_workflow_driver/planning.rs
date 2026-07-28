@@ -119,7 +119,7 @@ pub(super) fn existing_project_turn_chapter_count(
     let per_chapter = chapter_unit_target
         .filter(|value| *value > 0)
         .unwrap_or_else(|| longform_policy::dynamic_chapter_unit_target(Some(target)));
-    let needed = remaining.div_ceil(per_chapter).max(1);
+    let needed = longform_policy::expected_chapter_count(remaining, per_chapter).unwrap_or(1);
     let needed = if has_unapproved_chapter {
         needed.max(1)
     } else {

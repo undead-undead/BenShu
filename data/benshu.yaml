@@ -56,7 +56,7 @@ sensory:
   voice_provider: null
   stt_model: null
   tts_model: null
-  vision_model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+  vision_model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   ocr_model: null
   image_gen_model: bridge-image:http://172.18.176.1:8022/v1|onnx-directml-image
   image_edit_model: null
@@ -217,8 +217,8 @@ windows_ml_bridge:
       note: Image generation already points at a dedicated bridge runtime.
     vision:
       role: vision
-      source_model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
-      effective_model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+      source_model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
+      effective_model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
       artifact_kind: gguf
       runtime_target: multimodal_runtime
       execution_provider: provider_or_bridge_multimodal
@@ -234,7 +234,7 @@ runtime_host_control:
     service_name: null
     restart_command:
     - env
-    - BENSHU_WINDOWS_LLAMA_SERVER_EXE=/home/biubiuboy/BenShu/runtimes/llama.cpp/b9592/llama-server.exe
+    - BENSHU_WINDOWS_LLAMA_SERVER_EXE=/mnt/d/llama.cpp/b9592/llama-server.exe
     - bash
     - /home/biubiuboy/BenShu/scripts/wsl/enable_windows_llama_bridge.sh
     timeout_secs: 240
@@ -252,37 +252,37 @@ continuation_runtime:
 agent_path: null
 agents:
   crypto:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   voice:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   image:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   terminal:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   repo:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   data:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   chart:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   ocr:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   forge:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   coder:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   benshu:
     provider: openai
     base_url: http://172.18.176.1:28013/v1
     model: benshu-main-brain
-    local_model_artifact: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    local_model_artifact: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
     local_runtime_family: llama_cpp
   mailer:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   browser:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   researcher:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   pdf:
-    model: /home/biubiuboy/BenShu/models/live/qwen3.6-35b-a3b-uncensored-hauhaucs-aggressive-iq4_xs/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive-IQ4_XS.gguf
+    model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
 trusted_workspaces: []

@@ -537,6 +537,12 @@ pub fn strip_creation_prefix(value: &str) -> String {
             "设计与创作",
             "策划并写",
             "设计并写",
+            "并完整写完",
+            "并完整创作",
+            "并完整写",
+            "完整写完",
+            "完整创作",
+            "完整写",
             "并自动创作",
             "并自动写",
             "自动创作",
@@ -1360,6 +1366,15 @@ mod tests {
         assert_eq!(
             infer_fiction_genre("请从零设计一部现代言情小说，总字数10万字。").as_deref(),
             Some("现代言情")
+        );
+        assert_eq!(
+            infer_fiction_genre("请从零创建并完整写完一本中文修仙题材长篇小说，总字数10万字。")
+                .as_deref(),
+            Some("中文修仙")
+        );
+        assert_eq!(
+            infer_fiction_genre("写一部并行宇宙科幻小说，总字数10万字。").as_deref(),
+            Some("并行宇宙科幻")
         );
         assert_eq!(
             creation_brief(

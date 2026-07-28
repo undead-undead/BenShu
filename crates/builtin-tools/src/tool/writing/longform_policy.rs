@@ -16,6 +16,18 @@ pub(crate) fn chapter_tier_max_units(target: usize) -> usize {
     target.max(1).saturating_mul(2)
 }
 
+/// Returns the number of chapters needed to cover a positive total-unit target
+/// at a positive per-chapter target. Callers retain responsibility for choosing
+/// fallback inputs; the rounding rule lives here so contracts, prompts,
+/// planning, persistence, and user-facing summaries cannot disagree.
+pub(crate) fn expected_chapter_count(
+    target_units: usize,
+    chapter_unit_target: usize,
+) -> Option<usize> {
+    (target_units > 0 && chapter_unit_target > 0)
+        .then(|| target_units.div_ceil(chapter_unit_target).max(1))
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct GenreGovernanceProfile {
     pub genre_family: String,
@@ -1060,6 +1072,16 @@ pub(crate) fn extract_continuity_record_text(output: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn expected_chapter_count_is_the_shared_positive_ceiling_rule() {
+        assert_eq!(expected_chapter_count(100_000, 2_500), Some(40));
+        assert_eq!(expected_chapter_count(1_000_000, 5_000), Some(200));
+        assert_eq!(expected_chapter_count(1_000_001, 5_000), Some(201));
+        assert_eq!(expected_chapter_count(1, 5_000), Some(1));
+        assert_eq!(expected_chapter_count(0, 2_500), None);
+        assert_eq!(expected_chapter_count(100_000, 0), None);
+    }
 
     #[test]
     fn writing_a_novel_is_governed_even_without_explicit_chapter_wording() {

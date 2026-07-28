@@ -191,15 +191,13 @@ pub(super) async fn write_chapter_control_contract(
         super::context_packaging::relevant_character_subgraph(
             manifest,
             number,
-            manifest.chapter_plans.iter().find(|item| item.number == number),
+            manifest
+                .chapter_plans
+                .iter()
+                .find(|item| item.number == number),
         )
-            .into_iter()
-            .map(|character| {
-                format!(
-                    "canonical_identity_only: {}; preserve this name if the character appears, but do not introduce the character unless the current chapter goal requires it",
-                    character.canonical_name
-                )
-            }),
+        .into_iter()
+        .map(canonical_character_identity_constraint),
     );
     must_keep.sort();
     must_keep.dedup();
@@ -260,6 +258,30 @@ pub(super) async fn write_chapter_control_contract(
         created_at: contract.created_at.clone(),
         updated_at: contract.created_at,
     })
+}
+
+fn canonical_character_identity_constraint(character: CharacterAuthorityRecord) -> String {
+    let identity_authority = if character.identity_markers.iter().any(|marker| {
+        matches!(
+            marker.as_str(),
+            "pronoun_profile:feminine" | "inferred_pronoun_profile:feminine"
+        )
+    }) {
+        "; pronoun/gender authority: feminine; use 她 and feminine appellations"
+    } else if character.identity_markers.iter().any(|marker| {
+        matches!(
+            marker.as_str(),
+            "pronoun_profile:masculine" | "inferred_pronoun_profile:masculine"
+        )
+    }) {
+        "; pronoun/gender authority: masculine; use 他 and masculine appellations"
+    } else {
+        ""
+    };
+    format!(
+        "canonical_identity_only: {}{identity_authority}; preserve this name if the character appears, but do not introduce the character unless the current chapter goal requires it",
+        character.canonical_name
+    )
 }
 
 pub(super) async fn write_truth_validation_record(

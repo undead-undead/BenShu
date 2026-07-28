@@ -455,7 +455,24 @@ async fn persist_execution_package_writes_plan_and_architecture_without_body() {
                         "chapter_number": 1,
                         "chapter_title": "折光入场",
                         "plan": "第1章目标：秦澈在入学测试中发现折光城评分被人为压低。",
-                        "content": "场景顺序：入场、测试失败、发现评分异常、决定追查。冲突：制度判定与个人感知相反。结尾钩子：隐藏评分日志露出陌生签名。"
+                        "content": "场景顺序：入场、测试失败、发现评分异常、决定追查。冲突：制度判定与个人感知相反。结尾钩子：隐藏评分日志露出陌生签名。",
+                        "future_chapters": [
+                            {
+                                "number": 2,
+                                "goal": "秦澈核对原始评分日志并锁定第一次人为改写的时间戳。",
+                                "expected_turn": "秦澈取得可供复核的异常时间戳。"
+                            },
+                            {
+                                "number": 3,
+                                "goal": "秦澈根据时间戳追查评分改写权限的实际持有人。",
+                                "expected_turn": "调查对象从评分设备转向拥有改写权限的人。"
+                            },
+                            {
+                                "number": 4,
+                                "goal": "秦澈用权限记录迫使学院监察员回应评分操纵证据。",
+                                "expected_turn": "学院监察线被正式卷入评分争议。"
+                            }
+                        ]
                     })
                     .to_string(),
                 )
@@ -543,6 +560,67 @@ async fn persist_execution_package_writes_plan_and_architecture_without_body() {
             .and_then(|value| value.as_array())
             .map(Vec::len),
         Some(0)
+    );
+    assert_eq!(
+        manifest
+            .pointer("/story_bible/narrative_graph/chapter_goals")
+            .and_then(serde_json::Value::as_array)
+            .map(|goals| {
+                goals
+                    .iter()
+                    .filter_map(|goal| goal["chapter_number"].as_u64())
+                    .collect::<Vec<_>>()
+            }),
+        Some(vec![2, 3, 4])
+    );
+    assert_eq!(
+        manifest
+            .pointer("/story_bible/narrative_graph/chapter_goals")
+            .and_then(serde_json::Value::as_array)
+            .and_then(|goals| goals.iter().find(|goal| goal["chapter_number"] == 4))
+            .and_then(|goal| goal.get("goal")),
+        Some(&json!("秦澈用权限记录迫使学院监察员回应评分操纵证据。"))
+    );
+    let chapter_three_context: serde_json::Value = serde_json::from_str(
+        &tool
+            .call(
+                &serde_json::json!({
+                    "action": "compose_context",
+                    "project_path": project_path,
+                    "chapter_number": 3
+                })
+                .to_string(),
+            )
+            .await
+            .expect("chapter three context"),
+    )
+    .expect("chapter three context json");
+    assert_eq!(
+        chapter_three_context.pointer("/context/next_chapter_boundary/0/number"),
+        Some(&json!(4))
+    );
+    assert_eq!(
+        chapter_three_context.pointer("/context/next_chapter_boundary/0/goal"),
+        Some(&json!(
+            "秦澈用权限记录迫使学院监察员回应评分操纵证据。"
+        ))
+    );
+    assert_eq!(
+        chapter_three_context
+            .pointer("/execution_authority_context/current_chapter_goal/0/number"),
+        Some(&json!(3))
+    );
+    assert_eq!(
+        chapter_three_context
+            .pointer("/execution_authority_context/current_chapter_goal/0/goal"),
+        Some(&json!(
+            "秦澈根据时间戳追查评分改写权限的实际持有人。"
+        ))
+    );
+    assert_eq!(
+        chapter_three_context
+            .pointer("/execution_authority_context/rolling_outline_window/0/number"),
+        Some(&json!(4))
     );
     let authority_record = manifest
         .get("context_packages")
@@ -1193,6 +1271,15 @@ fn malformed_anchor_phrase_requires_left_name_boundary() {
         malformed_anchor_phrase("林深吸了一口气。", "林深"),
         Some("林深吸".to_string()),
         "a real anchor-tail malformed phrase should still be reported"
+    );
+}
+
+#[test]
+fn malformed_anchor_phrase_allows_normal_ninan_verb_after_name() {
+    assert_eq!(
+        malformed_anchor_phrase("商星声呢喃着，她的眼神涣散。", "商星声"),
+        None,
+        "呢喃 is a normal verb after a character name, not a malformed particle fragment"
     );
 }
 
@@ -2250,6 +2337,33 @@ fn chapter_metadata_summary_accepts_validated_truth_items_spread_across_body() {
 }
 
 #[test]
+fn chapter_metadata_summary_accepts_concise_paraphrase_across_multiple_truth_items() {
+    let chapter = ChapterRecord {
+        number: 2,
+        title: "资本的博弈与信任的交托".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0002.md".to_string(),
+        summary: "南谨弦利用重生者的先知视角，精准洞察了沈氏集团面临的资金缺口，并提出通过期货市场杠杆对冲风险的激进策略，成功赢得了秦泊序的信任与调度权的交托。".to_string(),
+        unit_count: 2500,
+        status: "reviewed_passed".to_string(),
+        key_facts: vec![
+            "沈氏集团目前面临生产线预付款增加与原材料价格波动的双重压力".to_string(),
+            "南谨弦提议利用第一桶金在期货市场进行空头对冲和多头布局，以时间换空间".to_string(),
+            "秦泊序决定打破守旧的习惯，将生产线的调度权暂时交给南谨弦".to_string(),
+        ],
+        continuity_updates: vec![
+            "南谨弦提出利用期货市场波动填补缺口的战略计划".to_string(),
+            "秦泊序将生产线的调度权交托给南谨弦".to_string(),
+        ],
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+
+    assert!(chapter_summary_supported_by_truth_items(&chapter, "zh-CN"));
+}
+
+#[test]
 fn chapter_metadata_summary_rejects_pronoun_and_dialogue_fragments() {
     assert!(chapter_summary_looks_like_prose_fragment(
         "他在看你能利用这个节点走多远",
@@ -3237,6 +3351,71 @@ fn quality_gate_does_not_attach_other_character_pronouns_across_names() {
 }
 
 #[test]
+fn quality_gate_does_not_attach_repeated_object_pronouns_to_the_named_subject() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0001".to_string(),
+            canonical_name: "宋晏川".to_string(),
+            aliases: Vec::new(),
+            identity_markers: vec!["pronoun_profile:masculine".to_string()],
+            role: "主角".to_string(),
+            desire: "完成旧城设计".to_string(),
+            fear: "失去自我".to_string(),
+            bottom_line: "不牺牲职业尊严".to_string(),
+            arc_start: String::new(),
+            arc_end: String::new(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0002".to_string(),
+            canonical_name: "祝星岚".to_string(),
+            aliases: Vec::new(),
+            identity_markers: vec!["pronoun_profile:feminine".to_string()],
+            role: "关键关系对象".to_string(),
+            desire: "守住选择".to_string(),
+            fear: "再次分离".to_string(),
+            bottom_line: "不放弃职业".to_string(),
+            arc_start: String::new(),
+            arc_end: String::new(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    ];
+    let chapter = ChapterRecord {
+        number: 5,
+        title: "审核".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0005.md".to_string(),
+        summary: String::new(),
+        unit_count: 2500,
+        status: "draft".to_string(),
+        key_facts: Vec::new(),
+        continuity_updates: Vec::new(),
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    let content = "宋晏川接过杯子，他看着她，问她是否要走。宋晏川看向祝星岚，她没有回答。宋晏川重新坐下，他拿起笔。";
+
+    let issues = contract_character_pronoun_drift_issues(&manifest, &chapter, content);
+
+    assert!(
+        issues.is_empty(),
+        "object pronouns must not be attributed back to the named male subject: {issues:?}"
+    );
+}
+
+#[test]
 fn inferred_pronoun_profile_blocks_repeated_future_contradiction() {
     let mut manifest = test_manifest_with_primary_character();
     manifest.character_ledger = vec![CharacterAuthorityRecord {
@@ -3432,7 +3611,24 @@ fn title_fatigue_blocks_repeated_cjk_title_template() {
 }
 
 #[test]
-fn chapter_metadata_gate_repairs_repeated_title_fatigue_template() {
+fn title_fatigue_allows_one_prior_matching_cjk_template() {
+    let issues = crate::tool::writing::naming::chapter_title_fatigue_issues(
+        "zh-CN",
+        2,
+        "第二章：齿轮中的蓝图",
+        [(1, "第一章：裂隙中的残影".to_string())],
+    );
+
+    assert!(
+        !issues
+            .iter()
+            .any(|issue| issue.contains("recent syntactic template")),
+        "one ordinary neighbouring template must not trigger fatigue: {issues:?}"
+    );
+}
+
+#[test]
+fn chapter_metadata_gate_keeps_repeated_title_fatigue_advisory() {
     let mut manifest = test_manifest_with_primary_character();
     manifest.chapters.push(ChapterRecord {
         number: 1,
@@ -3499,13 +3695,20 @@ fn chapter_metadata_gate_repairs_repeated_title_fatigue_template() {
         gate.blocking
     );
     assert!(
-        gate.repairable
+        !gate
+            .repairable
             .iter()
             .any(|issue| issue.contains("repeats a recent")),
-        "repeated title shape should require metadata repair: {:?}",
+        "subjective title rhythm must not enter the repair queue: {:?}",
         gate.repairable
     );
-    assert!(gate.warnings.is_empty());
+    assert!(
+        gate.warnings
+            .iter()
+            .any(|issue| issue.contains("repeats a recent")),
+        "repeated title rhythm should remain visible as advisory telemetry: {:?}",
+        gate.warnings
+    );
 }
 
 #[test]
@@ -3667,6 +3870,40 @@ fn quality_gate_blocks_malformed_anchor_predicate_fragments() {
         .any(|issue| issue.contains("malformed phrase")));
 }
 
+#[tokio::test]
+async fn legacy_approved_context_preserves_manifest_facts_and_continuity() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let manifest = test_manifest_with_primary_character();
+    let chapter = ChapterRecord {
+        number: 2,
+        title: "旧站回声".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0002.md".to_string(),
+        summary: "黎启洄确认旧站仍在运转。".to_string(),
+        unit_count: 2500,
+        status: "approved".to_string(),
+        key_facts: vec!["黎启洄取得旧站通行证。".to_string()],
+        continuity_updates: vec!["通行证仍由黎启洄持有。".to_string()],
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+
+    let view = approved_chapter_context_view(temp.path(), &manifest, &chapter)
+        .await
+        .expect("legacy context view");
+
+    assert_eq!(
+        view.pointer("/key_facts/0").and_then(|value| value.as_str()),
+        Some("黎启洄取得旧站通行证。")
+    );
+    assert_eq!(
+        view.pointer("/continuity_updates/0")
+            .and_then(|value| value.as_str()),
+        Some("通行证仍由黎启洄持有。")
+    );
+}
+
 #[test]
 fn quality_gate_blocks_anchor_followed_by_sensory_object() {
     let manifest = test_manifest_with_primary_character();
@@ -3743,7 +3980,7 @@ fn title_fatigue_uses_unapproved_prior_titles_as_references() {
     let mut manifest = test_manifest_with_primary_character();
     manifest.language = "zh-CN".to_string();
     for (number, title, status) in [
-        (1, "第一章：裂痕中的余烬", "needs_revision"),
+        (1, "第一章：裂痕下的余烬", "needs_revision"),
         (2, "第二章：灰雾下的试炼", "draft"),
     ] {
         manifest.chapters.push(ChapterRecord {
@@ -4696,8 +4933,30 @@ async fn chapter_control_contract_uses_only_relevant_canonical_identities() {
         planned_entry: "第2章".to_string(),
         ..CharacterContract::default()
     };
+    let current_secondary = CharacterContract {
+        character_id: "current-companion".to_string(),
+        canonical_name: "裴朔".to_string(),
+        role: "关键配角".to_string(),
+        ..CharacterContract::default()
+    };
     manifest.contract.as_mut().expect("contract").characters =
-        vec![primary.to_draft_line(), future.to_draft_line()];
+        vec![
+            primary.to_draft_line(),
+            current_secondary.to_draft_line(),
+            future.to_draft_line(),
+        ];
+    manifest.story_bible = Some(novel_bible::StoryBible {
+        narrative_graph: novel_bible::NarrativeGraph {
+            chapter_goals: vec![novel_bible::ChapterGoal {
+                chapter_number: 1,
+                goal: "谢知原与裴朔核对账册。".to_string(),
+                moves_toward_ending: "两人确认旧账上的同一处缺口。".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+        ..Default::default()
+    });
     manifest.chapter_plans = vec![ChapterPlanRecord {
         number: 1,
         title: "旧账留痕".to_string(),
@@ -4708,6 +4967,13 @@ async fn chapter_control_contract_uses_only_relevant_canonical_identities() {
         updated_at: Utc::now().to_rfc3339(),
     }];
     ensure_character_authority_ledger(&mut manifest);
+    manifest
+        .character_ledger
+        .iter_mut()
+        .find(|character| character.canonical_name == "裴朔")
+        .expect("current secondary authority")
+        .identity_markers
+        .push("pronoun_profile:masculine".to_string());
 
     write_chapter_control_contract(
         dir.path(),
@@ -4726,6 +4992,9 @@ async fn chapter_control_contract_uses_only_relevant_canonical_identities() {
         .expect("control contract file");
 
     assert!(raw.contains("canonical_identity_only: 谢知原"));
+    assert!(raw.contains("pronoun/gender authority: feminine; use 她"));
+    assert!(raw.contains("canonical_identity_only: 裴朔"));
+    assert!(raw.contains("pronoun/gender authority: masculine; use 他"));
     assert!(!raw.contains("沈算盘"));
     assert!(!raw.contains("钟怀野"));
     assert!(!raw.contains("previous_names"));

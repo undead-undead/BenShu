@@ -2469,7 +2469,8 @@ fn value_looks_like_total_chapter_count(
     if target_units == 0 || chapter_unit_target == 0 {
         return value > 5;
     }
-    let estimated = target_units.div_ceil(chapter_unit_target);
+    let estimated = longform_policy::expected_chapter_count(target_units, chapter_unit_target)
+        .expect("positive contract targets have an expected chapter count");
     value.abs_diff(estimated) <= 2 || value > 5
 }
 

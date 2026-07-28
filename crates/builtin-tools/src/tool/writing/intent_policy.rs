@@ -115,7 +115,12 @@ pub(crate) fn decide(input: WritingIntentInput<'_>) -> WritingIntentDecision {
     if has_any(message, &lowered, MODIFY_CHAPTER_TERMS) && content_surface(message, &lowered) {
         return WritingIntentDecision::new(WritingIntent::ModifyChapter, 0.84, "modify_chapter");
     }
-    if has_any(message, &lowered, CONTINUE_TERMS) {
+    let has_current_work = input.session_has_draft
+        || input.latest_project_path.is_some()
+        || input.active_task_status.is_some();
+    if has_any(message, &lowered, CONTINUE_TERMS)
+        && (has_current_work || !writing_request_surface(message, &lowered))
+    {
         return WritingIntentDecision::new(WritingIntent::ContinueWriting, 0.9, "continue_writing");
     }
     if has_any(message, &lowered, APPROVE_TERMS)
@@ -124,8 +129,8 @@ pub(crate) fn decide(input: WritingIntentInput<'_>) -> WritingIntentDecision {
     {
         return WritingIntentDecision::new(WritingIntent::ApproveContract, 0.9, "approve_contract");
     }
-    if has_any(message, &lowered, CONTRACT_UPDATE_TERMS)
-        || (input.session_has_draft && content_surface(message, &lowered))
+    if input.session_has_draft
+        && (has_any(message, &lowered, CONTRACT_UPDATE_TERMS) || content_surface(message, &lowered))
     {
         return WritingIntentDecision::new(WritingIntent::UpdateContract, 0.78, "update_contract");
     }
@@ -160,6 +165,10 @@ fn explicit_contract_confirmation_with_execution(message: &str, lowered: &str) -
         lowered,
         &[
             "写出",
+            "持续写",
+            "写完整本",
+            "完成整本",
+            "完成全书",
             "创作第",
             "生成第",
             "完成第",
@@ -288,25 +297,11 @@ fn content_surface(message: &str, lowered: &str) -> bool {
     )
 }
 
-fn writing_request_surface(message: &str, lowered: &str) -> bool {
-    has_any(
-        message,
-        lowered,
-        &[
-            "写小说",
-            "写一部小说",
-            "创作小说",
-            "写故事",
-            "写文章",
-            "写论文",
-            "写报告",
-            "novel",
-            "fiction",
-            "story",
-            "paper",
-            "report",
-        ],
-    )
+fn writing_request_surface(message: &str, _lowered: &str) -> bool {
+    // Artifact detection is the creation intake's responsibility. Reuse that
+    // authority here instead of maintaining a second, narrower verb/phrase
+    // list that can route the same natural-language request differently.
+    benshu_runtime_policy_core::detect_creation_artifact_kind(message).is_some()
 }
 
 const START_WRITING_TERMS: &[&str] = &[
@@ -518,6 +513,19 @@ mod tests {
     }
 
     #[test]
+    fn outline_review_without_a_session_draft_is_not_a_contract_update() {
+        let decision = decide(WritingIntentInput {
+            message: "帮我分析这个小说大纲有什么逻辑问题",
+            session_has_draft: false,
+            draft_status: None,
+            latest_project_path: None,
+            active_task_status: None,
+        });
+
+        assert_eq!(decision.intent, WritingIntent::Unknown);
+    }
+
+    #[test]
     fn approval_is_not_planning_update() {
         let decision = decide(WritingIntentInput {
             message: "按这个开始，写第一章",
@@ -545,6 +553,19 @@ mod tests {
     fn confirmed_current_contract_with_full_book_scope_starts() {
         let decision = decide(WritingIntentInput {
             message: "合同方向确认，按这份合同开始并持续写完整本。",
+            session_has_draft: true,
+            draft_status: Some(CreationDraftLifecycleStatus::ContractReady),
+            latest_project_path: None,
+            active_task_status: None,
+        });
+
+        assert_eq!(decision.intent, WritingIntent::ApproveContract);
+    }
+
+    #[test]
+    fn explicit_confirmation_with_natural_full_book_execution_starts() {
+        let decision = decide(WritingIntentInput {
+            message: "我确认这个合同。现在按正常自动化流程持续写完整本小说，中途不需要逐章询问我。",
             session_has_draft: true,
             draft_status: Some(CreationDraftLifecycleStatus::ContractReady),
             latest_project_path: None,

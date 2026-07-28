@@ -15,6 +15,19 @@
     }
 
     #[test]
+    fn unrelated_story_review_does_not_invent_a_missing_creation_draft() {
+        assert!(!super::super::creation_draft_planning_dialogue_requested(
+            "帮我看看这个故事有没有逻辑问题"
+        ));
+        assert!(!super::super::creation_draft_planning_dialogue_requested(
+            "帮我分析这个小说大纲有什么逻辑问题"
+        ));
+        assert!(super::super::creation_draft_planning_dialogue_requested(
+            "请创作一本10万字的都市言情长篇小说，每章2500字"
+        ));
+    }
+
+    #[test]
     fn existing_project_status_query_is_read_only_not_continuation() {
         let message = "请检查当前这本《碎灵余烬》是否已经完成。不要新开书，不要贴正文全文，只返回：是否完成、总字数、章节数、最后一章标题、TXT导出路径。";
 

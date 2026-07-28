@@ -664,9 +664,12 @@ pub(super) fn chapter_summary_supported_by_truth_items(
         .map(|item| normalized_metadata_evidence(item))
         .filter(|item| !item.is_empty())
         .collect::<Vec<_>>();
+    let joined_truth = truth_items.join("；");
     clauses.into_iter().all(|clause| {
         let clause = normalized_metadata_evidence(&clause);
         truth_items.iter().any(|item| item == &clause)
+            || (is_chinese_language(language)
+                && chapter_quality::shared_distinctive_bigram_count(&clause, &joined_truth) >= 6)
     })
 }
 

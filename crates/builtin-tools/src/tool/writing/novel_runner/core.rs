@@ -120,6 +120,7 @@ mod tests {
   "hook_opened": ["旧阵为何干预试炼"],
   "hook_paid_off": [],
   "title_basis": "取得入门资格",
+  "future_chapters": [],
   "new_character_requests": []
 }
 ```"#;
@@ -156,6 +157,7 @@ mod tests {
   "hook_opened": [],
   "hook_paid_off": ["旧信来历", "失踪证人"],
   "title_basis": "旧信来历",
+  "future_chapters": [],
   "new_character_requests": []
 }"#;
 
@@ -201,6 +203,10 @@ mod tests {
   "hook_opened": ["旧信出现"],
   "hook_paid_off": [],
   "title_basis": "雨夜选择",
+  "future_chapters": [
+    {"number": 2, "goal": "两人核对旧信来源", "expected_turn": "旧信来源指向共同旧事"},
+    {"number": 3, "goal": "两人面对共同旧事的证人", "expected_turn": "证人同意公开作证"}
+  ],
   "new_character_requests": []
 }"#;
         let package = parse_chapter_execution_package(raw, "zh").expect("package");
@@ -208,6 +214,9 @@ mod tests {
         assert!(package.memo.body.contains("## 当前任务"));
         assert!(package.architecture.contains("地铁重逢"));
         assert!(package.architecture.contains("旧信出现"));
+        assert_eq!(package.future_chapters.len(), 2);
+        assert_eq!(package.future_chapters[0].number, Some(2));
+        assert_eq!(package.future_chapters[1].number, Some(3));
     }
 
     #[test]
@@ -228,7 +237,7 @@ mod tests {
   "emotional_beat": "", "chapter_function": "", "irreversible_event": "",
   "new_state_after_chapter": "", "character_change": "", "relationship_change": "",
   "power_delta": "", "resource_delta": "", "hook_opened": [], "hook_paid_off": [],
-  "title_basis": "", "new_character_requests": []
+  "title_basis": "", "future_chapters": [], "new_character_requests": []
 }"##;
 
         let error = parse_chapter_execution_package(raw, "zh").expect_err("nested package");
@@ -248,6 +257,7 @@ mod tests {
 
         assert!(error.contains("missing required fields"));
         assert!(error.contains("scene_goal"));
+        assert!(error.contains("future_chapters"));
         assert!(error.contains("new_character_requests"));
     }
 
@@ -272,6 +282,7 @@ mod tests {
   "hook_opened": "旧站为何仍在运作",
   "hook_paid_off": null,
   "title_basis": "旧站记录",
+  "future_chapters": [],
   "new_character_requests": ["req-guard-001", {"request_id":"req-guide-001","role":"向导","narrative_purpose":"提供旧站入口","planned_exit":"本章结束"}]
 }"#;
 
@@ -469,7 +480,8 @@ mod tests {
         assert!(prompt.contains("---END BODY---"));
         assert!(prompt.contains("正文不得嵌入 JSON 字符串"));
         assert!(prompt.contains("不得少于 4000"));
-        assert!(prompt.contains("面板/worker 的章节目标"));
+        assert!(prompt.contains("约 4400 字"));
+        assert!(prompt.contains("面板/worker 的章节最低目标"));
         assert!(prompt.contains("同一关键物件的来源、持有者、位置、状态和首次获得事件"));
         assert!(!prompt.contains("本章参考字数"));
     }
@@ -495,7 +507,8 @@ mod tests {
 
         assert!(prompt.contains("输出合同"));
         assert!(prompt.contains("8123"));
-        assert!(prompt.contains("首次输出"));
+        assert!(prompt.contains("8936"));
+        assert!(prompt.contains("首次草稿"));
         assert!(prompt.contains("低于该值视为本章未完成"));
         assert!(!prompt.contains("4000"));
     }
@@ -530,7 +543,7 @@ mod tests {
         assert!(prompt.contains("这不是另开新章"));
         assert!(prompt.contains("不要复用上一版正文"));
         assert!(prompt.contains("不得少于 2500"));
-        assert!(prompt.contains("首次输出"));
+        assert!(prompt.contains("修订后的 content"));
         assert!(!prompt.contains("旧正文"));
         assert!(!prompt.contains("以当前正文为底稿做局部修补"));
     }

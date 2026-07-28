@@ -16,6 +16,7 @@ use super::contract_text::{
 #[cfg(test)]
 use super::planning_gate::generated_fiction_contract_planning_issues;
 use super::{ContractGateResult, ContractGateStatus, SessionCreationDraftState};
+use crate::tool::writing::longform_policy;
 
 #[cfg(test)]
 pub fn generated_contract_completion_quality_issues(
@@ -109,26 +110,30 @@ fn generated_contract_semantic_quality_issues(
             issues.push(format!("合同未保留每章目标档位：{target}"));
         }
     }
-    if let (Some(total), Some(per_chapter)) = (draft.target_units, draft.chapter_unit_target) {
-        if per_chapter > 0 {
-            let expected = total.div_ceil(per_chapter);
-            let minimum_recent = expected.min(3);
-            let planned = count_explicit_chapter_plan_lines(contract_text);
-            if expected >= 3 && planned > 0 && planned < minimum_recent {
-                issues.push(format!(
-                    "近期章节包不足：至少需要 {minimum_recent} 章，当前识别到 {planned} 章"
-                ));
+    if let Some(expected) =
+        draft
+            .target_units
+            .zip(draft.chapter_unit_target)
+            .and_then(|(total, per_chapter)| {
+                longform_policy::expected_chapter_count(total, per_chapter)
+            })
+    {
+        let minimum_recent = expected.min(3);
+        let planned = count_explicit_chapter_plan_lines(contract_text);
+        if expected >= 3 && planned > 0 && planned < minimum_recent {
+            issues.push(format!(
+                "近期章节包不足：至少需要 {minimum_recent} 章，当前识别到 {planned} 章"
+            ));
+        }
+        if planned > 0 {
+            if let Some(issue) = malformed_goal_like_plan_line_issue(contract_text) {
+                issues.push(issue);
             }
-            if planned > 0 {
-                if let Some(issue) = malformed_goal_like_plan_line_issue(contract_text) {
-                    issues.push(issue);
-                }
-                if let Some(issue) = chapter_plan_missing_title_issue(contract_text, expected) {
-                    issues.push(issue);
-                }
-                if let Some(issue) = chapter_plan_missing_goal_issue(contract_text, expected) {
-                    issues.push(issue);
-                }
+            if let Some(issue) = chapter_plan_missing_title_issue(contract_text, expected) {
+                issues.push(issue);
+            }
+            if let Some(issue) = chapter_plan_missing_goal_issue(contract_text, expected) {
+                issues.push(issue);
             }
         }
     }
@@ -153,10 +158,13 @@ pub fn generated_contract_advisory_issues(
         if let Some(issue) = chapter_plan_invalid_title_issue(contract_text) {
             issues.push(issue);
         }
-        let expected_chapters = match (draft.target_units, draft.chapter_unit_target) {
-            (Some(total), Some(per_chapter)) if per_chapter > 0 => total.div_ceil(per_chapter),
-            _ => collect_explicit_chapter_plan_titles(contract_text).len(),
-        };
+        let expected_chapters = draft
+            .target_units
+            .zip(draft.chapter_unit_target)
+            .and_then(|(total, per_chapter)| {
+                longform_policy::expected_chapter_count(total, per_chapter)
+            })
+            .unwrap_or_else(|| collect_explicit_chapter_plan_titles(contract_text).len());
         if expected_chapters >= 3 {
             if let Some(issue) =
                 chapter_plan_title_diversity_issue(contract_text, expected_chapters)

@@ -444,6 +444,7 @@ fn following_sentence_identity_marker_count(
     {
         return 0;
     }
+    let first_personal_pronoun = first_attributable_personal_pronoun(&next, 18);
     markers
         .iter()
         .filter(|marker| {
@@ -452,9 +453,11 @@ fn following_sentence_identity_marker_count(
                     return false;
                 }
                 if matches!(**marker, "他" | "她") {
+                    if first_personal_pronoun != Some((index, marker.chars().next().unwrap())) {
+                        return false;
+                    }
                     return personal_pronoun_directly_attributes_nearby_name(
                         &next[..index],
-                        &next[index + marker.len()..],
                         true,
                         18,
                     );
@@ -497,6 +500,11 @@ fn nearby_identity_marker_count(
     if sentence_fragment.is_empty() {
         return 0;
     }
+    let first_personal_pronoun = if forward {
+        first_attributable_personal_pronoun(sentence_fragment, 48)
+    } else {
+        None
+    };
     markers
         .iter()
         .map(|marker| {
@@ -518,12 +526,11 @@ fn nearby_identity_marker_count(
                         return false;
                     }
                     if matches!(*marker, "他" | "她")
-                        && !personal_pronoun_directly_attributes_nearby_name(
-                            between,
-                            &sentence_fragment[index + marker.len()..],
-                            forward,
-                            48,
-                        )
+                        && (first_personal_pronoun
+                            != Some((*index, marker.chars().next().unwrap()))
+                            || !personal_pronoun_directly_attributes_nearby_name(
+                                between, forward, 48,
+                            ))
                     {
                         return false;
                     }
@@ -541,9 +548,26 @@ fn nearby_identity_marker_count(
         .sum()
 }
 
+fn first_attributable_personal_pronoun(text: &str, max_distance: usize) -> Option<(usize, char)> {
+    ["他", "她"]
+        .into_iter()
+        .flat_map(|marker| {
+            text.match_indices(marker)
+                .filter(move |(index, _)| {
+                    identity_marker_occurrence_is_explicit(text, *index, marker)
+                        && personal_pronoun_directly_attributes_nearby_name(
+                            &text[..*index],
+                            true,
+                            max_distance,
+                        )
+                })
+                .map(move |(index, _)| (index, marker.chars().next().unwrap()))
+        })
+        .min_by_key(|(index, _)| *index)
+}
+
 fn personal_pronoun_directly_attributes_nearby_name(
     between: &str,
-    after_pronoun: &str,
     forward: bool,
     max_distance: usize,
 ) -> bool {
@@ -556,10 +580,38 @@ fn personal_pronoun_directly_attributes_nearby_name(
         .collect::<String>();
     compact.chars().count() <= max_distance
         && (compact.is_empty()
-            || after_pronoun.starts_with('的')
             || compact
                 .chars()
                 .any(|ch| matches!(ch, '，' | ',' | '。' | '！' | '!' | '？' | '?' | '；' | ';')))
+}
+
+#[cfg(test)]
+mod pronoun_tests {
+    use super::*;
+
+    #[test]
+    fn object_pronoun_does_not_hide_later_subject_pronoun_for_nearby_name() {
+        let content = "沈砚看向她，却发现他自己的手正在发抖。";
+        let other_names = BTreeSet::new();
+
+        let masculine = direct_identity_marker_count_for_name(
+            content,
+            "沈砚",
+            &other_names,
+            MASCULINE_IDENTITY_MARKERS,
+            MASCULINE_ROLE_MARKERS,
+        );
+        let feminine = direct_identity_marker_count_for_name(
+            content,
+            "沈砚",
+            &other_names,
+            FEMININE_IDENTITY_MARKERS,
+            FEMININE_ROLE_MARKERS,
+        );
+
+        assert!(masculine > 0);
+        assert_eq!(feminine, 0);
+    }
 }
 
 fn role_marker_directly_attributes_nearby_name(between: &str, forward: bool) -> bool {

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+
+pub(crate) const ROLLING_OUTLINE_LOOKAHEAD_CHAPTERS: usize = 3;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::chapter_quality::ChapterFinding;
@@ -75,9 +77,70 @@ fn contains_distinctive_cjk_span_absent_from(
     (minimum..=source.len().min(12)).rev().any(|width| {
         source.windows(width).any(|window| {
             let candidate = window.iter().collect::<String>();
-            haystack.contains(&candidate) && !excluded.contains(&candidate)
+            haystack.contains(&candidate)
+                && !excluded.contains(&candidate)
+                && cjk_future_overlap_is_distinctive(&candidate)
         })
     })
+}
+
+fn cjk_future_overlap_is_distinctive(candidate: &str) -> bool {
+    let chars = candidate.chars().collect::<Vec<_>>();
+    if chars.len() > 6 {
+        return true;
+    }
+    if chars.len() < 4 {
+        return false;
+    }
+
+    // Short overlaps are only useful as semantic evidence when they are not
+    // bounded by Chinese grammatical/location glue. A shared phrase such as
+    // “在黑雾中” identifies a setting, not completion of the future event
+    // that happens there. Longer spans still carry enough event information
+    // to be evaluated with the completed-outcome check above.
+    !matches!(
+        chars.first(),
+        Some(
+            '的' | '了'
+                | '着'
+                | '过'
+                | '在'
+                | '与'
+                | '和'
+                | '向'
+                | '从'
+                | '把'
+                | '被'
+                | '将'
+                | '为'
+                | '因'
+                | '于'
+                | '对'
+        )
+    ) && !matches!(
+        chars.last(),
+        Some(
+            '的' | '了'
+                | '着'
+                | '过'
+                | '中'
+                | '内'
+                | '里'
+                | '上'
+                | '下'
+                | '前'
+                | '后'
+                | '间'
+                | '边'
+                | '在'
+        )
+    ) && !cjk_short_overlap_is_context_only(candidate)
+}
+
+fn cjk_short_overlap_is_context_only(candidate: &str) -> bool {
+    ["内部", "外部", "附近", "周围", "之间", "当中", "其中"]
+        .iter()
+        .any(|marker| candidate.ends_with(marker))
 }
 
 fn contains_distinctive_english_span(haystack: &str, source: &str) -> bool {
@@ -206,15 +269,27 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
         if sentence.contains('已') {
             return true;
         }
-        if [
+        let explicit_outcome = [
             "确认", "发现", "查明", "证明", "证实", "显示", "表明", "直指", "揭示", "揭开", "透露",
             "获得", "得到", "拿到", "完成", "抵达", "进入", "击败", "解决", "达成", "交换", "识破",
             "暴露", "来自", "源自", "属于",
         ]
         .iter()
+        .any(|marker| sentence.contains(marker));
+        if explicit_outcome {
+            return true;
+        }
+        // A generic “了” only proves a completed event when the clause is not
+        // explicitly describing intent, anticipation, or an event in progress.
+        // Otherwise normal chapter-end foreshadowing can consume the next
+        // chapter even though its result has not happened yet.
+        if [
+            "即将", "将要", "正要", "正在", "正从", "准备", "决定", "打算", "试图", "想要", "预示",
+        ]
+        .iter()
         .any(|marker| sentence.contains(marker))
         {
-            return true;
+            return false;
         }
         let chars = sentence.chars().collect::<Vec<_>>();
         return chars.iter().enumerate().any(|(index, ch)| {
@@ -326,6 +401,8 @@ pub(crate) struct RevisionQualityVector {
     pub length_shortfall: usize,
     #[serde(default)]
     pub length_blockers: usize,
+    #[serde(default)]
+    pub length_topup_eligible: bool,
     pub deterministic_repairs: usize,
 }
 
@@ -1554,6 +1631,23 @@ mod tests {
     }
 
     #[test]
+    fn final_body_future_boundary_detection_ignores_ongoing_foreshadowing() {
+        let current = "温望川带着南砚声逃入城市上层区；南砚声在数据流中觉醒";
+        let next = "温望川遭遇企业安保系统的全方位扫描，被迫在数据缝隙中穿行";
+        let foreshadowing = "他感觉到了一种压迫感正从高空降临，那是企业安保系统即将展开的扫描。";
+        assert!(
+            final_body_future_consumption_evidence(foreshadowing, current, next, true).is_none(),
+            "ongoing or anticipated pressure must leave the next boundary unperformed"
+        );
+
+        let consumed = "企业安保系统已经完成全方位扫描，温望川被迫在数据缝隙中穿行。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            Some(consumed)
+        );
+    }
+
+    #[test]
     fn final_body_future_boundary_detection_ignores_shared_subject_prefixes() {
         let current = "阮听舟在测脉时看到异常数据，发现矿脉寿命流失过快；测出数据与宗门记录不符，阮听舟被监工责罚";
         let next = "阮听舟深夜潜入废弃矿坑，遇到微服私访的钟景原；钟景原认出阮听舟手中的罗盘，两人达成初步合作";
@@ -1584,6 +1678,81 @@ mod tests {
         assert!(
             final_body_future_consumption_evidence(body, current, next, true).is_none(),
             "a recurring subject plus ordinary grammar must not consume the next event"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_ignores_low_information_four_character_overlap() {
+        let current = "陆云声在废料堆中发现导师留下的加密芯片；芯片激活时引发了陆云声的感官过载，数据流开始干扰视觉";
+        let next =
+            "陆云声向叶屿序寻求芯片解读方案；阮星禾派出的机械追猎者降临了下城区，打破了暂时的宁静";
+        let body = "这枚芯片所释放出的逻辑波纹，似乎在某种程度上打破了下城区原本沉闷的秩序。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            "了下城区 is grammatical overlap, not evidence that the pursuer arrived"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_ignores_character_possessive_overlap() {
+        let current =
+            "陆昭白利用碎片散发的微弱灵力构建防御屏障，在乱石堆中躲避追击；闻照真挥剑挡下致命一击";
+        let next = "陆昭白在闻照真的庇护下进入宗门外围，并观察当地灵气的流动规律；陆昭白发现灵气漩涡，季照桥锁定了陆昭白的位置";
+        let body = "随着一声轻微的脆响，陆昭白的心猛地提到了嗓子眼。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            "陆昭白的 is a recurring subject plus possessive marker, not a future event"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_ignores_shared_location_phrase() {
+        let current = "钟清序在坠落过程中邂逅阮启白；阮启白的航船差点撞上正在下坠的废墟";
+        let next = "钟清序与阮启白共同应对岛屿崩塌；季屿舟的影子在黑雾中若隐若现，预示着追逐的开始";
+        let body = "阮启白指向那片在黑雾中翻涌的深渊，提醒钟清序赶紧站稳。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            "a shared location phrase must not prove that the next chapter event completed"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_ignores_adjacent_status_overlap_without_next_action() {
+        let current = "温维序利用结构缺陷的理论模型，在一次技术评审会上通过修正设计而非推翻设计的方式，向沈维言展示反击的可能性；温维序与沈维言达成初步的技术共识";
+        let next = "裴启桥察觉到温维序的意图，通过调整材料参数试图掩盖缺陷，双方展开第一次技术层面的正面博弈；设计方案的修正过程引发了事务所内部权力的再次洗牌";
+        let body = "但在沈维言这里，他已经重新夺回了在事务所内部的技术话语权。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            "a current-chapter authority shift must not prove material tampering, direct confrontation, or a later power reshuffle"
+        );
+
+        let consumed = "裴启桥已经调整材料参数来掩盖缺陷，双方第一次技术层面的正面博弈由此爆发。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            Some(consumed)
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_ignores_character_name_plus_location_particle_overlap() {
+        let current = "秦景朔在逃亡中被迫开启祭鼎初步功能，释放冲击波；商谨川通过灵力波动发现了青铜鼎能够重塑灵气的惊人用途";
+        let next = "秦景朔与岑听野在废土边缘建立临时据点；秦景朔意识到祭祀不仅消耗寿命，还能通过特定仪式改变周围的灵气浓度";
+        let body = "虽然岑听野在刚才的关键时刻用纯粹的灵力卸掉了致命的攻势，但那份协作的默契并不能让他获得真正的喘息。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            "a recurring character name plus 在 is grammar/location setup, not completion of the next chapter's base"
+        );
+
+        let consumed =
+            "秦景朔与岑听野已经在废土边缘建立临时据点，并通过特定仪式改变了周围的灵气浓度。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            Some(consumed)
         );
     }
 

@@ -127,10 +127,13 @@ fn contract_plan_repair_issues(
         if let Some(issue) = malformed_goal_like_plan_line_issue(contract_text) {
             issues.push(issue);
         }
-        let expected = match (draft.target_units, draft.chapter_unit_target) {
-            (Some(total), Some(per_chapter)) if per_chapter > 0 => total.div_ceil(per_chapter),
-            _ => count_explicit_chapter_plan_lines(contract_text),
-        };
+        let expected = draft
+            .target_units
+            .zip(draft.chapter_unit_target)
+            .and_then(|(total, per_chapter)| {
+                longform_policy::expected_chapter_count(total, per_chapter)
+            })
+            .unwrap_or_else(|| count_explicit_chapter_plan_lines(contract_text));
         if expected > 0 {
             if let Some(issue) = chapter_plan_missing_title_issue(contract_text, expected) {
                 issues.push(issue);

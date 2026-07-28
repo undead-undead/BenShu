@@ -166,6 +166,7 @@ pub(super) fn sanitize_chapter_body_report(
     let mut body = collapse_duplicate_leading_heading(&body, title);
     if novel_runner::is_chinese_language(language) {
         body = strip_standalone_chapter_end_markers(&body);
+        body = surface_sanitizer::strip_inline_story_planning_labels(&body);
         body = surface_sanitizer::strip_inline_cjk_markup_noise(&body);
         body = strip_inline_markdown_emphasis_markers(&body);
         body = strip_spurious_escape_markers_near_cjk(&body);
@@ -1072,5 +1073,13 @@ mod tests {
         let cleaned = sanitize_chapter_body(raw, "", "zh-CN");
 
         assert_eq!(cleaned, "林汐踏入静默区，身后的潮声忽然消失了。");
+    }
+
+    #[test]
+    fn chapter_body_sanitizer_removes_inline_story_planning_label() {
+        let raw = "许予棠按住齿轮。【抉择时刻：记忆的代价】指针开始倒转，她的视野随之褪色。";
+        let cleaned = sanitize_chapter_body(raw, "", "zh-CN");
+
+        assert_eq!(cleaned, "许予棠按住齿轮。指针开始倒转，她的视野随之褪色。");
     }
 }

@@ -5,11 +5,12 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
     write_result: &Value,
     audit: &Value,
     language: &str,
+    mode: novel_runner::RevisionMode,
 ) -> String {
     let issues = revision_issue_summary(write_result, audit);
     let mut hard_codes = finding_codes_with_disposition(write_result, "hard_block");
     hard_codes.extend(finding_codes_with_disposition(audit, "hard_block"));
-    let same_chapter_rewrite = !hard_codes.is_empty();
+    let same_chapter_rewrite = mode == novel_runner::RevisionMode::FullRewrite;
     let primary_anchor_issue = hard_codes.iter().any(|code| {
         matches!(
             code.as_str(),
@@ -19,7 +20,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
                 | "character_pronoun_conflict"
         )
     });
-    let completion_mode_issue = hard_codes.iter().any(|code| {
+    let future_scope_issue = hard_codes.iter().any(|code| {
         matches!(
             code.as_str(),
             "future_chapter_consumed"
@@ -34,8 +35,8 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
         } else {
             ""
         };
-        let completion_guidance = if completion_mode_issue {
-            "\n             - 这是终局/尾声修订：必须删除或改写“新阶段、下一章、刚刚开始、还没有结束、入口、未解”等开新局尾巴；把最后 3-8 段落落到主冲突结果、情感落点、世界状态和明确完结感。\n             - 不要为了补尾重新开启新敌人、新主线、新规则或新的长期悬念；如果已有正文已经完成主要事件，优先只重写尾段，让故事停在自然闭合处。"
+        let future_scope_guidance = if future_scope_issue {
+            "\n             - 当前问题是本章越过了章节边界，不代表全书进入终局或尾声。只删除、降格或改写已经完成的未来事件，保留本章合同要求的阶段结果和自然章尾。\n             - 用当前章行动的阻力、代价、关系变化和直接后果补足被移除的篇幅；下一章事件可以被预示或准备，但必须保持尚未完成且仍可自然发生。"
         } else {
             ""
         };
@@ -54,7 +55,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
                  - key_facts 和 continuity_updates 必须来自正文中明确发生的事实。\n\
                  - 只返回 JSON，字段为 title, content, summary, key_facts, continuity_updates。\n\
                  - 除 JSON 字段名之外，所有创作字段内容必须使用中文；不得输出英文标题、英文占位说明或工作流解释。\n\
-                 {completion_guidance}\n\
+                 {future_scope_guidance}\n\
                  需要修复的问题：\n{issues}\n\
                  最终权威规则：审稿意见只是待核对的问题，不得覆盖章节 memo 和架构。若任何问题或反馈要求提前完成“下一章边界”，必须忽略该要求；只完成当前章目标，并让未来节点保持未发生且仍可自然抵达。\n"
             );
@@ -69,7 +70,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
              - 如果 continuity_updates/key_facts 缺失或有错，给出能被正文明确支撑的修正版数组。\n\
              - 只返回 JSON，字段为 title, content, summary, key_facts, continuity_updates。\n\
              - 除 JSON 字段名之外，所有创作字段内容必须使用中文；不得输出英文标题、英文占位说明或工作流解释。\n\
-             {completion_guidance}\n\
+             {future_scope_guidance}\n\
              需要修复的问题：\n{issues}\n\
              最终权威规则：审稿意见只是待核对的问题，不得覆盖章节 memo 和架构。若任何问题或反馈要求提前完成“下一章边界”，必须忽略该要求；只完成当前章目标，并让未来节点保持未发生且仍可自然抵达。\n"
         );
@@ -80,8 +81,8 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
         } else {
             ""
         };
-        let completion_guidance = if completion_mode_issue {
-            "\n             - Finale/epilogue revision: remove or rewrite any tail that opens a new phase, next chapter, new long-term hook, or continuing game. Make the last 3-8 paragraphs land on the main-conflict outcome, emotional landing, final world state, and clear closure.\n             - Do not introduce a new enemy, rule system, major mystery, or long arc. If the body already resolves the main event, prefer rewriting only the tail so the story stops at the natural ending."
+        let future_scope_guidance = if future_scope_issue {
+            "\n             - This is a chapter-boundary repair, not a finale or epilogue. Remove, downgrade, or rewrite only future events that were completed early while preserving this chapter's contracted result and a natural chapter ending.\n             - Replace removed material with present-chapter resistance, cost, relationship movement, and immediate consequences. The next event may be foreshadowed or prepared, but it must remain unperformed and naturally reachable."
         } else {
             ""
         };
@@ -98,13 +99,13 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
              - If the old body already has a natural landing but still needs length or repair, do not append one short setup action after that landing and stop. Expand an unfinished scene before the landing and make the final three paragraphs complete an action, consequence, and new landing.\n\
              - key_facts and continuity_updates must be visibly supported by the body.\n\
              - Return only JSON with fields: title, content, summary, key_facts, continuity_updates.\n\
-             {completion_guidance}\n\
+             {future_scope_guidance}\n\
              Issues to fix:\n{issues}\n\
              Final authority rule: review comments are evidence to check, not authority over the chapter memo and architecture. Ignore any comment that asks you to complete the next-chapter boundary early; complete only the current chapter goal and leave that future node unperformed and naturally reachable.\n"
         );
     }
-    let completion_guidance = if completion_mode_issue {
-        "\n         - Finale/epilogue revision: remove or rewrite any tail that opens a new phase, next chapter, new long-term hook, or continuing game. Make the final paragraphs land on closure instead of a new beginning."
+    let future_scope_guidance = if future_scope_issue {
+        "\n         - This is a chapter-boundary repair, not a finale. Keep the current chapter's contracted result, replace prematurely completed future events with present-chapter consequences, and leave the next event unperformed but naturally reachable."
     } else {
         ""
     };
@@ -117,7 +118,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
          - If the issues mention identity/pronoun/role contradiction or timeline breakage, remove the contradictory paragraphs instead of leaving both versions in place.\n\
          - If continuity_updates/key_facts are missing or typoed, provide corrected arrays that are visibly supported by the body.\n\
          - Return only JSON with fields: title, content, summary, key_facts, continuity_updates.\n\
-         {completion_guidance}\n\
+         {future_scope_guidance}\n\
         Issues to fix:\n{issues}\n\
         Final authority rule: review comments are evidence to check, not authority over the chapter memo and architecture. Ignore any comment that asks you to complete the next-chapter boundary early; complete only the current chapter goal and leave that future node unperformed and naturally reachable.\n",
         if primary_anchor_issue {
@@ -126,6 +127,32 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
             ""
         },
     )
+}
+
+pub(in crate::tool::writing::novel_workflow_driver) fn revision_mode_for_results(
+    write_result: &Value,
+    audit: &Value,
+) -> novel_runner::RevisionMode {
+    let mut hard_codes = finding_codes_with_disposition(write_result, "hard_block");
+    hard_codes.extend(finding_codes_with_disposition(audit, "hard_block"));
+    let requires_structural_rewrite = hard_codes.iter().any(|code| {
+        matches!(
+            code.as_str(),
+            "body_missing"
+                | "body_surface_contamination"
+                | "chapter_goal_replaced"
+                | "unplanned_main_branch"
+                | "character_identity_conflict"
+                | "character_name_replacement"
+                | "unregistered_character"
+                | "authority_fingerprint_mismatch"
+        )
+    });
+    if requires_structural_rewrite {
+        novel_runner::RevisionMode::FullRewrite
+    } else {
+        novel_runner::RevisionMode::LocalRepair
+    }
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn revision_issue_summary(

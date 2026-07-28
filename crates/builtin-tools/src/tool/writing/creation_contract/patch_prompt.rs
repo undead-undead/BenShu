@@ -299,10 +299,13 @@ fn plot_patch_prompt(
 用户正在确定小说故事蓝图，当前只需要补齐结构化创作字段。请输出紧凑、可确认、可机读的“故事蓝图字段包”。{STORY_BLUEPRINT_BOUNDARY}你只生成剧情结构字段补丁，不写正文，不解释，不输出 Markdown 代码块。\n\
 本阶段只补分卷/阶段、近期章节目标、不可逆变化和伏笔/兑现矩阵。不要改书名、角色名、题材、字数或治理字段。\n\n\
 如果当前质量门缺口指向大纲本体中的残句、角色定位冲突、角色与自身形成关系、权威表外角色或其他文本污染，补丁必须提供完整修正后的 `raw_outline`；不能只返回 volumes、near_chapters 或 payoff_matrix 而保留旧大纲。\n\n\
+如果质量门指出角色权威名被用作公司、组织、地点、机构、协议、系统或其他非人物实体，必须保留该 canonical_name 作为人物姓名，并为冲突的非人物实体改用一个与全部角色姓名不同的故事内名称；在 raw_outline、volumes 和 near_chapters 中同步替换，不能删除该人物、改变角色名或把同一个名字继续同时用于人物和实体。\n\n\
 如果质量门点名用户明确禁用的名字，必须从 raw_outline、volumes 和 near_chapters 中同步删除；该名字不属于角色权威表时，改用准确的职责或身份泛称，不得新造未登记角色名。\n\n\
 用户没有指定的分卷、章节目标和伏笔由你根据题材、终局、主线和角色弧线补全，不得输出“待补”“待定”“未指定”“暂无”“placeholder”或同义占位。\n\n\
 必须输出 1 到 5 个 volumes，以及连续编号、从第 1 章开始的 3 到 8 个 near_chapters。near_chapters 只覆盖全书开篇窗口：当 expected_chapters 大于近期章节末章时，不得在近期章节内完成权威终局、主冲突总解决、主角弧线终点或终局后的稳定状态；最后一个近期章节必须仍给后续分卷留下可推进的主线债务。有多卷时，只有最后一卷可以完成权威终局、主角弧线终点和终局稳定状态；非末卷必须留有明确未解决的主线债务，不得把终局提前完成后再用后续卷回顾或铺续作。每卷都要有具体 objective 和不可逆 ending_change；每章都要有具体事件 goal 和事件变化式 expected_turn，不能只写数字、章节号、抽象主题或总结性空话。raw_outline 只写故事规划，不得写入总字数、每章字数、预计章数、“全书共多少章”或确认/写作流程说明。角色引用只能使用稳定锚点中的权威姓名。分卷和章节必须服从稳定锚点中的故事前提、世界规则、主线因果与终局，不能凭空扩大人物、工具或制度的能力边界，也不能依赖未建立的关键能力完成阶段目标。\n\n\
 如果当前缺口包含 `outline.longform_position`，必须完整改写 volumes 的阶段边界，不能原样返回当前分卷：若倒数第二卷已经完成权威终局，而最后一卷只是终局后的尾声、回顾或稳定生活，就合并/删除单独尾声卷，或让倒数第二卷保留未解决的主线债务并把权威终局移到实际最后一卷。最终输出中，只有 volumes 数组的最后一个元素可以出现权威终局、主冲突总解决或主角弧线终点。\n\n\
+如果当前缺口包含 `outline.terminal_coverage`，必须让 volumes 最后一个元素的 objective 或 ending_change 明确执行稳定锚点中“终局方向”的全部核心行动，并写出对应直接结果和不可逆变化；不能把其中的关键物件、机制、行动或结果改成较弱的泛化结尾。除非质量门同时指出 `outline.longform_position` 或分卷数量错误，否则保持当前分卷数量和非末卷阶段边界，只重写末卷中不覆盖终局的字段，避免让既有角色登场/离场锚点失效。\n\n\
+如果当前缺口包含 `semantic.outline_character_authority`，并且点名卷目标、卷尾变化、兑现矩阵、终局状态、逻辑顺序或“直接跳到终局”，必须把它当作同一个 Plot 因果链问题处理：保留角色权威、世界规则和终局方向不变；同步重写被点名 volume 的 objective 与 ending_change，使卷目标先建立达成终局所需的条件、代价或突破，卷尾变化只写该阶段真实完成的不可逆结果；如果该卷是末卷，objective 必须包含通向终局核心行动的因果步骤，ending_change 才能完成终局结果；如果该卷不是末卷，不得出现终局完成或终局稳定状态。payoff_matrix 中镜像同一错误终局跳跃的 payoff_target 也必须一并改写为同一阶段的伏笔兑现或末卷终局兑现，不能只改 volumes 留下旧兑现矩阵继续触发相同语义冲突。\n\n\
 稳定锚点：\n{stable_anchor}\n\n\
 当前质量门缺口：{issue_focus}\n\n\
 用户最新要求：{}\n\n\
@@ -1156,6 +1159,43 @@ mod tests {
     }
 
     #[test]
+    fn plot_repair_prompt_explains_how_to_separate_character_and_entity_names() {
+        let draft = super::build_initial_creation_draft(
+            "plot-character-entity-collision",
+            "fiction",
+            "写都市创业小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        let issues = typed_issues(
+            ContractIssueKind::Plot,
+            vec![
+                "ContractBlocker: 小说合同大纲把角色权威名 `姜怀言` 用作组织、地点或机构名"
+                    .to_string(),
+            ],
+        );
+        let prompt = plot_patch_prompt(
+            &draft,
+            "继续修复当前合同",
+            &issues,
+            "稳定锚点",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(
+            prompt.contains("保留该 canonical_name 作为人物姓名"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("为冲突的非人物实体改用一个"), "{prompt}");
+        assert!(
+            prompt.contains("raw_outline、volumes 和 near_chapters 中同步替换"),
+            "{prompt}"
+        );
+    }
+
+    #[test]
     fn plot_repair_prompt_explains_how_to_move_terminal_events_to_the_last_volume() {
         let draft = super::build_initial_creation_draft(
             "plot-longform-position",
@@ -1186,6 +1226,82 @@ mod tests {
             prompt.contains("只有 volumes 数组的最后一个元素可以出现权威终局"),
             "{prompt}"
         );
+    }
+
+    #[test]
+    fn plot_repair_prompt_preserves_stage_boundaries_while_restoring_terminal_coverage() {
+        let draft = super::build_initial_creation_draft(
+            "plot-terminal-coverage",
+            "fiction",
+            "写末日废土小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        let issues = typed_issues(
+            ContractIssueKind::Plot,
+            vec![
+                "ContractBlocker[outline.terminal_coverage]: 小说合同末卷没有执行权威终局的核心解决事件"
+                    .to_string(),
+            ],
+        );
+        let prompt = plot_patch_prompt(
+            &draft,
+            "其他内容你来决定",
+            &issues,
+            "终局方向：主角关闭毒化阀门并公开账本",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(prompt.contains("终局方向”的全部核心行动"), "{prompt}");
+        assert!(
+            prompt.contains("保持当前分卷数量和非末卷阶段边界"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("不能把其中的关键物件、机制、行动或结果改成较弱"),
+            "{prompt}"
+        );
+    }
+
+    #[test]
+    fn semantic_outline_authority_prompt_repairs_volume_and_payoff_sequence_together() {
+        let draft = super::build_initial_creation_draft(
+            "plot-semantic-sequence-conflict",
+            "fiction",
+            "写修仙小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        let issues = typed_issues(
+            ContractIssueKind::Plot,
+            vec![
+                "ContractBlocker[semantic.outline_character_authority]: 第2卷卷尾变化中陶泊衡燃尽修为，与第2卷目标中对抗闻云澜夺回灵脉的逻辑顺序冲突；卷尾变化直接跳到终局状态动作。权威证据 终局方向=`陶泊衡燃尽修为点燃青灯`；候选证据 第2卷卷尾变化=`陶泊衡燃尽修为，世界灵气重新流动`"
+                    .to_string(),
+            ],
+        );
+        let prompt = plot_patch_prompt(
+            &draft,
+            "其他内容你来决定",
+            &issues,
+            "终局方向：陶泊衡燃尽所有修为，以身为引点燃青灯，将枯竭的灵气重新注入大地",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(prompt.contains("同一个 Plot 因果链问题"), "{prompt}");
+        assert!(
+            prompt.contains("同步重写被点名 volume 的 objective 与 ending_change"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("payoff_matrix 中镜像同一错误终局跳跃的 payoff_target 也必须一并改写"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("\"payoff_matrix\""), "{prompt}");
+        assert!(prompt.contains("\"volumes\""), "{prompt}");
     }
 
     #[test]

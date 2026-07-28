@@ -57,7 +57,7 @@ pub fn classify_creation_draft_turn_intent_with_context(
 
 pub fn creation_draft_planning_dialogue_requested(message: &str) -> bool {
     matches!(
-        classify_creation_draft_turn_intent(message),
+        classify_creation_draft_turn_intent_with_context(message, false, None, None, None),
         CreationDraftTurnIntent::ClarifyOrPlan
             | CreationDraftTurnIntent::UpdateContract
             | CreationDraftTurnIntent::DeferStart

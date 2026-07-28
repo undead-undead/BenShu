@@ -81,9 +81,9 @@ use archive::*;
 use chapter_metadata::*;
 use chapter_state::*;
 use context_packaging::{
-    approved_prior_chapters, build_context_budget_telemetry, build_context_governance,
-    build_context_payload, build_minimal_context_payload, build_prompt_context_payload,
-    prompt_context_fingerprint, protected_prompt_context_char_limit,
+    approved_chapter_context_view, approved_prior_chapters, build_context_budget_telemetry,
+    build_context_governance, build_context_payload, build_minimal_context_payload,
+    build_prompt_context_payload, prompt_context_fingerprint, protected_prompt_context_char_limit,
 };
 use contract_terms::*;
 use creation_draft::{
@@ -119,10 +119,10 @@ use project_governance::{
     discard_chapter_character_registrations, ensure_character_authority_ledger,
     ensure_project_governance, ensure_story_bible_from_manifest, ensure_structured_contract_v2,
     ensure_volume_records_from_story_bible, final_chapter_title_from_body_with_metadata,
-    promote_approved_chapter_character_identity_markers, promote_chapter_character_registrations,
-    rebuild_story_bible_from_contract_only, rebuild_story_bible_from_manifest,
-    register_chapter_character_requests, title_is_default_chapter_heading,
-    title_matches_project_or_volume, volume_for_chapter,
+    invalidate_story_bible_planning_after, promote_approved_chapter_character_identity_markers,
+    promote_chapter_character_registrations, rebuild_story_bible_from_contract_only,
+    rebuild_story_bible_from_manifest, register_chapter_character_requests,
+    title_is_default_chapter_heading, title_matches_project_or_volume, volume_for_chapter,
 };
 #[cfg(test)]
 use project_governance::{final_chapter_title_from_body, title_needs_post_body_repair};

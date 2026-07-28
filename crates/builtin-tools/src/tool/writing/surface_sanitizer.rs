@@ -134,6 +134,67 @@ pub(crate) fn line_looks_like_story_planning_meta(line: &str) -> bool {
     current_chapter && future_chapter && planning_signal
 }
 
+/// Removes short, bracketed author-facing beat labels that a model may place
+/// inside otherwise valid prose. This extends the existing planning-meta
+/// cleanup to streamed bodies where an entire chapter can arrive on one line.
+pub(crate) fn strip_inline_story_planning_labels(text: &str) -> String {
+    if !text.contains('【') {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('【') {
+        out.push_str(&rest[..open]);
+        let after_open = &rest[open + '【'.len_utf8()..];
+        let Some(close) = after_open.find('】') else {
+            out.push_str(&rest[open..]);
+            return out;
+        };
+        let inner = &after_open[..close];
+        let author_annotation_boundary = out
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|ch| matches!(ch, '。' | '！' | '？' | '；' | '\n' | '\r'));
+        if author_annotation_boundary && inline_story_planning_label_inner(inner) {
+            rest = &after_open[close + '】'.len_utf8()..];
+        } else {
+            out.push('【');
+            out.push_str(inner);
+            out.push('】');
+            rest = &after_open[close + '】'.len_utf8()..];
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn inline_story_planning_label_inner(inner: &str) -> bool {
+    let trimmed = inner.trim();
+    if trimmed.is_empty() || trimmed.chars().count() > 48 {
+        return false;
+    }
+    let lowered = trimmed.to_ascii_lowercase();
+    [
+        "抉择时刻",
+        "转折时刻",
+        "冲突升级",
+        "情绪转折",
+        "伏笔设置",
+        "悬念设置",
+        "场景目标",
+        "叙事节点",
+        "章节功能",
+        "镜头切换",
+        "choice moment",
+        "plot beat",
+        "scene goal",
+        "chapter function",
+    ]
+    .iter()
+    .any(|marker| trimmed.contains(marker) || lowered.contains(marker))
+}
+
 fn cjk_object_part_boundary_should_insert(chars: &[char], object_index: usize) -> bool {
     let Some(next) = chars.get(object_index + 1).copied() else {
         return false;
@@ -1022,5 +1083,23 @@ mod tests {
         assert!(!line_looks_like_story_planning_meta(
             "林汐踏入静默区，身后的潮声忽然消失了。"
         ));
+    }
+
+    #[test]
+    fn strips_inline_bracketed_planning_label_but_preserves_story_ui() {
+        assert_eq!(
+            strip_inline_story_planning_labels(
+                "她按住齿轮。【抉择时刻：记忆的代价】指针开始倒转。"
+            ),
+            "她按住齿轮。指针开始倒转。"
+        );
+        assert_eq!(
+            strip_inline_story_planning_labels("终端弹出【任务提示：离开站台】。"),
+            "终端弹出【任务提示：离开站台】。"
+        );
+        assert_eq!(
+            strip_inline_story_planning_labels("终端弹出【场景目标：突破封锁】。"),
+            "终端弹出【场景目标：突破封锁】。"
+        );
     }
 }

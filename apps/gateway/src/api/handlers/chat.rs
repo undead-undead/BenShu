@@ -1525,23 +1525,21 @@ pub async fn chat_handler(
         return Ok(response);
     }
 
+    if let Some(outcome) =
+        try_handle_creation_draft_chat(&state, &session_id, &payload.message).await?
+    {
+        match outcome {
+            CreationDraftChatOutcome::Respond(response) => return Ok(response),
+            CreationDraftChatOutcome::ContinueWithMessage(message) => {
+                payload.message = message;
+            }
+        }
+    }
+
     if let Some(augmented) =
         prepend_session_work_target_to_request(&state, &session_id, &payload.message).await
     {
         payload.message = augmented;
-    }
-
-    if writing_session_route::direct_writer_route_from_text(&payload.message).is_none() {
-        if let Some(outcome) =
-            try_handle_creation_draft_chat(&state, &session_id, &payload.message).await?
-        {
-            match outcome {
-                CreationDraftChatOutcome::Respond(response) => return Ok(response),
-                CreationDraftChatOutcome::ContinueWithMessage(message) => {
-                    payload.message = message;
-                }
-            }
-        }
     }
 
     // Wrap the message in a collection for the chat API

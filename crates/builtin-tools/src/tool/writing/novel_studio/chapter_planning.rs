@@ -13,7 +13,11 @@ where
     Ok(serde_json::from_value(encoded)?)
 }
 
-fn approved_truth_snapshot(manifest: &NovelProjectManifest, chapter_number: usize) -> Value {
+async fn approved_truth_snapshot(
+    project_dir: &Path,
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+) -> anyhow::Result<Value> {
     let all_chapters = approved_prior_chapters(manifest, chapter_number)
         .map(|chapter| {
             json!({
@@ -27,8 +31,7 @@ fn approved_truth_snapshot(manifest: &NovelProjectManifest, chapter_number: usiz
             })
         })
         .collect::<Vec<_>>();
-    let recent_chapters = all_chapters
-        .iter()
+    let recent_chapter_records = approved_prior_chapters(manifest, chapter_number)
         .rev()
         .take(8)
         .cloned()
@@ -36,6 +39,10 @@ fn approved_truth_snapshot(manifest: &NovelProjectManifest, chapter_number: usiz
         .into_iter()
         .rev()
         .collect::<Vec<_>>();
+    let mut recent_chapters = Vec::with_capacity(recent_chapter_records.len());
+    for chapter in &recent_chapter_records {
+        recent_chapters.push(approved_chapter_context_view(project_dir, manifest, chapter).await?);
+    }
     let mut story_state = manifest
         .story_bible
         .as_ref()
@@ -47,20 +54,21 @@ fn approved_truth_snapshot(manifest: &NovelProjectManifest, chapter_number: usiz
         object.remove("narrative_graph");
         object.remove("theme_ledger");
     }
-    json!({
-        "schema_version": "benshu.approved_truth_snapshot.v1",
+    Ok(json!({
+        "schema_version": "benshu.approved_truth_snapshot.v2",
         "cutoff_chapter": chapter_number.saturating_sub(1),
         "approved_prefix_chapters": all_chapters.len(),
         "approved_history_fingerprint": governance::authority_fingerprint(&all_chapters),
         "recent_approved_chapters": recent_chapters,
         "story_state": story_state
-    })
+    }))
 }
 
 fn working_context_without_contract_mirrors(mut context: Value) -> Value {
     if let Some(object) = context.as_object_mut() {
         object.remove("contract");
         object.remove("truth_files");
+        object.remove("recent_chapters");
         if let Some(story_bible) = object.get_mut("story_bible").and_then(Value::as_object_mut) {
             story_bible.remove("structured_contract_v2");
             story_bible.remove("source_contract_revision");
@@ -314,8 +322,9 @@ impl NovelStudioTool {
                 let current_contract_fingerprint = governance::authority_fingerprint(
                     &canonical_project_contract_projection(&manifest),
                 );
-                let current_truth_fingerprint =
-                    governance::authority_fingerprint(&approved_truth_snapshot(&manifest, number));
+                let current_truth_fingerprint = governance::authority_fingerprint(
+                    &approved_truth_snapshot(&project_dir, &manifest, number).await?,
+                );
                 let sealed_dependencies_are_current = !record.sealed
                     || (record.canonical_contract_fingerprint == current_contract_fingerprint
                         && record.truth_fingerprint == current_truth_fingerprint);
@@ -480,17 +489,26 @@ impl NovelStudioTool {
         };
         let prompt_context = build_prompt_context_payload(&context);
         let canonical_contract = canonical_project_contract_projection(&manifest);
-        let truth_as_of_chapter = approved_truth_snapshot(&manifest, number);
+        let truth_as_of_chapter = approved_truth_snapshot(&project_dir, &manifest, number).await?;
         let execution_authority_context = json!({
             "schema_version": "benshu.presealed_execution_authority.v1",
             "chapter_number": number,
             "canonical_contract": canonical_contract,
             "truth_as_of_chapter": truth_as_of_chapter,
+            "current_chapter_goal": context_packaging::chapter_boundary_seed_view(
+                &manifest,
+                number,
+            ).into_iter().collect::<Vec<_>>(),
             "current_plan": context.get("plan").cloned().unwrap_or(Value::Null),
             "next_chapter_boundary": context
                 .get("next_chapter_boundary")
                 .cloned()
-                .unwrap_or(Value::Null)
+                .unwrap_or(Value::Null),
+            "rolling_outline_window": context_packaging::rolling_outline_window_view(
+                &manifest,
+                number,
+                governance::ROLLING_OUTLINE_LOOKAHEAD_CHAPTERS,
+            )
         });
         let protected_chars = serde_json::to_string(&execution_authority_context)?
             .chars()
@@ -877,6 +895,25 @@ impl NovelStudioTool {
         plan_record = apply_character_registrations(plan_record, &character_registrations)?;
         execution_contract =
             apply_character_registrations(execution_contract, &character_registrations)?;
+        let mut future_chapters =
+            apply_character_registrations(args.future_chapters.clone(), &character_registrations)?;
+        let expected_chapters = manifest
+            .target_units
+            .zip(manifest.chapter_unit_target)
+            .and_then(|(target, per_chapter)| {
+                longform_policy::expected_chapter_count(target, per_chapter)
+            });
+        let last_rolling_chapter = number
+            .saturating_add(governance::ROLLING_OUTLINE_LOOKAHEAD_CHAPTERS)
+            .min(expected_chapters.unwrap_or(usize::MAX));
+        future_chapters.retain(|seed| {
+            seed.number.is_some_and(|future_number| {
+                future_number > number && future_number <= last_rolling_chapter
+            }) && !seed.goal.trim().is_empty()
+                && !seed.expected_turn.trim().is_empty()
+        });
+        future_chapters.sort_by_key(|seed| seed.number);
+        future_chapters.dedup_by_key(|seed| seed.number);
         atomic_write_file(
             project_dir.join(&plan_record.path),
             render_plan_file(&plan_record, args.notes.trim()),
@@ -934,6 +971,18 @@ impl NovelStudioTool {
                 args.reveal.trim(),
                 args.payoff_target.trim(),
             );
+            for seed in &future_chapters {
+                let Some(future_number) = seed.number else {
+                    continue;
+                };
+                novel_bible::upsert_planned_chapter_goal(
+                    bible,
+                    future_number,
+                    seed.goal.trim(),
+                    seed.expected_turn.trim(),
+                    "",
+                );
+            }
         }
 
         ensure_structured_contract_v2(&mut manifest);
@@ -999,7 +1048,7 @@ impl NovelStudioTool {
         trace.notes.push("sealed_authority=true".to_string());
 
         let canonical_contract = canonical_project_contract_projection(&manifest);
-        let truth_as_of_chapter = approved_truth_snapshot(&manifest, number);
+        let truth_as_of_chapter = approved_truth_snapshot(&project_dir, &manifest, number).await?;
         let truth_cutoff_chapter = number.saturating_sub(1);
         let working_context = working_context_without_contract_mirrors(project_context);
         let protected_coverage = governance::build_authority_coverage(
@@ -1135,6 +1184,7 @@ impl NovelStudioTool {
             "chapter_contract": contract_record,
             "chapter_architecture": architecture_record,
             "character_registrations": character_registrations,
+            "future_chapters": future_chapters,
             "sealed_authority": sealed_authority,
             "authority_root_fingerprint": authority_root_fingerprint,
             "role_projection_fingerprints": context_record.role_projection_fingerprints,

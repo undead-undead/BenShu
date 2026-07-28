@@ -78,6 +78,7 @@ pub(super) fn parameters_ts() -> String {
   character_change?: string;
   world_change?: string;
   payoff_target?: string;
+  future_chapters?: Record<string, unknown>[];
   new_character_requests?: Record<string, unknown>[];
   summary?: string;
   key_facts?: string[];
@@ -251,6 +252,17 @@ pub(super) fn novel_studio_parameters() -> serde_json::Value {
                 "character_change": { "type": "string" },
                 "world_change": { "type": "string" },
                 "payoff_target": { "type": "string" },
+                "future_chapters": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "number": { "type": "integer" },
+                            "goal": { "type": "string" },
+                            "expected_turn": { "type": "string" }
+                        }
+                    }
+                },
                 "new_character_requests": {
                     "type": "array",
                     "items": {

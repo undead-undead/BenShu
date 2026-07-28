@@ -753,6 +753,7 @@ pub(super) async fn invalidate_unapproved_authority_descendants(
     manifest
         .truth_validations
         .retain(|record| record.chapter_number <= authority_cutoff_chapter);
+    invalidate_story_bible_planning_after(manifest.story_bible.as_mut(), authority_cutoff_chapter);
     for chapter in manifest
         .chapters
         .iter_mut()

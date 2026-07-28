@@ -41,6 +41,7 @@ struct RawChapterExecutionPackage {
     hook_opened: Option<serde_json::Value>,
     hook_paid_off: Option<serde_json::Value>,
     title_basis: Option<serde_json::Value>,
+    future_chapters: Option<serde_json::Value>,
     new_character_requests: Option<serde_json::Value>,
 }
 
@@ -123,6 +124,9 @@ pub(crate) fn parse_chapter_execution_package(
                             .as_ref()
                             .map(|value| execution_package_value_to_text(value, "meta"))
                             .unwrap_or_default(),
+                        future_chapters: execution_package_future_chapters(
+                            parsed.future_chapters.as_ref(),
+                        ),
                         new_character_requests: execution_package_character_requests(
                             parsed.new_character_requests.as_ref(),
                         ),
@@ -175,6 +179,7 @@ pub(crate) fn parse_chapter_execution_package(
         hook_opened: Vec::new(),
         hook_paid_off: Vec::new(),
         title_basis: String::new(),
+        future_chapters: Vec::new(),
         new_character_requests: Vec::new(),
         degraded: true,
         degraded_reason: "execution package was recovered from freeform text".to_string(),
@@ -210,6 +215,7 @@ fn validate_execution_package_required_fields(value: &serde_json::Value) -> Resu
     for field in STRING_FIELDS.iter().copied().chain([
         "hook_opened",
         "hook_paid_off",
+        "future_chapters",
         "new_character_requests",
     ]) {
         if !object.contains_key(field) {
@@ -224,6 +230,18 @@ fn validate_execution_package_required_fields(value: &serde_json::Value) -> Resu
             missing.join(", ")
         ))
     }
+}
+
+fn execution_package_future_chapters(
+    value: Option<&serde_json::Value>,
+) -> Vec<crate::tool::writing::creation_contract_model::ChapterSeedContract> {
+    let Some(serde_json::Value::Array(values)) = value else {
+        return Vec::new();
+    };
+    values
+        .iter()
+        .filter_map(|value| serde_json::from_value(value.clone()).ok())
+        .collect()
 }
 
 fn execution_package_character_requests(
