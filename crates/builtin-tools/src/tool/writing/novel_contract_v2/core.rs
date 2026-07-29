@@ -492,6 +492,8 @@ pub struct ChapterExecutionContractV2 {
     #[serde(default)]
     pub emotional_beat: String,
     #[serde(default)]
+    pub new_state_after_chapter: String,
+    #[serde(default)]
     pub relationship_delta: String,
     #[serde(default)]
     pub power_delta: String,

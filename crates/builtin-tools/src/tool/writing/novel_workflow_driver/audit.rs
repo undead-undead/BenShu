@@ -4,6 +4,7 @@ const MAX_FINAL_STATE_OBSERVER_ATTEMPTS: usize = 5;
 
 fn required_observer_change_count(authority: &SealedChapterAuthority) -> usize {
     [
+        authority.chapter_contract.new_state_after_chapter.as_str(),
         authority.chapter_contract.character_change.as_str(),
         authority.chapter_contract.relationship_delta.as_str(),
         authority.chapter_contract.world_change.as_str(),
@@ -78,13 +79,17 @@ impl NovelChapterRunner {
         &self,
         chapter_number: usize,
         write_result: &Value,
+        mut initial_observation: Option<novel_runner::FinalChapterObservation>,
     ) -> anyhow::Result<Value> {
         let mut feedback = None;
         let mut last_settlement = None;
         for attempt in 1..=MAX_FINAL_STATE_OBSERVER_ATTEMPTS {
-            let observation = self
-                .observe_final_chapter_state(chapter_number, write_result, feedback.as_deref())
-                .await;
+            let observation = if let Some(observation) = initial_observation.take() {
+                Ok(observation)
+            } else {
+                self.observe_final_chapter_state(chapter_number, write_result, feedback.as_deref())
+                    .await
+            };
             let (content, observer_error) = match observation {
                 Ok(observation) => (serde_json::to_string(&observation)?, None),
                 Err(error) => ("{}".to_string(), Some(error.to_string())),

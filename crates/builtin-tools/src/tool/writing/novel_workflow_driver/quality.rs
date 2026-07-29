@@ -2435,6 +2435,7 @@ pub(super) fn govern_generated_execution_package(
             &mut package.chapter_function,
             &mut package.irreversible_event,
             &mut package.new_state_after_chapter,
+            &mut package.world_change,
             &mut package.character_change,
             &mut package.relationship_change,
             &mut package.power_delta,
@@ -2466,6 +2467,7 @@ pub(super) fn govern_generated_execution_package(
             &mut package.reveal,
             &mut package.irreversible_event,
             &mut package.new_state_after_chapter,
+            &mut package.world_change,
             &mut package.character_change,
             &mut package.relationship_change,
             &mut package.power_delta,
@@ -2480,6 +2482,14 @@ pub(super) fn govern_generated_execution_package(
         package.hook_opened.retain(|field| {
             governance::event_text_is_grounded_in_current_chapter(field, current_seed, cjk)
         });
+    }
+
+    // The rolling outline owns the required outcome. Model-generated scene
+    // detail may be related to that outcome while still weakening or changing
+    // it, so it cannot replace the expected-turn authority. Settlement verifies
+    // the immutable final body against this same canonical atomic end state.
+    if !canonical.new_state_after_chapter.trim().is_empty() {
+        package.new_state_after_chapter = canonical.new_state_after_chapter.clone();
     }
 
     // The canonical contract owns the immutable chapter goal and future
@@ -2515,6 +2525,9 @@ pub(super) fn fallback_chapter_execution_package(
 ) -> novel_runner::ChapterExecutionPackage {
     let cjk = language_looks_cjk(language);
     let chapter_seed = fallback_chapter_seed_goal(context_json, chapter_number, cjk);
+    let chapter_end_state = serde_json::from_str::<Value>(context_json)
+        .ok()
+        .and_then(|value| fallback_chapter_end_state_from_near_chapters(&value, chapter_number));
     let next_chapter_seed = serde_json::from_str::<Value>(context_json)
         .ok()
         .and_then(|value| {
@@ -2619,7 +2632,12 @@ pub(super) fn fallback_chapter_execution_package(
             String::new()
         },
         irreversible_event: finale_brief,
-        new_state_after_chapter: String::new(),
+        // Keep the outline's expected turn verbatim as the required end-state
+        // authority. The final observer may prove it with a bounded contiguous
+        // multi-sentence excerpt; execution must not derive a second, weakened
+        // authority by splitting or paraphrasing this field.
+        new_state_after_chapter: chapter_end_state.unwrap_or_default(),
+        world_change: String::new(),
         character_change: String::new(),
         relationship_change: String::new(),
         power_delta: String::new(),
@@ -2874,6 +2892,42 @@ pub(super) fn fallback_chapter_seed_from_near_chapters(
     value: &Value,
     chapter_number: usize,
 ) -> Option<String> {
+    let item = fallback_chapter_item_from_near_chapters(value, chapter_number)?;
+    let parts = [
+        "title",
+        "goal",
+        "expected_turn",
+        "moves_toward_ending",
+        "objective",
+        "summary",
+    ]
+    .into_iter()
+    .filter_map(|key| item.get(key).and_then(Value::as_str))
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .map(ToString::to_string)
+    .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join("；"))
+}
+
+fn fallback_chapter_end_state_from_near_chapters(
+    value: &Value,
+    chapter_number: usize,
+) -> Option<String> {
+    let item = fallback_chapter_item_from_near_chapters(value, chapter_number)?;
+    ["expected_turn", "moves_toward_ending"]
+        .into_iter()
+        .find_map(|key| item.get(key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .filter(|value| !value.is_empty())
+}
+
+fn fallback_chapter_item_from_near_chapters<'a>(
+    value: &'a Value,
+    chapter_number: usize,
+) -> Option<&'a Value> {
     for pointer in [
         "/canonical_contract/outline/near_chapters",
         "/authority/canonical_contract/outline/near_chapters",
@@ -2906,22 +2960,23 @@ pub(super) fn fallback_chapter_seed_from_near_chapters(
             if number.is_some_and(|number| number != chapter_number) {
                 continue;
             }
-            let parts = [
-                "title",
-                "goal",
-                "expected_turn",
-                "moves_toward_ending",
-                "objective",
-                "summary",
-            ]
-            .into_iter()
-            .filter_map(|key| item.get(key).and_then(Value::as_str))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
-            if !parts.is_empty() {
-                return Some(parts.join("；"));
+            if item.as_object().is_some_and(|item| {
+                [
+                    "title",
+                    "goal",
+                    "expected_turn",
+                    "moves_toward_ending",
+                    "objective",
+                    "summary",
+                ]
+                .into_iter()
+                .any(|key| {
+                    item.get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+            }) {
+                return Some(item);
             }
         }
     }
@@ -3048,6 +3103,9 @@ fn govern_rolling_future_chapters(
         let Some(seed) = seed else {
             continue;
         };
+        if !rolling_seed_stays_within_volume_scope(context, &seed) {
+            continue;
+        }
         let fingerprint = format!(
             "{}|{}",
             normalize_repetition_segment(&seed.goal),
@@ -3067,6 +3125,76 @@ fn govern_rolling_future_chapters(
         governed.push(seed);
     }
     governed
+}
+
+fn rolling_seed_stays_within_volume_scope(
+    context: &Value,
+    seed: &crate::tool::writing::creation_contract_model::ChapterSeedContract,
+) -> bool {
+    let Some(chapter_number) = seed.number else {
+        return false;
+    };
+    let volumes = [
+        "/authority/working_context/project/volumes",
+        "/project_context/project/volumes",
+        "/project/volumes",
+    ]
+    .into_iter()
+    .find_map(|pointer| context.pointer(pointer).and_then(Value::as_array));
+    let Some(volumes) = volumes else {
+        return true;
+    };
+    let scoped_index = volumes.iter().position(|volume| {
+        let start = volume
+            .get("start_chapter")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(1);
+        let end = volume
+            .get("end_chapter")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok());
+        chapter_number >= start && end.is_none_or(|end| chapter_number <= end)
+    });
+    let Some(scoped_index) = scoped_index else {
+        return false;
+    };
+    let seed_event = format!("{} {}", seed.goal.trim(), seed.expected_turn.trim());
+    let cjk = seed_event.chars().any(is_cjk_char);
+    let seed_goal = normalize_repetition_segment(&seed.goal);
+    let seed_turn = normalize_repetition_segment(&seed.expected_turn);
+    for (index, volume) in volumes.iter().enumerate() {
+        for (field, only_at_volume_end) in [("objective", false), ("ending_change", true)] {
+            let Some(contract_field) = volume.get(field).and_then(Value::as_str) else {
+                continue;
+            };
+            let normalized_contract_field = normalize_repetition_segment(contract_field);
+            if normalized_contract_field.is_empty() {
+                continue;
+            }
+            let exact_copy =
+                seed_goal == normalized_contract_field || seed_turn == normalized_contract_field;
+            let consumes_volume_event =
+                governance::text_consumes_future_chapter(&seed_event, "", contract_field, cjk);
+            if index != scoped_index && (exact_copy || consumes_volume_event) {
+                return false;
+            }
+            if index == scoped_index && !only_at_volume_end && exact_copy {
+                return false;
+            }
+            if index == scoped_index && only_at_volume_end && (exact_copy || consumes_volume_event)
+            {
+                let end = volume
+                    .get("end_chapter")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok());
+                if end != Some(chapter_number) {
+                    return false;
+                }
+            }
+        }
+    }
+    true
 }
 
 pub(super) fn fallback_chapter_seed_from_outline_texts(
@@ -4445,15 +4573,6 @@ mod tests {
         }
     }
 
-    fn varied_complete_cjk_body() -> String {
-        (0..150)
-            .map(|index| {
-                format!("南夙阙在第{index}道矿壁前确认剑意代价，线索让他继续向地脉深处前行。")
-            })
-            .collect::<Vec<_>>()
-            .join("")
-    }
-
     #[test]
     fn tail_completion_appends_directly_to_unfinished_final_sentence() {
         let mut draft = draft("女人走到他面前，蹲下身，捡起地上的一");
@@ -5544,6 +5663,41 @@ mod tests {
         assert!(package.memo.body.contains("发现仍在运转的古代升降机"));
         assert!(package.memo.body.contains("下一章边界（只作为禁区"));
         assert!(package.memo.body.contains("沿升降机进入地下城"));
+        assert_eq!(
+            package.new_state_after_chapter,
+            "闻雪渡在矿壁内发现仍在运转的古代升降机"
+        );
+        assert!(!package
+            .new_state_after_chapter
+            .contains("进入封山矿洞寻找失踪的勘探队"));
+    }
+
+    #[test]
+    fn fallback_execution_package_preserves_the_authoritative_expected_turn() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "characters": [{
+                    "canonical_name": "叶承白",
+                    "role": "主角"
+                }],
+                "outline": {
+                    "near_chapters": [{
+                        "number": 1,
+                        "goal": "叶承白从旧钟表提取温度记忆",
+                        "expected_turn": "叶承白第一次感受到强烈悲伤，感知能力发生质变"
+                    }]
+                }
+            }
+        })
+        .to_string();
+
+        let package =
+            fallback_chapter_execution_package("zh-CN", "齿轮余温", 1, &context, false, None);
+
+        assert_eq!(
+            package.new_state_after_chapter,
+            "叶承白第一次感受到强烈悲伤，感知能力发生质变"
+        );
     }
 
     #[test]
@@ -5616,6 +5770,7 @@ mod tests {
         package.memo.goal = "在雨夜搜索废弃山门".to_string();
         package.scene_goal = "用五个场景探索山门".to_string();
         package.architecture = "模型给出的五个具体场景".to_string();
+        package.new_state_after_chapter = "主角进入废弃山门后开始谨慎观察周围".to_string();
 
         let governed = govern_generated_execution_package(
             package,
@@ -5631,6 +5786,7 @@ mod tests {
         assert!(governed.scene_goal.contains("进入废弃山门"));
         assert!(governed.architecture.contains("下一章边界"));
         assert!(governed.architecture.contains("模型给出的五个具体场景"));
+        assert_eq!(governed.new_state_after_chapter, "找到尚未熄灭的阵眼");
     }
 
     #[test]
@@ -5759,6 +5915,154 @@ mod tests {
     }
 
     #[test]
+    fn rolling_outline_rejects_later_volume_contract_copied_into_current_volume() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "outline": {"near_chapters": []}
+            },
+            "authority": {
+                "working_context": {
+                    "project": {
+                        "volumes": [
+                            {
+                                "id": "volume-0001",
+                                "start_chapter": 1,
+                                "end_chapter": 14,
+                                "objective": "在废墟中收集核心组件并建立初步生存据点",
+                                "ending_change": "敌方察觉核心并向废墟边缘进发"
+                            },
+                            {
+                                "id": "volume-0002",
+                                "start_chapter": 15,
+                                "end_chapter": 28,
+                                "objective": "建立防御体系并对抗敌方多次突袭",
+                                "ending_change": "核心修复达到临界点并引来更深异变"
+                            }
+                        ]
+                    }
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "灰雾核心", 3, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(4),
+                goal: "建立防御体系并对抗敌方多次突袭".to_string(),
+                expected_turn: "核心修复达到临界点并引来更深异变".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "灰雾核心",
+            3,
+            &context,
+            false,
+            None,
+        );
+
+        assert!(governed.future_chapters.is_empty());
+    }
+
+    #[test]
+    fn rolling_outline_does_not_collapse_the_current_volume_objective_into_one_chapter() {
+        let context = serde_json::json!({
+            "project": {
+                "volumes": [{
+                    "id": "volume-0001",
+                    "start_chapter": 1,
+                    "end_chapter": 8,
+                    "objective": "收集证据并建立完整生存据点",
+                    "ending_change": "敌方确认据点坐标并发动围攻"
+                }]
+            }
+        });
+        let seed = crate::tool::writing::creation_contract_model::ChapterSeedContract {
+            number: Some(4),
+            goal: "收集证据并建立完整生存据点".to_string(),
+            expected_turn: "主角找到下一份账册".to_string(),
+        };
+
+        assert!(!rolling_seed_stays_within_volume_scope(&context, &seed));
+    }
+
+    #[test]
+    fn rolling_outline_rejects_a_chapter_outside_all_declared_volume_ranges() {
+        let context = serde_json::json!({
+            "project": {
+                "volumes": [
+                    {"id": "volume-0001", "start_chapter": 1, "end_chapter": 4},
+                    {"id": "volume-0002", "start_chapter": 6, "end_chapter": 10}
+                ]
+            }
+        });
+        let seed = crate::tool::writing::creation_contract_model::ChapterSeedContract {
+            number: Some(5),
+            goal: "调查失踪证人".to_string(),
+            expected_turn: "主角取得证人的旧录音".to_string(),
+        };
+
+        assert!(!rolling_seed_stays_within_volume_scope(&context, &seed));
+    }
+
+    #[test]
+    fn rolling_outline_allows_current_volume_ending_only_at_its_last_chapter() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 40_000,
+                "chapter_unit_target": 2_500,
+                "outline": {"near_chapters": []}
+            },
+            "project": {
+                "volumes": [
+                    {
+                        "id": "volume-0001",
+                        "start_chapter": 1,
+                        "end_chapter": 8,
+                        "objective": "收集证据并建立据点",
+                        "ending_change": "敌方确认据点坐标并发动围攻"
+                    },
+                    {
+                        "id": "volume-0002",
+                        "start_chapter": 9,
+                        "end_chapter": 16,
+                        "objective": "守住据点并公开证据",
+                        "ending_change": "旧秩序失去资源垄断"
+                    }
+                ]
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "废墟证据", 7, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(8),
+                goal: "主角把最后一份坐标痕迹带回据点".to_string(),
+                expected_turn: "敌方确认据点坐标并发动围攻".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "废墟证据",
+            7,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 1);
+        assert_eq!(governed.future_chapters[0].number, Some(8));
+    }
+
+    #[test]
     fn generated_state_authority_drops_ungrounded_and_future_chapter_inventions() {
         let context = serde_json::json!({
             "canonical_contract": {
@@ -5785,6 +6089,7 @@ mod tests {
         package.reveal = "电脑有远程操作痕迹，暗示失踪是计划内的".to_string();
         package.relationship_change = "唐承原与谢知序建立调查者关系".to_string();
         package.resource_delta = "唐承原获得U盘中的时间戳线索".to_string();
+        package.new_state_after_chapter = "唐承原进入高度戒备状态".to_string();
         package.hook_opened = vec![
             "谢知序失踪的真正原因".to_string(),
             "U盘中的时间戳含义".to_string(),
@@ -5804,6 +6109,10 @@ mod tests {
         assert!(governed.reveal.is_empty());
         assert!(governed.relationship_change.is_empty());
         assert!(governed.resource_delta.is_empty());
+        assert_eq!(
+            governed.new_state_after_chapter,
+            "南承声暗示谢知序背叛了约定"
+        );
         assert_eq!(
             governed.hook_opened,
             vec!["谢知序失踪的真正原因".to_string()]

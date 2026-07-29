@@ -178,6 +178,8 @@ pub(super) struct NovelStudioArgs {
     #[serde(default)]
     pub(super) emotional_beat: String,
     #[serde(default)]
+    pub(super) new_state_after_chapter: String,
+    #[serde(default)]
     pub(super) relationship_delta: String,
     #[serde(default)]
     pub(super) power_delta: String,
@@ -451,6 +453,8 @@ pub(crate) struct ChapterContractRecord {
     pub(crate) reveal: String,
     #[serde(default)]
     pub(crate) emotional_beat: String,
+    #[serde(default)]
+    pub(crate) new_state_after_chapter: String,
     #[serde(default)]
     pub(crate) relationship_delta: String,
     #[serde(default)]

@@ -346,6 +346,92 @@ pub(crate) fn final_body_future_consumption_evidence(
         .map(ToString::to_string)
 }
 
+/// Uses the final-body observer as a semantic witness without allowing its
+/// paraphrase to become authority by itself. A reported future event is only
+/// accepted as evidence when a completed sentence in the immutable body also
+/// visibly supports that report.
+pub(crate) fn observer_confirmed_future_consumption_evidence(
+    body: &str,
+    observation_facts: &[String],
+    current_seed: &str,
+    next_seed: &str,
+    cjk: bool,
+) -> Option<String> {
+    observation_facts
+        .iter()
+        .map(String::as_str)
+        .filter(|fact| {
+            final_body_future_consumption_evidence(fact, current_seed, next_seed, cjk).is_some()
+        })
+        .find_map(|fact| {
+            body.split_inclusive(['。', '！', '？', '.', '!', '?', '\n'])
+                .map(str::trim)
+                .filter(|sentence| !sentence.is_empty())
+                .find(|sentence| {
+                    sentence_reports_completed_outcome(sentence, cjk)
+                        && truth_item_supported_by_chapter(fact, sentence)
+                        && if cjk {
+                            let fact = compact_event_probe_text(fact);
+                            let sentence = compact_event_probe_text(sentence);
+                            contains_distinctive_cjk_span(&sentence, &fact, 5)
+                                || contains_distinctive_cjk_span(&fact, &sentence, 5)
+                        } else {
+                            contains_distinctive_english_span(sentence, fact)
+                                || contains_distinctive_english_span(fact, sentence)
+                        }
+                })
+                .map(ToString::to_string)
+        })
+}
+
+/// Reads the current and next chapter seeds from the already sealed authority
+/// projection. This keeps all consumers on the same read-only boundary instead
+/// of reconstructing a second outline view from mutable project state.
+pub(crate) fn sealed_current_and_next_chapter_seeds(
+    authority: &SealedChapterAuthority,
+) -> Option<(String, String, String)> {
+    let projection = authority.projection(AuthorityRole::Observer)?;
+    let boundaries = projection
+        .payload
+        .pointer("/authority/working_context/next_chapter_boundary")?
+        .as_array()?;
+    let next_number = authority.chapter_number.checked_add(1)?;
+    let (index, boundary) = boundaries.iter().enumerate().find(|(_, boundary)| {
+        boundary
+            .get("number")
+            .and_then(Value::as_u64)
+            .and_then(|number| usize::try_from(number).ok())
+            == Some(next_number)
+    })?;
+    let next_seed = ["goal", "expected_turn"]
+        .into_iter()
+        .filter_map(|key| boundary.get(key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("；");
+    if next_seed.is_empty() {
+        return None;
+    }
+    let current_seed = [
+        authority.chapter_contract.goal.as_str(),
+        authority.chapter_contract.scene_goal.as_str(),
+    ]
+    .into_iter()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .collect::<Vec<_>>()
+    .join("；");
+    if current_seed.is_empty() {
+        return None;
+    }
+    Some((
+        current_seed,
+        next_seed,
+        format!("/authority/working_context/next_chapter_boundary/{index}"),
+    ))
+}
+
 pub(crate) fn unresolved_character_request_ids(
     requests: &[ChapterCharacterRequest],
     registrations: &[ChapterCharacterRegistration],
@@ -1767,6 +1853,48 @@ mod tests {
             final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
             Some(consumed)
         );
+    }
+
+    #[test]
+    fn final_observer_confirms_paraphrased_future_event_from_final_body() {
+        let current = "陆昭岚利用季节更替规律赚取第一笔启动资金；南知衡开始探寻她的变化";
+        let next = "面对梁砚桥派出的使者进行物资试探，陆昭岚稳住阵脚；梁砚桥察觉到陆家庄园存在异常繁荣迹象，竞争压力开始显现";
+        let body = "陆昭岚完成了第一笔交易。然而，在不远处的梁家，关于陆家近期物资流动频繁的消息，已经悄然传到了梁砚桥的耳中。";
+        let observation = vec![
+            "陆昭岚获得了第一笔启动资金。".to_string(),
+            "梁砚桥已察觉到陆家近期物资流动频繁，竞争压力开始显现。".to_string(),
+        ];
+
+        assert_eq!(
+            observer_confirmed_future_consumption_evidence(
+                body,
+                &observation,
+                current,
+                next,
+                true,
+            )
+            .as_deref(),
+            Some(
+                "然而，在不远处的梁家，关于陆家近期物资流动频繁的消息，已经悄然传到了梁砚桥的耳中。"
+            )
+        );
+    }
+
+    #[test]
+    fn final_observer_cannot_block_without_body_support_for_its_future_claim() {
+        let current = "陆昭岚完成第一笔交易";
+        let next = "梁砚桥察觉到陆家庄园的异常繁荣，竞争压力开始显现";
+        let body = "梁砚桥已经派人向陆家送去节礼，但无人讨论庄园近况。";
+        let observation = vec!["梁砚桥已察觉到陆家庄园的异常繁荣，竞争压力开始显现。".to_string()];
+
+        assert!(observer_confirmed_future_consumption_evidence(
+            body,
+            &observation,
+            current,
+            next,
+            true,
+        )
+        .is_none());
     }
 
     #[test]

@@ -1208,6 +1208,16 @@ pub(in crate::tool::writing::novel_studio) fn near_anchor_cjk_name_variants(
             if candidate == anchor_chars.as_slice() {
                 continue;
             }
+            if candidate_len == anchor_len
+                && candidate[..anchor_len.saturating_sub(1)]
+                    == anchor_chars[..anchor_len.saturating_sub(1)]
+                && chars.get(index + candidate_len) == anchor_chars.last()
+            {
+                // The next character completes an anchor with one inserted glyph
+                // (for example `黎启落洄`). Let the anchor_len + 1 branch own it;
+                // repairing the shorter prefix first would duplicate the suffix.
+                continue;
+            }
             let distance = if candidate_len == anchor_len
                 && cjk_name_is_adjacent_transposition(candidate, &anchor_chars)
             {
@@ -1948,26 +1958,6 @@ pub(in crate::tool::writing::novel_studio) fn cjk_candidate_has_strong_person_id
     if trimmed.is_empty() || candidate.trim().is_empty() || !trimmed.contains(candidate) {
         return false;
     }
-    let identity_markers = [
-        "姓名",
-        "角色",
-        "人物",
-        "主角",
-        "主人公",
-        "男主",
-        "女主",
-        "反派",
-        "导师",
-        "同伴",
-        "盟友",
-        "name:",
-        "role:",
-        "character",
-        "protagonist",
-        "antagonist",
-        "mentor",
-        "ally",
-    ];
     let chars = trimmed.chars().collect::<Vec<_>>();
     let candidate_chars = candidate.chars().collect::<Vec<_>>();
     let candidate_len = candidate_chars.len();
@@ -1978,32 +1968,65 @@ pub(in crate::tool::writing::novel_studio) fn cjk_candidate_has_strong_person_id
             continue;
         }
         let after = chars.get(index + candidate_len).copied();
-        let local_start = index.saturating_sub(12);
-        let local_end = (index + candidate_len + 12).min(chars.len());
-        let local_window = chars[local_start..local_end].iter().collect::<String>();
-        let local_lowered = local_window.to_ascii_lowercase();
-        if identity_markers
-            .iter()
-            .any(|marker| local_window.contains(marker) || local_lowered.contains(marker))
-        {
-            return true;
-        }
         if after.is_some_and(|ch| matches!(ch, '说' | '问' | '答' | '喊' | '叫')) {
             return true;
         }
         let before_head = chars[..index]
             .iter()
             .rev()
-            .take(4)
+            .take(12)
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
             .collect::<String>();
-        if before_head.ends_with("主角")
-            || before_head.ends_with("角色")
-            || before_head.ends_with("人物")
-            || before_head.ends_with("同伴")
-            || before_head.ends_with("反派")
+        let before_head = before_head.trim_end();
+        if [
+            "姓名",
+            "姓名：",
+            "姓名:",
+            "名叫",
+            "叫作",
+            "角色",
+            "人物",
+            "主角",
+            "主人公",
+            "男主",
+            "女主",
+            "反派",
+            "导师",
+            "同伴",
+            "盟友",
+            "name:",
+            "character:",
+        ]
+        .iter()
+        .any(|marker| before_head.ends_with(marker))
+        {
+            return true;
+        }
+        let after_tail = chars[index + candidate_len..]
+            .iter()
+            .take(12)
+            .collect::<String>();
+        let after_tail = after_tail.trim_start();
+        if [
+            "是主角",
+            "为主角",
+            "是主人公",
+            "为主人公",
+            "是男主",
+            "是女主",
+            "是反派",
+            "是导师",
+            "是同伴",
+            "是盟友",
+            "; role:",
+            "；role:",
+            ";role:",
+            "；角色:",
+        ]
+        .iter()
+        .any(|marker| after_tail.starts_with(marker))
         {
             return true;
         }

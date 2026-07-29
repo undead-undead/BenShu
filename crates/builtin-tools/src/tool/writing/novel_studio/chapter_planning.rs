@@ -139,6 +139,7 @@ impl NovelStudioTool {
                 "cost": contract.cost,
                 "reveal": contract.reveal,
                 "emotional_beat": contract.emotional_beat,
+                "new_state_after_chapter": contract.new_state_after_chapter,
                 "relationship_delta": contract.relationship_delta,
                 "power_delta": contract.power_delta,
                 "resource_delta": contract.resource_delta,

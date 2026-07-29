@@ -234,6 +234,7 @@ pub(super) fn chapter_execution_contract_v2_from_args(
         cost: args.cost.trim().to_string(),
         reveal: args.reveal.trim().to_string(),
         emotional_beat: args.emotional_beat.trim().to_string(),
+        new_state_after_chapter: args.new_state_after_chapter.trim().to_string(),
         relationship_delta: args.relationship_delta.trim().to_string(),
         power_delta: args.power_delta.trim().to_string(),
         resource_delta: args.resource_delta.trim().to_string(),

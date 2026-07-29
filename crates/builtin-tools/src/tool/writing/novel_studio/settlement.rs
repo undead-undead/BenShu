@@ -219,7 +219,21 @@ fn validate_and_bind_settlement(
         }
         accepted_changes.push(change);
     }
-    settlement.state_changes = accepted_changes;
+    settlement.state_changes = dedupe_required_end_state_changes(accepted_changes);
+    if !authority
+        .chapter_contract
+        .new_state_after_chapter
+        .trim()
+        .is_empty()
+        && !settlement.state_changes.iter().any(|change| {
+            change.authority_path.trim() == "chapter_contract.new_state_after_chapter"
+        })
+    {
+        validation.warnings.push(
+            "final-body settlement is missing the required typed end-state change from chapter_contract.new_state_after_chapter"
+                .to_string(),
+        );
+    }
     settlement.resolved_hooks =
         validated_resolved_hook_labels(authority, &settlement.state_changes);
 
@@ -229,6 +243,37 @@ fn validate_and_bind_settlement(
     validation.advisories.dedup();
     validation.passed = validation.warnings.is_empty();
     validation
+}
+
+/// `new_state_after_chapter` is the required outcome assertion for this
+/// chapter, not a second durable state slot. When the observer also emits an
+/// optional typed field for the same entity and event type, keep the required
+/// outcome delta and discard the overlapping optional delta so application
+/// order cannot overwrite the final state with a parallel description.
+fn dedupe_required_end_state_changes(
+    changes: Vec<novel_bible::ChapterStateChange>,
+) -> Vec<novel_bible::ChapterStateChange> {
+    const REQUIRED_PATH: &str = "chapter_contract.new_state_after_chapter";
+    let required_slots = changes
+        .iter()
+        .filter(|change| change.authority_path.trim() == REQUIRED_PATH)
+        .map(|change| (change.event_type, change.entity_id.trim().to_string()))
+        .collect::<Vec<_>>();
+    let mut kept_required_slots = Vec::new();
+    changes
+        .into_iter()
+        .filter(|change| {
+            let slot = (change.event_type, change.entity_id.trim().to_string());
+            if change.authority_path.trim() == REQUIRED_PATH {
+                if kept_required_slots.contains(&slot) {
+                    return false;
+                }
+                kept_required_slots.push(slot);
+                return true;
+            }
+            !required_slots.contains(&slot)
+        })
+        .collect()
 }
 
 fn validated_resolved_hook_labels(
@@ -620,19 +665,53 @@ fn authority_values(
     use novel_bible::ChapterStateEventType as Event;
     let chapter = &authority.chapter_contract;
     match event {
-        Event::Character => scalar_authority(
-            "chapter_contract.character_change",
-            &chapter.character_change,
-        ),
-        Event::Relationship => scalar_authority(
-            "chapter_contract.relationship_delta",
-            &chapter.relationship_delta,
-        ),
-        Event::World => scalar_authority("chapter_contract.world_change", &chapter.world_change),
-        Event::Power => scalar_authority("chapter_contract.power_delta", &chapter.power_delta),
-        Event::Resource => {
-            scalar_authority("chapter_contract.resource_delta", &chapter.resource_delta)
-        }
+        Event::Character => scalar_authorities([
+            (
+                "chapter_contract.character_change",
+                chapter.character_change.as_str(),
+            ),
+            (
+                "chapter_contract.new_state_after_chapter",
+                chapter.new_state_after_chapter.as_str(),
+            ),
+        ]),
+        Event::Relationship => scalar_authorities([
+            (
+                "chapter_contract.relationship_delta",
+                chapter.relationship_delta.as_str(),
+            ),
+            (
+                "chapter_contract.new_state_after_chapter",
+                chapter.new_state_after_chapter.as_str(),
+            ),
+        ]),
+        Event::World => scalar_authorities([
+            (
+                "chapter_contract.world_change",
+                chapter.world_change.as_str(),
+            ),
+            (
+                "chapter_contract.new_state_after_chapter",
+                chapter.new_state_after_chapter.as_str(),
+            ),
+        ]),
+        Event::Power => scalar_authorities([
+            ("chapter_contract.power_delta", chapter.power_delta.as_str()),
+            (
+                "chapter_contract.new_state_after_chapter",
+                chapter.new_state_after_chapter.as_str(),
+            ),
+        ]),
+        Event::Resource => scalar_authorities([
+            (
+                "chapter_contract.resource_delta",
+                chapter.resource_delta.as_str(),
+            ),
+            (
+                "chapter_contract.new_state_after_chapter",
+                chapter.new_state_after_chapter.as_str(),
+            ),
+        ]),
         Event::HookSeed => chapter
             .hook_opened
             .iter()
@@ -645,7 +724,17 @@ fn authority_values(
                 )
             })
             .collect(),
-        Event::HookAdvance | Event::HookDefer => {
+        Event::HookAdvance => scalar_authorities([
+            (
+                "chapter_contract.payoff_target",
+                chapter.payoff_target.as_str(),
+            ),
+            (
+                "chapter_contract.new_state_after_chapter",
+                chapter.new_state_after_chapter.as_str(),
+            ),
+        ]),
+        Event::HookDefer => {
             scalar_authority("chapter_contract.payoff_target", &chapter.payoff_target)
         }
         Event::HookPayOff => chapter
@@ -670,6 +759,13 @@ fn scalar_authority(path: &str, value: &str) -> Vec<(String, String)> {
     } else {
         vec![(path.to_string(), value.to_string())]
     }
+}
+
+fn scalar_authorities<const N: usize>(values: [(&str, &str); N]) -> Vec<(String, String)> {
+    values
+        .into_iter()
+        .flat_map(|(path, value)| scalar_authority(path, value))
+        .collect()
 }
 
 fn normalize_evidence_text(value: &str) -> String {
@@ -734,32 +830,60 @@ fn existing_hook_id(
     if needle.is_empty() {
         return None;
     }
-    authority
+    let hooks = authority
         .truth_as_of_chapter
         .pointer("/story_state/hook_ledger")
-        .and_then(serde_json::Value::as_array)
-        .and_then(|hooks| {
-            hooks.iter().find_map(|hook| {
-                let id = hook.get("id").and_then(serde_json::Value::as_str)?.trim();
-                if id.is_empty() {
-                    return None;
-                }
-                let scalar_match = ["id", "title", "reader_knows"]
-                    .into_iter()
-                    .filter_map(|key| hook.get(key).and_then(serde_json::Value::as_str))
-                    .any(|value| normalize_evidence_text(value) == needle);
-                let evidence_match = hook
-                    .get("evidence")
-                    .and_then(serde_json::Value::as_array)
-                    .is_some_and(|items| {
-                        items
-                            .iter()
-                            .filter_map(serde_json::Value::as_str)
-                            .any(|value| normalize_evidence_text(value) == needle)
-                    });
-                (scalar_match || evidence_match).then(|| id.to_string())
-            })
+        .and_then(serde_json::Value::as_array)?;
+    if let Some(exact) = hooks.iter().find_map(|hook| {
+        let id = hook.get("id").and_then(serde_json::Value::as_str)?.trim();
+        if id.is_empty() {
+            return None;
+        }
+        let scalar_match = ["id", "title", "reader_knows"]
+            .into_iter()
+            .filter_map(|key| hook.get(key).and_then(serde_json::Value::as_str))
+            .any(|value| normalize_evidence_text(value) == needle);
+        let evidence_match = hook
+            .get("evidence")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .filter_map(serde_json::Value::as_str)
+                    .any(|value| normalize_evidence_text(value) == needle)
+            });
+        (scalar_match || evidence_match).then(|| id.to_string())
+    }) {
+        return Some(exact);
+    }
+
+    // Execution packages express hook progress as natural language. Reuse the
+    // existing truth-support matcher, but only bind when exactly one existing
+    // hook is supported; ambiguity must remain untrusted.
+    let mut semantic_matches = hooks
+        .iter()
+        .filter_map(|hook| {
+            let id = hook.get("id").and_then(serde_json::Value::as_str)?.trim();
+            if id.is_empty() {
+                return None;
+            }
+            let supported = ["title", "reader_knows"]
+                .into_iter()
+                .filter_map(|key| hook.get(key).and_then(serde_json::Value::as_str))
+                .chain(
+                    hook.get("evidence")
+                        .and_then(serde_json::Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(serde_json::Value::as_str),
+                )
+                .any(|label| governance::truth_item_supported_by_chapter(label, authority_value));
+            supported.then(|| id.to_string())
         })
+        .collect::<Vec<_>>();
+    semantic_matches.sort();
+    semantic_matches.dedup();
+    (semantic_matches.len() == 1).then(|| semantic_matches.remove(0))
 }
 
 fn bind_contract_authority(
@@ -874,6 +998,7 @@ mod tests {
                 cost: String::new(),
                 reveal: String::new(),
                 emotional_beat: String::new(),
+                new_state_after_chapter: String::new(),
                 relationship_delta: String::new(),
                 power_delta: String::new(),
                 resource_delta: String::new(),
@@ -1121,6 +1246,134 @@ mod tests {
     }
 
     #[test]
+    fn required_end_state_cannot_silently_pass_without_a_typed_delta() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_contract.new_state_after_chapter =
+            "沈砚已取得旧城密钥并离开石室".to_string();
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "沈砚"
+            }]
+        });
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 12,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "沈砚收起旧城密钥，推门离开石室。";
+        let raw = json!({
+            "current_state": "沈砚带着旧城密钥离开石室。",
+            "chapter_summary": "沈砚取得密钥后离开石室。",
+            "state_changes": []
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body(&raw, body, &chapter, &authority);
+
+        assert!(parse_error.is_none());
+        assert!(settlement.state_changes.is_empty());
+        assert!(!validation.passed);
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("required typed end-state change")));
+    }
+
+    #[test]
+    fn required_end_state_accepts_final_body_evidence_through_its_sealed_path() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_contract.new_state_after_chapter =
+            "沈砚已取得旧城密钥并离开石室".to_string();
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "沈砚"
+            }]
+        });
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 12,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "沈砚收起旧城密钥，推门离开石室。";
+        let raw = json!({
+            "current_state": "沈砚带着旧城密钥离开石室。",
+            "chapter_summary": "沈砚取得密钥后离开石室。",
+            "state_changes": [{
+                "entity_id": "character-0001",
+                "event_type": "character",
+                "value": body,
+                "evidence": {"excerpt": body},
+                "authority_path": "chapter_contract.new_state_after_chapter",
+                "authority_excerpt": "模型改写的错误权威"
+            }]
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body(&raw, body, &chapter, &authority);
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(settlement.state_changes.len(), 1);
+        assert_eq!(
+            settlement.state_changes[0].authority_excerpt,
+            authority.chapter_contract.new_state_after_chapter
+        );
+    }
+
+    #[test]
+    fn required_end_state_replaces_parallel_delta_for_the_same_typed_slot() {
+        use novel_bible::{ChapterStateChange, ChapterStateEventType};
+
+        let changes = vec![
+            ChapterStateChange {
+                entity_id: "character-0001".to_string(),
+                event_type: ChapterStateEventType::Character,
+                authority_path: "chapter_contract.character_change".to_string(),
+                value: "旧的并行描述".to_string(),
+                ..Default::default()
+            },
+            ChapterStateChange {
+                entity_id: "character-0001".to_string(),
+                event_type: ChapterStateEventType::Character,
+                authority_path: "chapter_contract.new_state_after_chapter".to_string(),
+                value: "章末最终状态".to_string(),
+                ..Default::default()
+            },
+        ];
+
+        let deduped = dedupe_required_end_state_changes(changes);
+
+        assert_eq!(deduped.len(), 1);
+        assert_eq!(
+            deduped[0].authority_path,
+            "chapter_contract.new_state_after_chapter"
+        );
+        assert_eq!(deduped[0].value, "章末最终状态");
+    }
+
+    #[test]
     fn display_hook_resolution_without_typed_payoff_is_discarded() {
         let authority = hook_authority("", json!([]));
         let chapter = ChapterRecord {
@@ -1342,5 +1595,64 @@ mod tests {
         bind_contract_authority(&authority, &mut change);
 
         assert_eq!(change.entity_id, "hook-0005");
+    }
+
+    #[test]
+    fn required_end_state_uniquely_resolves_an_existing_hook_advance() {
+        let mut authority = hook_authority(
+            "",
+            json!([
+                {
+                    "id": "hook-lampwick",
+                    "title": "寻找失落的灯芯",
+                    "reader_knows": "寻找失落的灯芯",
+                    "evidence": ["集齐灯芯后点亮青灯"]
+                },
+                {
+                    "id": "hook-antagonist",
+                    "title": "梁晏朔的吞噬欲望",
+                    "reader_knows": "梁晏朔的吞噬欲望",
+                    "evidence": ["终局对抗梁晏朔"]
+                }
+            ]),
+        );
+        authority.chapter_contract.new_state_after_chapter =
+            "南听宁发现必须寻找散落的第三枚灯芯".to_string();
+        let mut change = novel_bible::ChapterStateChange {
+            entity_id: "model-invented-id".to_string(),
+            event_type: novel_bible::ChapterStateEventType::HookAdvance,
+            authority_path: "chapter_contract.new_state_after_chapter".to_string(),
+            ..Default::default()
+        };
+
+        bind_contract_authority(&authority, &mut change);
+
+        assert_eq!(change.entity_id, "hook-lampwick");
+        assert_eq!(
+            change.authority_excerpt,
+            "南听宁发现必须寻找散落的第三枚灯芯"
+        );
+    }
+
+    #[test]
+    fn semantic_hook_resolution_refuses_ambiguous_candidates() {
+        let mut authority = hook_authority(
+            "",
+            json!([
+                {"id": "hook-east", "title": "寻找东方灯芯"},
+                {"id": "hook-west", "title": "寻找西方灯芯"}
+            ]),
+        );
+        authority.chapter_contract.new_state_after_chapter = "主角开始寻找灯芯".to_string();
+        let mut change = novel_bible::ChapterStateChange {
+            entity_id: "unresolved-hook".to_string(),
+            event_type: novel_bible::ChapterStateEventType::HookAdvance,
+            authority_path: "chapter_contract.new_state_after_chapter".to_string(),
+            ..Default::default()
+        };
+
+        bind_contract_authority(&authority, &mut change);
+
+        assert_eq!(change.entity_id, "unresolved-hook");
     }
 }

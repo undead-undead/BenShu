@@ -207,6 +207,7 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
         .unwrap_or(0);
     let detected_vram_mb = input.hardware.detected_vram_mb.unwrap_or(0);
     let configured_vram_mb = u64::from(input.vram_limit_gb).saturating_mul(1024);
+    let configured_ram_mb = u64::from(input.ram_limit_gb).saturating_mul(1024);
     let usable_vram_mb = match (detected_vram_mb, configured_vram_mb) {
         (0, 0) => 0,
         (0, configured) => configured,
@@ -265,7 +266,7 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
         _ => 512,
     };
 
-    let estimated_vram_mb = estimate_vram_usage_mb(
+    let estimated_vram_with_kv_mb = estimate_vram_usage_mb(
         model_weight_mb,
         mmproj_weight_mb,
         total_layers,
@@ -274,9 +275,48 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
         runtime_overhead_mb,
     );
     let total_model_mb = model_weight_mb.saturating_add(mmproj_weight_mb);
-    let estimated_ram_mb = total_model_mb
-        .saturating_sub(estimated_vram_mb.saturating_sub(kv_cache_budget_mb + runtime_overhead_mb))
+    let text_weight_on_gpu = if total_layers == 0 {
+        0
+    } else {
+        model_weight_mb.saturating_mul(u64::from(recommended_gpu_layers)) / u64::from(total_layers)
+    };
+    let base_ram_mb = total_model_mb
+        .saturating_sub(text_weight_on_gpu)
         .saturating_add(1024);
+    let estimated_ram_with_kv_mb = base_ram_mb.saturating_add(kv_cache_budget_mb);
+    let kv_fits_vram = usable_vram_mb == 0
+        || estimated_vram_with_kv_mb.saturating_add(safety_margin_mb) <= usable_vram_mb;
+    let kv_fits_ram = configured_ram_mb == 0 || estimated_ram_with_kv_mb <= configured_ram_mb;
+    let recommended_kv_offload = kv_fits_vram || !kv_fits_ram;
+    let estimated_vram_mb = estimate_vram_usage_mb(
+        model_weight_mb,
+        mmproj_weight_mb,
+        total_layers,
+        recommended_gpu_layers,
+        if recommended_kv_offload {
+            kv_cache_budget_mb
+        } else {
+            0
+        },
+        runtime_overhead_mb,
+    );
+    let estimated_ram_mb = base_ram_mb.saturating_add(
+        (!recommended_kv_offload)
+            .then_some(kv_cache_budget_mb)
+            .unwrap_or(0),
+    );
+
+    if !recommended_kv_offload {
+        warnings.push(format!(
+            "kv_cache_moved_to_ram: vram_with_kv={}MiB safety_margin={}MiB budget={}MiB",
+            estimated_vram_with_kv_mb, safety_margin_mb, usable_vram_mb
+        ));
+    } else if !kv_fits_vram && !kv_fits_ram {
+        warnings.push(format!(
+            "kv_cache_has_no_budget_compliant_location: vram_with_kv={}MiB vram_budget={}MiB ram_with_kv={}MiB ram_budget={}MiB",
+            estimated_vram_with_kv_mb, usable_vram_mb, estimated_ram_with_kv_mb, configured_ram_mb
+        ));
+    }
 
     if estimated_vram_mb > usable_vram_mb && usable_vram_mb > 0 {
         warnings.push(format!(
@@ -302,7 +342,7 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
         recommended_threads: default_llama_runtime_threads(),
         recommended_mmap: false,
         recommended_mlock: false,
-        recommended_kv_offload: true,
+        recommended_kv_offload,
         recommended_flash_attn_mode: "auto".to_string(),
         recommended_cache_prompt: false,
         recommended_cont_batching: false,
@@ -656,6 +696,78 @@ mod tests {
         let recommendation = recommend_llama_cpp_runtime(&input);
         assert!(recommendation.recommended_gpu_layers <= 64);
         assert!(recommendation.recommended_gpu_layers >= 16);
+    }
+
+    #[test]
+    fn recommendation_moves_large_context_kv_to_ram_when_vram_would_overcommit() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let model_path = temp.path().join("gemma4-26b-q4_k_m.gguf");
+        let model = std::fs::File::create(&model_path).expect("sparse model file");
+        model
+            .set_len(17_862 * 1024 * 1024)
+            .expect("sparse model size");
+        let input = LlamaCppRuntimeInput {
+            model_path: Some(model_path.to_string_lossy().into_owned()),
+            mmproj_path: None,
+            ctx_size: 65_536,
+            requested_gpu_layers: 24,
+            tuning_mode: LLAMA_TUNING_AUTO.to_string(),
+            performance_profile: PROFILE_BALANCED.to_string(),
+            vram_limit_gb: 24,
+            ram_limit_gb: 64,
+            hardware: RuntimeHardwareSummary {
+                gpu_vendor: "Amd".to_string(),
+                gpu_name: "RX 7900 XTX".to_string(),
+                detected_vram_mb: Some(24 * 1024),
+                probe_confidence: "High".to_string(),
+            },
+        };
+
+        let recommendation = recommend_llama_cpp_runtime(&input);
+
+        assert_eq!(recommendation.recommended_gpu_layers, 24);
+        assert!(!recommendation.recommended_kv_offload);
+        assert!(recommendation.memory_plan.estimated_vram_mb < 24 * 1024);
+        assert!(recommendation.memory_plan.estimated_ram_mb >= 24_576);
+        assert!(recommendation
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("kv_cache_moved_to_ram")));
+    }
+
+    #[test]
+    fn recommendation_does_not_move_kv_into_an_insufficient_ram_budget() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let model_path = temp.path().join("gemma4-26b-q4_k_m.gguf");
+        let model = std::fs::File::create(&model_path).expect("sparse model file");
+        model
+            .set_len(17_862 * 1024 * 1024)
+            .expect("sparse model size");
+        let input = LlamaCppRuntimeInput {
+            model_path: Some(model_path.to_string_lossy().into_owned()),
+            mmproj_path: None,
+            ctx_size: 65_536,
+            requested_gpu_layers: 24,
+            tuning_mode: LLAMA_TUNING_AUTO.to_string(),
+            performance_profile: PROFILE_BALANCED.to_string(),
+            vram_limit_gb: 24,
+            ram_limit_gb: 4,
+            hardware: RuntimeHardwareSummary {
+                gpu_vendor: "Amd".to_string(),
+                gpu_name: "RX 7900 XTX".to_string(),
+                detected_vram_mb: Some(24 * 1024),
+                probe_confidence: "High".to_string(),
+            },
+        };
+
+        let recommendation = recommend_llama_cpp_runtime(&input);
+
+        assert!(recommendation.recommended_kv_offload);
+        assert!(recommendation.memory_plan.estimated_ram_mb < 24_576);
+        assert!(recommendation
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("kv_cache_has_no_budget_compliant_location")));
     }
 
     #[test]

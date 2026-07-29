@@ -56,9 +56,40 @@ fn message_requests_incremental_full_run(message: &str, artifact_kind: &str) -> 
             "section by section",
         ][..]
     };
-    incremental_terms
+    if incremental_terms
         .iter()
         .any(|term| message.contains(term) || lowered.contains(term))
+    {
+        return true;
+    }
+    if artifact_kind != "fiction" {
+        return false;
+    }
+    let starts_from_first_chapter = [
+        "从第一章起",
+        "从第1章起",
+        "从第一章开始",
+        "从第1章开始",
+        "starting from chapter one",
+        "starting with chapter one",
+        "from chapter one",
+    ]
+    .iter()
+    .any(|term| message.contains(term) || lowered.contains(term));
+    let requests_continuous_execution = [
+        "持续写",
+        "持续自动",
+        "连续写",
+        "连续自动",
+        "自动连续",
+        "一直写",
+        "continue writing",
+        "write continuously",
+        "continuously write",
+    ]
+    .iter()
+    .any(|term| message.contains(term) || lowered.contains(term));
+    starts_from_first_chapter && requests_continuous_execution
 }
 
 pub fn creation_execution_scope_note(message: &str, artifact_kind: &str) -> Option<String> {
@@ -477,6 +508,16 @@ mod tests {
         assert_eq!(
             persisted_creation_execution_scope(&[note]),
             Some(CreationDraftTurnScope::AllRemaining)
+        );
+    }
+
+    #[test]
+    fn continuous_full_book_request_starting_at_chapter_one_is_not_reduced_to_one_chapter() {
+        let message = "按这个合同开始写。请从第一章起持续自动写作、审稿并保存，直到完成整本10万字小说；不要把任务截成前十章。";
+
+        assert_eq!(
+            creation_draft_turn_scope(message, "fiction"),
+            CreationDraftTurnScope::AllRemaining
         );
     }
 }

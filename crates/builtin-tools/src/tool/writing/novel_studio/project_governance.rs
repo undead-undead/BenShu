@@ -351,12 +351,13 @@ pub(super) fn ensure_character_authority_ledger(manifest: &mut NovelProjectManif
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
-            let identity_markers = character_identity_markers_for_role(
+            let identity_markers = character_identity_markers_for_authority(
                 previous
                     .as_ref()
                     .map(|record| record.identity_markers.clone())
                     .unwrap_or_default(),
                 &character.role,
+                &character.arc_start,
             );
             records.push(CharacterAuthorityRecord {
                 id: first_non_empty(&[
@@ -422,12 +423,16 @@ pub(super) fn ensure_character_authority_ledger(manifest: &mut NovelProjectManif
                     .unwrap_or(""),
             ])
             .to_string();
-            let identity_markers = character_identity_markers_for_role(
+            let identity_markers = character_identity_markers_for_authority(
                 previous
                     .as_ref()
                     .map(|record| record.identity_markers.clone())
                     .unwrap_or_default(),
                 &role,
+                previous
+                    .as_ref()
+                    .map(|record| record.arc_start.as_str())
+                    .unwrap_or(""),
             );
             records.push(CharacterAuthorityRecord {
                 id: previous
@@ -510,13 +515,23 @@ pub(super) fn ensure_character_authority_ledger(manifest: &mut NovelProjectManif
     manifest.character_ledger = records;
 }
 
-fn character_identity_markers_for_role(mut markers: Vec<String>, role: &str) -> Vec<String> {
+fn character_identity_markers_for_authority(
+    mut markers: Vec<String>,
+    role: &str,
+    arc_start: &str,
+) -> Vec<String> {
     let explicit_profile = if role.contains("女主") {
         Some("pronoun_profile:feminine")
     } else if role.contains("男主") {
         Some("pronoun_profile:masculine")
     } else {
-        None
+        super::contract_explicit_identity_profile_in_character_anchor(arc_start).map(|profile| {
+            if profile == "feminine" {
+                "pronoun_profile:feminine"
+            } else {
+                "pronoun_profile:masculine"
+            }
+        })
     };
     if let Some(profile) = explicit_profile {
         markers.retain(|marker| {
@@ -953,9 +968,11 @@ pub(super) fn ensure_volume_records_from_story_bible(manifest: &mut NovelProject
         .map(|volume| (volume.id.clone(), volume.clone()))
         .collect::<BTreeMap<_, _>>();
     let mut volumes = Vec::new();
+    let mut resolved_arc_ids = Vec::new();
     for (index, arc) in arcs.into_iter().enumerate() {
         let fallback_id = format!("volume-{:04}", index + 1);
         let id = first_non_empty(&[arc.id.as_str(), fallback_id.as_str()]).to_string();
+        resolved_arc_ids.push(id.clone());
         let previous = existing.get(&id);
         let title = volume_title_from_arc(manifest, &arc, index + 1);
         let start_chapter = arc.start_chapter.unwrap_or_else(|| {
@@ -1012,6 +1029,25 @@ pub(super) fn ensure_volume_records_from_story_bible(manifest: &mut NovelProject
     normalize_volume_ranges(&mut volumes, expected_chapters);
     seed_volume_contract_debts(&mut volumes, &manifest.structured_contract_v2);
     manifest.volumes = volumes;
+    if let Some(bible) = manifest.story_bible.as_mut() {
+        for (arc, resolved_id) in bible
+            .narrative_graph
+            .volume_arcs
+            .iter_mut()
+            .zip(resolved_arc_ids)
+        {
+            let Some(volume) = manifest
+                .volumes
+                .iter()
+                .find(|volume| volume.id == resolved_id)
+            else {
+                continue;
+            };
+            arc.id = resolved_id;
+            arc.start_chapter = Some(volume.start_chapter);
+            arc.end_chapter = volume.end_chapter;
+        }
+    }
     refresh_volume_statuses(manifest);
 }
 

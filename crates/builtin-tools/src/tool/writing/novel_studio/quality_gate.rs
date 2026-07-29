@@ -359,31 +359,18 @@ fn future_chapter_consumption_findings(
     else {
         return Vec::new();
     };
-    let Some(start) = content.find(&excerpt) else {
-        return Vec::new();
-    };
-    vec![chapter_quality::ChapterFinding {
-        code: "future_chapter_consumed".to_string(),
-        class: chapter_quality::ChapterFindingClass::Continuity,
-        disposition: chapter_quality::ChapterFindingDisposition::HardBlock,
-        evidence_grade: chapter_quality::FindingEvidenceGrade::EvidenceBackedSemantic,
-        source: "sealed_next_chapter_boundary".to_string(),
-        message: format!(
-            "chapter {} consumes the sealed chapter {} boundary early",
-            chapter.number, next_number
-        ),
-        authority_evidence: vec![chapter_quality::AuthorityEvidenceRef {
-            path: next_path,
-            excerpt: next_seed,
-        }],
-        body_evidence: vec![chapter_quality::BodyEvidenceSpan {
-            start,
-            end: start + excerpt.len(),
-            excerpt,
-        }],
-        authority_fingerprint: authority_fingerprint.to_string(),
-        body_fingerprint: chapter_quality::chapter_body_fingerprint(content),
-    }]
+    chapter_quality::future_chapter_consumed_finding(
+        chapter.number,
+        next_number,
+        next_path,
+        next_seed,
+        excerpt,
+        "sealed_next_chapter_boundary",
+        authority_fingerprint,
+        content,
+    )
+    .into_iter()
+    .collect()
 }
 
 fn findings_from_messages(
@@ -423,8 +410,7 @@ fn evidence_backed_character_findings(
     source: &str,
     authority_fingerprint: &str,
 ) -> Vec<chapter_quality::ChapterFinding> {
-    let canonical_contract =
-        serde_json::to_value(&manifest.structured_contract_v2).unwrap_or(Value::Null);
+    let canonical_contract = canonical_project_contract_projection(manifest);
     let chapter_contract = manifest
         .chapter_contracts
         .iter()

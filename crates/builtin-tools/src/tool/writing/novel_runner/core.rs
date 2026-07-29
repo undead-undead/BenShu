@@ -113,6 +113,7 @@ mod tests {
   "chapter_function": "完成入门阶段并建立旧阵债务",
   "irreversible_event": "沈砚取得入门资格",
   "new_state_after_chapter": "沈砚成为正式弟子",
+  "world_change": "",
   "character_change": "沈砚从逃避试炼转为主动承担代价",
   "relationship_change": "沈砚与导师从戒备转为有限合作",
   "power_delta": "沈砚掌握一次受限的旧阵感知",
@@ -131,6 +132,7 @@ mod tests {
         assert!(package.character_change.contains("主动承担"));
         assert!(package.relationship_change.contains("有限合作"));
         assert_eq!(package.scene_goal, "沈砚通过入门试炼");
+        assert!(package.world_change.is_empty());
         assert_eq!(package.power_delta, "沈砚掌握一次受限的旧阵感知");
         assert_eq!(package.resource_delta, "沈砚获得入门资格");
         assert_eq!(package.hook_opened, vec!["旧阵为何干预试炼"]);
@@ -150,6 +152,7 @@ mod tests {
   "chapter_function": "关闭旧债",
   "irreversible_event": "",
   "new_state_after_chapter": "旧债已清",
+  "world_change": "",
   "character_change": "",
   "relationship_change": "",
   "power_delta": "",
@@ -196,6 +199,7 @@ mod tests {
   "chapter_function": "推进关系",
   "irreversible_event": "两人形成共同决定",
   "new_state_after_chapter": "关系进入合作",
+  "world_change": "",
   "character_change": "",
   "relationship_change": "从误会转为合作",
   "power_delta": "",
@@ -235,7 +239,7 @@ mod tests {
   "architecture": "{ \"memo_markdown\": \"# 第 23 章\", \"architecture\": \"1. 场景\" }",
   "scene_goal": "", "conflict": "", "choice": "", "cost": "", "reveal": "",
   "emotional_beat": "", "chapter_function": "", "irreversible_event": "",
-  "new_state_after_chapter": "", "character_change": "", "relationship_change": "",
+  "new_state_after_chapter": "", "world_change": "", "character_change": "", "relationship_change": "",
   "power_delta": "", "resource_delta": "", "hook_opened": [], "hook_paid_off": [],
   "title_basis": "", "future_chapters": [], "new_character_requests": []
 }"##;
@@ -275,6 +279,7 @@ mod tests {
   "chapter_function": "推进主线",
   "irreversible_event": "取得站内记录",
   "new_state_after_chapter": "掌握新线索",
+  "world_change": "",
   "character_change": "主角决定继续追踪",
   "relationship_change": "",
   "power_delta": "",
@@ -383,6 +388,22 @@ mod tests {
 
         assert!(prompt.contains("字符偏移和 change_id 由本地验证器绑定"));
         assert!(!prompt.contains("按最终正文 Unicode 字符"));
+    }
+
+    #[test]
+    fn final_chapter_observer_allows_bounded_adjacent_sentence_evidence() {
+        let prompt = final_chapter_observer_prompt(
+            "zh-CN",
+            3,
+            r#"{"authority":{"chapter_contract":{"new_state_after_chapter":"旧引擎发出非自然信号"}}}"#,
+            "旧引擎突然震动。那不是自然噪声。信号仍在持续。",
+            None,
+        );
+
+        assert!(prompt.contains("最多 3 个相邻句子"));
+        assert!(prompt.contains("不得超过 320 个字符"));
+        assert!(prompt.contains("authority_path=chapter_contract.new_state_after_chapter"));
+        assert!(prompt.contains("\"authority_path\":\"chapter_contract.new_state_after_chapter\""));
     }
 
     #[test]

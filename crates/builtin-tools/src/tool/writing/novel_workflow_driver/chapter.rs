@@ -48,6 +48,63 @@ async fn record_runner_parse_provenance(
     .await;
 }
 
+fn inject_observer_confirmed_future_boundary_finding(
+    authority: &SealedChapterAuthority,
+    body: &str,
+    observation: &novel_runner::FinalChapterObservation,
+    write_result: &mut Value,
+    language: &str,
+) -> bool {
+    let Some((current_seed, next_seed, next_path)) =
+        governance::sealed_current_and_next_chapter_seeds(authority)
+    else {
+        return false;
+    };
+    let mut facts = vec![
+        observation.current_state.clone(),
+        observation.chapter_summary.clone(),
+    ];
+    facts.extend(observation.continuity_updates.iter().cloned());
+    facts.retain(|fact| !fact.trim().is_empty());
+    let cjk = language_looks_cjk(language);
+    let Some(excerpt) = governance::observer_confirmed_future_consumption_evidence(
+        body,
+        &facts,
+        &current_seed,
+        &next_seed,
+        cjk,
+    ) else {
+        return false;
+    };
+    let next_number = authority.chapter_number.saturating_add(1);
+    let Some(finding) = chapter_quality::future_chapter_consumed_finding(
+        authority.chapter_number,
+        next_number,
+        next_path,
+        next_seed,
+        excerpt,
+        "final_body_observer+sealed_next_chapter_boundary",
+        &authority.authority_root_fingerprint,
+        body,
+    ) else {
+        return false;
+    };
+    let Some(gate_value) = write_result.get_mut("quality_gate") else {
+        return false;
+    };
+    let Ok(mut gate) =
+        serde_json::from_value::<chapter_quality::ChapterQualityGate>(gate_value.clone())
+    else {
+        return false;
+    };
+    gate.extend_findings(vec![finding]);
+    let Ok(serialized) = serde_json::to_value(gate) else {
+        return false;
+    };
+    *gate_value = serialized;
+    true
+}
+
 fn apply_character_registrations_to_package(
     package: &mut novel_runner::ChapterExecutionPackage,
     registrations: &[ChapterCharacterRegistration],
@@ -76,6 +133,7 @@ fn apply_character_registrations_to_package(
         package.chapter_function = package.chapter_function.replace(request_id, name);
         package.irreversible_event = package.irreversible_event.replace(request_id, name);
         package.new_state_after_chapter = package.new_state_after_chapter.replace(request_id, name);
+        package.world_change = package.world_change.replace(request_id, name);
         package.character_change = package.character_change.replace(request_id, name);
         package.relationship_change = package.relationship_change.replace(request_id, name);
         package.power_delta = package.power_delta.replace(request_id, name);
@@ -165,7 +223,8 @@ fn execution_package_from_sealed_authority(
     package.emotional_beat = authority.chapter_contract.emotional_beat.clone();
     package.chapter_function = authority.chapter_contract.payoff_target.clone();
     package.irreversible_event = authority.chapter_contract.reveal.clone();
-    package.new_state_after_chapter = authority.chapter_contract.world_change.clone();
+    package.new_state_after_chapter = authority.chapter_contract.new_state_after_chapter.clone();
+    package.world_change = authority.chapter_contract.world_change.clone();
     package.character_change = authority.chapter_contract.character_change.clone();
     package.relationship_change = authority.chapter_contract.relationship_delta.clone();
     package.power_delta = authority.chapter_contract.power_delta.clone();
@@ -556,7 +615,8 @@ impl NovelChapterRunner {
                     "resource_delta": package.resource_delta.clone(),
                     "hook_opened": package.hook_opened.clone(),
                     "hook_paid_off": package.hook_paid_off.clone(),
-                    "world_change": package.new_state_after_chapter.clone(),
+                    "new_state_after_chapter": package.new_state_after_chapter.clone(),
+                    "world_change": package.world_change.clone(),
                     "character_change": package.character_change.clone(),
                     "relationship_delta": package.relationship_change.clone(),
                     "payoff_target": package.chapter_function.clone(),
@@ -811,6 +871,7 @@ impl NovelChapterRunner {
         let mut last_deterministic_cleanup_fingerprint = None;
         let mut metadata_repair_attempts = revision_cycle.state.budget.metadata_repair_attempts;
         let mut rejected_metadata_titles = Vec::new();
+        let mut accepted_observation = None;
         let persisted_revision_attempts = revision_cycle
             .state
             .budget
@@ -820,6 +881,39 @@ impl NovelChapterRunner {
         loop {
             self.ensure_not_cancelled().await?;
             let cleanup_fingerprint = text_fingerprint(&current_draft.content);
+            if !body_revision_required_after_audit(&write_result, &audit)
+                && accepted_observation
+                    .as_ref()
+                    .is_none_or(|(fingerprint, _)| *fingerprint != cleanup_fingerprint)
+            {
+                if let Ok(observation) = self
+                    .observe_final_chapter_state(chapter_number, &write_result, None)
+                    .await
+                {
+                    if inject_observer_confirmed_future_boundary_finding(
+                        &authority,
+                        &current_draft.content,
+                        &observation,
+                        &mut write_result,
+                        &self.language,
+                    ) {
+                        accepted_observation = None;
+                        let findings = findings_from_results(&write_result, &audit);
+                        revision_cycle.best_candidate.quality_vector = revision_quality_vector(
+                            &authority,
+                            &current_draft,
+                            &findings,
+                            None,
+                            &[],
+                            self.chapter_unit_target,
+                            &self.language,
+                        );
+                        revision_cycle.best_candidate.findings = findings;
+                        continue;
+                    }
+                    accepted_observation = Some((cleanup_fingerprint, observation));
+                }
+            }
             let durable_body_fingerprint =
                 chapter_quality::chapter_body_fingerprint(&current_draft.content);
             let cleanup_already_attempted = !revision_cycle
@@ -1240,7 +1334,13 @@ impl NovelChapterRunner {
             ));
         }
         let settlement = self
-            .settle_observed_final_chapter_state(chapter_number, &write_result)
+            .settle_observed_final_chapter_state(
+                chapter_number,
+                &write_result,
+                accepted_observation.and_then(|(fingerprint, observation)| {
+                    (fingerprint == text_fingerprint(&current_draft.content)).then_some(observation)
+                }),
+            )
             .await?;
         if !settlement
             .pointer("/validation/passed")

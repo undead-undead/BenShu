@@ -656,6 +656,27 @@ fn character_bottom_line_describes_unbounded_willingness(compact: &str) -> bool 
     if !describes_boundary_crossing {
         return false;
     }
+    let explicit_self_cost_resolution = ["也要", "仍要", "也不", "仍不"].iter().any(|contrast| {
+        compact
+            .split_once(contrast)
+            .is_some_and(|(cost, boundary)| {
+                [
+                    "自身", "自己", "个人", "修为", "性命", "生命", "寿命", "前途", "名誉", "声誉",
+                    "地位", "财富", "利益", "自由", "能力", "记忆", "感情",
+                ]
+                .iter()
+                .any(|marker| cost.contains(marker))
+                    && [
+                        "不", "不可", "不得", "拒绝", "禁止", "必须", "守住", "守护", "护住",
+                        "保护", "保全", "维护", "维持", "确保", "捍卫", "坚守",
+                    ]
+                    .iter()
+                    .any(|marker| boundary.contains(marker))
+            })
+    });
+    if explicit_self_cost_resolution {
+        return false;
+    }
     let explicit_contrasting_boundary =
         ["但是", "但", "却", "不过", "然而"].iter().any(|contrast| {
             compact.split_once(contrast).is_some_and(|(_, boundary)| {
@@ -1305,6 +1326,12 @@ mod tests {
         ));
         assert!(!character_bottom_line_lacks_boundary_action(
             "绝不使用非认证供应商的次级原料，宁可承担违约赔偿也不牺牲质量信誉"
+        ));
+        assert!(!character_bottom_line_lacks_boundary_action(
+            "宁愿牺牲自身修为也要护住残谱的完整"
+        ));
+        assert!(character_bottom_line_lacks_boundary_action(
+            "愿意牺牲别人也要获得成功"
         ));
     }
 

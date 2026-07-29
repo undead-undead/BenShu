@@ -244,6 +244,7 @@ pub(super) async fn write_chapter_control_contract(
         cost: execution_contract_v2.cost,
         reveal: execution_contract_v2.reveal,
         emotional_beat: execution_contract_v2.emotional_beat,
+        new_state_after_chapter: execution_contract_v2.new_state_after_chapter,
         relationship_delta: execution_contract_v2.relationship_delta,
         power_delta: execution_contract_v2.power_delta,
         resource_delta: execution_contract_v2.resource_delta,

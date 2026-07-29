@@ -961,6 +961,27 @@
     }
 
     #[test]
+    fn approved_creation_draft_preserves_continuous_full_book_scope_from_chapter_one() {
+        let mut draft = super::super::build_initial_creation_draft(
+            "session-a",
+            "fiction",
+            "重生奇幻小说，每章2500字，写10万字。",
+        )
+        .expect("draft");
+        draft.target_units = Some(100000);
+        draft.chapter_unit_target = Some(2500);
+        let prompt = super::super::final_prompt_from_approved_creation_draft(
+            &draft,
+            &json!({"success": true, "init": {"project_path": "data/generated/novels/test-project"}}),
+            "请从第一章起持续自动写作并保存，直到完成整本小说；不要把任务截成前十章。",
+        );
+
+        assert!(prompt.contains("每轮最多章节：全部剩余章节"));
+        assert!(prompt.contains("直接生成完剩余内容"));
+        assert!(!prompt.contains("本轮只要求先写第一章"));
+    }
+
+    #[test]
     fn approved_creation_draft_first_chapter_beats_chat_display_full_text_constraint() {
         let mut draft = super::super::build_initial_creation_draft(
             "session-a",

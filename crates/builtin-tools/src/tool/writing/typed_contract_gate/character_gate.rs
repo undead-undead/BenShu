@@ -1124,7 +1124,7 @@ fn authority_name_is_followed_by_grammar_phrase(reference: &str, known: &str, te
         if after.starts_with(tail)
             && [
                 "所在", "所有", "所见", "所得", "所持", "所作", "所属", "所处", "所用", "所受",
-                "所说", "所需", "所知", "所写", "所查", "作为",
+                "所说", "所需", "所知", "所写", "所查", "作为", "正是",
             ]
             .iter()
             .any(|phrase| after.starts_with(phrase) && phrase.starts_with(tail))
@@ -2387,6 +2387,25 @@ mod tests {
         assert!(
             issues.is_empty(),
             "the grammar in `作为` after an authority name must not create a fake character: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn authority_prefix_match_accepts_identity_grammar_after_name() {
+        let authority = ["裴知遥", "祝望岚"];
+        let mut issues = ContractIssueList::default();
+
+        validate_text_character_references(
+            "大纲",
+            "裴知遥逐渐发现祝望岚正是时钟的另一半。",
+            &authority,
+            &[],
+            &mut issues,
+        );
+
+        assert!(
+            issues.is_empty(),
+            "the identity grammar in `正是` after an authority name must not create a fake character: {issues:?}"
         );
     }
 

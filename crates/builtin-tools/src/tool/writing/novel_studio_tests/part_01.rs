@@ -3131,6 +3131,73 @@ fn quality_gate_blocks_established_character_pronoun_drift() {
 }
 
 #[test]
+fn contract_arc_start_seeds_supporting_character_identity_before_first_appearance() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.contract.as_mut().unwrap().characters = vec![
+        "name: 南云澜; role: 主角; arc_start: 恪守命令的军人".to_string(),
+        "name: 祝启安; role: 关键关系对象; arc_start: 柔弱的贵族少女; arc_end: 坚韧的军中军师"
+            .to_string(),
+    ];
+    manifest.character_ledger = vec![CharacterAuthorityRecord {
+        id: "character-0002".to_string(),
+        canonical_name: "祝启安".to_string(),
+        name_source: "approved_chapter".to_string(),
+        aliases: Vec::new(),
+        identity_markers: vec!["inferred_pronoun_profile:masculine".to_string()],
+        role: "关键关系对象".to_string(),
+        desire: String::new(),
+        fear: String::new(),
+        bottom_line: String::new(),
+        arc_start: "柔弱的贵族少女".to_string(),
+        arc_end: "坚韧的军中军师".to_string(),
+        planned_entry: String::new(),
+        planned_exit: String::new(),
+        forbidden_renames: Vec::new(),
+        status: "active".to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+    }];
+
+    ensure_character_authority_ledger(&mut manifest);
+
+    let character = manifest
+        .character_ledger
+        .iter()
+        .find(|record| record.canonical_name == "祝启安")
+        .expect("supporting character authority");
+    assert_eq!(
+        character.identity_markers,
+        vec!["pronoun_profile:feminine".to_string()],
+        "explicit contract identity must replace a contradictory body-derived profile"
+    );
+
+    let chapter = ChapterRecord {
+        number: 2,
+        title: "荒原上的规矩".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0002.md".to_string(),
+        summary: String::new(),
+        unit_count: 2500,
+        status: "draft".to_string(),
+        key_facts: Vec::new(),
+        continuity_updates: Vec::new(),
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    let issues = contract_character_pronoun_drift_issues(
+        &manifest,
+        &chapter,
+        "祝启安走进营帐，他向南云澜行礼。祝启安展开账册，他开始清点粮草。",
+    );
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("pronoun/appellation drift")),
+        "the existing deterministic quality gate must consume the seeded contract identity: {issues:?}"
+    );
+}
+
+#[test]
 fn quality_gate_allows_established_character_pronoun_consistency() {
     let mut manifest = test_manifest_with_primary_character();
     manifest.character_ledger = vec![CharacterAuthorityRecord {
@@ -3868,6 +3935,18 @@ fn quality_gate_blocks_malformed_anchor_predicate_fragments() {
     assert!(issues
         .iter()
         .any(|issue| issue.contains("malformed phrase")));
+}
+
+#[test]
+fn strong_character_context_requires_identity_syntax_not_nearby_role_word() {
+    assert!(!cjk_candidate_has_strong_person_identity_context(
+        "钟声停下后主角重新核对现场。",
+        "钟声"
+    ));
+    assert!(cjk_candidate_has_strong_person_identity_context(
+        "新来的同伴名叫林墨。林墨说他会守住入口。",
+        "林墨"
+    ));
 }
 
 #[tokio::test]
@@ -4666,6 +4745,66 @@ fn legacy_single_volume_is_bounded_and_receives_contract_debts() {
         .must_payoff
         .iter()
         .any(|item| item.contains("重建晋级规则")));
+}
+
+#[test]
+fn normalized_manifest_volume_ranges_are_synchronized_back_to_story_bible() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.target_units = Some(100_000);
+    manifest.chapter_unit_target = Some(2_500);
+    manifest.volumes.clear();
+    let mut bible = novel_bible::StoryBible::default();
+    bible.narrative_graph.volume_arcs = (1..=3)
+        .map(|index| novel_bible::NarrativeArc {
+            id: if index == 1 {
+                String::new()
+            } else {
+                format!("volume-{index:04}")
+            },
+            title: format!("第{index}卷"),
+            goal: format!("第{index}卷目标"),
+            start_chapter: Some(index),
+            end_chapter: None,
+            resolves_toward: format!("第{index}卷变化"),
+        })
+        .collect();
+    manifest.story_bible = Some(bible);
+
+    project_governance::ensure_volume_records_from_story_bible(&mut manifest);
+
+    let expected = vec![(1, Some(14)), (15, Some(28)), (29, Some(40))];
+    assert_eq!(
+        manifest
+            .volumes
+            .iter()
+            .map(|volume| (volume.start_chapter, volume.end_chapter))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        manifest
+            .story_bible
+            .as_ref()
+            .expect("story bible")
+            .narrative_graph
+            .volume_arcs
+            .iter()
+            .map(|arc| (arc.start_chapter.expect("start"), arc.end_chapter))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        manifest
+            .story_bible
+            .as_ref()
+            .expect("story bible")
+            .narrative_graph
+            .volume_arcs
+            .iter()
+            .map(|arc| arc.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["volume-0001", "volume-0002", "volume-0003"]
+    );
 }
 
 #[test]

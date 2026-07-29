@@ -360,6 +360,7 @@
             cost: String::new(),
             reveal: "裂纹来自被篡改的学院考核阵列。".to_string(),
             emotional_beat: String::new(),
+            new_state_after_chapter: String::new(),
             relationship_delta: String::new(),
             power_delta: String::new(),
             resource_delta: String::new(),

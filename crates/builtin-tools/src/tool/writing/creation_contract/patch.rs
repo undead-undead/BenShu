@@ -3322,6 +3322,14 @@ fn canonicalize_character_anchor_lines_to_authority(
         );
         rewrite_known_stale_character_references_to_authority(&mut character.arc_start, authority);
         rewrite_known_stale_character_references_to_authority(&mut character.arc_end, authority);
+        rewrite_known_stale_character_references_to_authority(
+            &mut character.planned_entry,
+            authority,
+        );
+        rewrite_known_stale_character_references_to_authority(
+            &mut character.planned_exit,
+            authority,
+        );
         *line = character.to_draft_line();
     }
 }
@@ -4312,6 +4320,38 @@ mod tests {
         assert!(!rewritten.contains("K的真实身份"), "{rewritten}");
         assert!(rewritten.contains("OK协议"), "{rewritten}");
         assert!(rewritten.contains("K7芯片"), "{rewritten}");
+    }
+
+    #[test]
+    fn authority_rewrite_replaces_stale_name_in_other_character_fields() {
+        let mut contract = NovelCreationContract {
+            characters: vec![
+                CharacterContract {
+                    canonical_name: "秦照棠".to_string(),
+                    name_source: "generated_by_writing_tool_policy".to_string(),
+                    previous_names: vec!["林默".to_string()],
+                    role: "主角".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "许维禾".to_string(),
+                    role: "关键关系对象".to_string(),
+                    bottom_line: "必须守住林默的记忆核心".to_string(),
+                    planned_entry: "第1卷与林默建立生存同盟".to_string(),
+                    planned_exit: "陪伴林默至终局".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        canonicalize_novel_contract_to_character_authority(&mut contract);
+
+        let relation = &contract.characters[1];
+        assert_eq!(relation.bottom_line, "必须守住秦照棠的记忆核心");
+        assert_eq!(relation.planned_entry, "第1卷与秦照棠建立生存同盟");
+        assert_eq!(relation.planned_exit, "陪伴秦照棠至终局");
+        assert_eq!(contract.characters[0].previous_names, ["林默"]);
     }
 
     #[test]

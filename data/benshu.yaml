@@ -89,36 +89,39 @@ llama_cpp_runtime:
     memory_plan:
       model_weight_mb: 17862
       mmproj_weight_mb: 0
-      estimated_vram_mb: 40910
-      estimated_ram_mb: 3576
+      estimated_vram_mb: 32298
+      estimated_ram_mb: 12188
       kv_cache_budget_mb: 24576
       safety_margin_mb: 2048
-    reason: profile=balanced usable_vram=24517MiB model=17862MiB ctx=65536 total_layers=28
+    reason: profile=balanced usable_vram=24517MiB model=17862MiB ctx=65536 total_layers=64
       estimated_gpu_layers=24
     warnings:
-    - 'estimated_vram_exceeds_budget: estimated=40910MiB budget=24517MiB'
+    - 'kv_cache_has_no_budget_compliant_location: vram_with_kv=32298MiB vram_budget=24517MiB ram_with_kv=36764MiB ram_budget=4096MiB'
+    - 'estimated_vram_exceeds_budget: estimated=32298MiB budget=24517MiB'
   effective_diagnostics:
     tuning_mode: auto
     performance_profile: balanced
     recommended_value_summary: capacity_estimate gpu_layers=24 ctx_size=65536 batch=2048
-      ubatch=512 est_vram=40910MiB est_ram=3576MiB
+      ubatch=512 est_vram=32298MiB est_ram=12188MiB
     user_override_summary: 'none: automatic runtime planning active'
     effective_value_summary: gpu_layers=24 ctx_size=65536 kv_offload=true
     effective_memory_plan:
       model_weight_mb: 17862
       mmproj_weight_mb: 0
-      estimated_vram_mb: 40910
-      estimated_ram_mb: 3576
+      estimated_vram_mb: 32298
+      estimated_ram_mb: 12188
       kv_cache_budget_mb: 24576
       safety_margin_mb: 2048
-    effective_memory_summary: effective_est_vram=40910MiB effective_est_ram_or_commit=3576MiB
+    effective_memory_summary: effective_est_vram=32298MiB effective_est_ram_or_commit=12188MiB
       kv_cache=24576MiB kv_location=VRAM
     effective_kv_location: VRAM
     reload_required: false
     status: ready_with_warnings
     notes:
-    - 'estimated_vram_exceeds_budget: estimated=40910MiB budget=24517MiB'
-    - 'effective_vram_exceeds_budget: estimated=40910MiB budget=24517MiB'
+    - 'kv_cache_has_no_budget_compliant_location: vram_with_kv=32298MiB vram_budget=24517MiB ram_with_kv=36764MiB ram_budget=4096MiB'
+    - 'estimated_vram_exceeds_budget: estimated=32298MiB budget=24517MiB'
+    - 'effective_vram_exceeds_budget: estimated=32298MiB budget=24517MiB'
+    - 'effective_ram_exceeds_budget: estimated=12188MiB budget=4096MiB'
   ctx_size: 65536
   gpu_layers: 24
   threads: 8
@@ -152,7 +155,7 @@ llama_cpp_runtime:
   split_mode: null
   tensor_split: null
   main_gpu: null
-  fit_mode: 'true'
+  fit_mode: 'off'
   fit_target: null
   fit_ctx: null
   cpu_moe: false

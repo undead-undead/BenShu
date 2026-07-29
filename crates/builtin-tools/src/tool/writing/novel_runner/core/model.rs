@@ -56,6 +56,8 @@ pub(crate) struct ChapterExecutionPackage {
     #[serde(default)]
     pub new_state_after_chapter: String,
     #[serde(default)]
+    pub world_change: String,
+    #[serde(default)]
     pub character_change: String,
     #[serde(default)]
     pub relationship_change: String,

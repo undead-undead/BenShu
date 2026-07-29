@@ -514,7 +514,7 @@ pub fn infer_followup_fiction_genre(message: &str) -> Option<String> {
 pub fn strip_creation_prefix(value: &str) -> String {
     let mut out = value.trim().to_string();
     loop {
-        let Some(prefix) = [
+        let prefixes = [
             "我想要",
             "我想",
             "从零开始",
@@ -564,9 +564,23 @@ pub fn strip_creation_prefix(value: &str) -> String {
             "一部",
             "一本",
             "的",
-        ]
-        .into_iter()
-        .find(|prefix| out.starts_with(prefix) && out.len() > prefix.len()) else {
+        ];
+        if let Some(tail) = out.strip_prefix('并') {
+            if prefixes
+                .iter()
+                .any(|prefix| tail.starts_with(prefix) && tail.len() > prefix.len())
+            {
+                out = tail
+                    .trim_start_matches(|ch| matches!(ch, '，' | ',' | '。' | '：' | ':' | ' '))
+                    .to_string();
+                continue;
+            }
+        }
+        let Some(prefix) = prefixes
+            .into_iter()
+            .filter(|prefix| out.starts_with(prefix) && out.len() > prefix.len())
+            .max_by_key(|prefix| prefix.len())
+        else {
             break;
         };
         out = out[prefix.len()..]
@@ -1348,6 +1362,10 @@ mod tests {
     fn infer_fiction_genre_strips_composed_creation_command_without_damaging_genre() {
         assert_eq!(
             infer_fiction_genre("请从零为我写完一部修仙小说，总字数10万字。").as_deref(),
+            Some("修仙")
+        );
+        assert_eq!(
+            infer_fiction_genre("请从零创建并写完一本修仙题材长篇小说，总字数10万字。").as_deref(),
             Some("修仙")
         );
         assert_eq!(

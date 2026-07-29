@@ -107,6 +107,40 @@ pub(crate) fn chapter_body_fingerprint(body: &str) -> String {
     hex::encode(Sha256::digest(body.as_bytes()))
 }
 
+pub(crate) fn future_chapter_consumed_finding(
+    chapter_number: usize,
+    next_chapter_number: usize,
+    next_authority_path: String,
+    next_seed: String,
+    body_excerpt: String,
+    source: &str,
+    authority_fingerprint: &str,
+    body: &str,
+) -> Option<ChapterFinding> {
+    let start = body.find(&body_excerpt)?;
+    Some(ChapterFinding {
+        code: "future_chapter_consumed".to_string(),
+        class: ChapterFindingClass::Continuity,
+        disposition: ChapterFindingDisposition::HardBlock,
+        evidence_grade: FindingEvidenceGrade::EvidenceBackedSemantic,
+        source: source.to_string(),
+        message: format!(
+            "chapter {chapter_number} consumes the sealed chapter {next_chapter_number} boundary early"
+        ),
+        authority_evidence: vec![AuthorityEvidenceRef {
+            path: next_authority_path,
+            excerpt: next_seed,
+        }],
+        body_evidence: vec![BodyEvidenceSpan {
+            start,
+            end: start + body_excerpt.len(),
+            excerpt: body_excerpt,
+        }],
+        authority_fingerprint: authority_fingerprint.to_string(),
+        body_fingerprint: chapter_body_fingerprint(body),
+    })
+}
+
 /// Counts shared two-character event fragments while ignoring generic story
 /// glue. Contract outline validation and per-chapter execution-package
 /// validation share this primitive so their event-boundary decisions cannot
@@ -150,7 +184,7 @@ pub(crate) struct ChapterQualityDecision {
     pub(crate) can_preserve_body: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub(crate) struct ChapterQualityGate {
     pub(crate) passed: bool,
     #[serde(default)]
@@ -258,35 +292,6 @@ impl ChapterQualityGate {
         }
         self.findings.extend(findings);
         *self = Self::from_findings(std::mem::take(&mut self.findings));
-    }
-
-    pub(crate) fn extend_advisories(&mut self, source: &str, messages: Vec<String>) {
-        let authority_fingerprint = self
-            .findings
-            .first()
-            .map(|finding| finding.authority_fingerprint.clone())
-            .unwrap_or_default();
-        let body_fingerprint = self
-            .findings
-            .first()
-            .map(|finding| finding.body_fingerprint.clone())
-            .unwrap_or_default();
-        let findings = finalize_issues(messages)
-            .into_iter()
-            .map(|message| ChapterFinding {
-                code: "narrative_similarity_advisory".to_string(),
-                class: ChapterFindingClass::Advisory,
-                disposition: ChapterFindingDisposition::Warning,
-                evidence_grade: FindingEvidenceGrade::Heuristic,
-                source: source.to_string(),
-                message,
-                authority_evidence: Vec::new(),
-                body_evidence: Vec::new(),
-                authority_fingerprint: authority_fingerprint.clone(),
-                body_fingerprint: body_fingerprint.clone(),
-            })
-            .collect();
-        self.extend_findings(findings);
     }
 }
 

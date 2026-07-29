@@ -70,6 +70,7 @@ pub(super) fn parameters_ts() -> String {
   cost?: string;
   reveal?: string;
   emotional_beat?: string;
+  new_state_after_chapter?: string;
   relationship_delta?: string;
   power_delta?: string;
   resource_delta?: string;
@@ -244,6 +245,7 @@ pub(super) fn novel_studio_parameters() -> serde_json::Value {
                 "cost": { "type": "string" },
                 "reveal": { "type": "string" },
                 "emotional_beat": { "type": "string" },
+                "new_state_after_chapter": { "type": "string" },
                 "relationship_delta": { "type": "string" },
                 "power_delta": { "type": "string" },
                 "resource_delta": { "type": "string" },

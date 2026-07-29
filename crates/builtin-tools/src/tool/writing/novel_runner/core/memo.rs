@@ -34,6 +34,7 @@ struct RawChapterExecutionPackage {
     chapter_function: Option<serde_json::Value>,
     irreversible_event: Option<serde_json::Value>,
     new_state_after_chapter: Option<serde_json::Value>,
+    world_change: Option<serde_json::Value>,
     character_change: Option<serde_json::Value>,
     relationship_change: Option<serde_json::Value>,
     power_delta: Option<serde_json::Value>,
@@ -105,6 +106,11 @@ pub(crate) fn parse_chapter_execution_package(
                             .as_ref()
                             .map(|value| execution_package_value_to_text(value, "meta"))
                             .unwrap_or_default(),
+                        world_change: parsed
+                            .world_change
+                            .as_ref()
+                            .map(|value| execution_package_value_to_text(value, "meta"))
+                            .unwrap_or_default(),
                         character_change: parsed
                             .character_change
                             .as_ref()
@@ -172,6 +178,7 @@ pub(crate) fn parse_chapter_execution_package(
         chapter_function: String::new(),
         irreversible_event: String::new(),
         new_state_after_chapter: String::new(),
+        world_change: String::new(),
         character_change: String::new(),
         relationship_change: String::new(),
         power_delta: String::new(),
@@ -200,6 +207,7 @@ fn validate_execution_package_required_fields(value: &serde_json::Value) -> Resu
         "chapter_function",
         "irreversible_event",
         "new_state_after_chapter",
+        "world_change",
         "character_change",
         "relationship_change",
         "power_delta",
@@ -280,6 +288,11 @@ fn render_execution_contract_header(parsed: &RawChapterExecutionPackage) -> Stri
         .as_ref()
         .map(|value| execution_package_value_to_text(value, "meta"))
         .unwrap_or_default();
+    let world_change = parsed
+        .world_change
+        .as_ref()
+        .map(|value| execution_package_value_to_text(value, "meta"))
+        .unwrap_or_default();
     let character_change = parsed
         .character_change
         .as_ref()
@@ -309,6 +322,7 @@ fn render_execution_contract_header(parsed: &RawChapterExecutionPackage) -> Stri
         ("chapter_function", chapter_function),
         ("irreversible_event", irreversible_event),
         ("new_state_after_chapter", new_state_after_chapter),
+        ("world_change", world_change),
         ("character_change", character_change),
         ("relationship_change", relationship_change),
         ("power_delta", power_delta),
