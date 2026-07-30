@@ -48,7 +48,7 @@ async fn record_runner_parse_provenance(
     .await;
 }
 
-fn inject_observer_confirmed_future_boundary_finding(
+fn inject_sealed_future_boundary_finding(
     authority: &SealedChapterAuthority,
     body: &str,
     observation: &novel_runner::FinalChapterObservation,
@@ -60,16 +60,10 @@ fn inject_observer_confirmed_future_boundary_finding(
     else {
         return false;
     };
-    let mut facts = vec![
-        observation.current_state.clone(),
-        observation.chapter_summary.clone(),
-    ];
-    facts.extend(observation.continuity_updates.iter().cloned());
-    facts.retain(|fact| !fact.trim().is_empty());
     let cjk = language_looks_cjk(language);
-    let Some(excerpt) = governance::observer_confirmed_future_consumption_evidence(
+    let Some((excerpt, source)) = sealed_future_boundary_evidence(
         body,
-        &facts,
+        &observation.future_boundary_evidence,
         &current_seed,
         &next_seed,
         cjk,
@@ -83,7 +77,7 @@ fn inject_observer_confirmed_future_boundary_finding(
         next_path,
         next_seed,
         excerpt,
-        "final_body_observer+sealed_next_chapter_boundary",
+        source,
         &authority.authority_root_fingerprint,
         body,
     ) else {
@@ -103,6 +97,32 @@ fn inject_observer_confirmed_future_boundary_finding(
     };
     *gate_value = serialized;
     true
+}
+
+fn sealed_future_boundary_evidence(
+    body: &str,
+    observer_evidence: &str,
+    current_seed: &str,
+    next_seed: &str,
+    cjk: bool,
+) -> Option<(String, &'static str)> {
+    if let Some(excerpt) = governance::validated_future_boundary_observer_evidence(
+        body,
+        observer_evidence,
+        current_seed,
+        next_seed,
+        cjk,
+    ) {
+        return Some((excerpt, "final_body_observer+sealed_next_chapter_boundary"));
+    }
+    governance::final_body_future_consumption_evidence(body, current_seed, next_seed, cjk).map(
+        |excerpt| {
+            (
+                excerpt,
+                "final_body_completed_event+sealed_next_chapter_boundary",
+            )
+        },
+    )
 }
 
 fn apply_character_registrations_to_package(
@@ -890,7 +910,7 @@ impl NovelChapterRunner {
                     .observe_final_chapter_state(chapter_number, &write_result, None)
                     .await
                 {
-                    if inject_observer_confirmed_future_boundary_finding(
+                    if inject_sealed_future_boundary_finding(
                         &authority,
                         &current_draft.content,
                         &observation,
@@ -2238,5 +2258,21 @@ mod tests {
             Some(2500),
             "zh-CN"
         ));
+    }
+
+    #[test]
+    fn sealed_future_boundary_uses_completed_event_when_observer_omits_it() {
+        let current = "陆昭岚完成第一笔交易";
+        let next = "梁砚桥察觉陆家庄园异常繁荣，竞争压力开始显现";
+        let body = "梁砚桥已经察觉陆家庄园异常繁荣，竞争压力开始显现。";
+
+        let (excerpt, source) =
+            sealed_future_boundary_evidence(body, "", current, next, true).expect("evidence");
+
+        assert_eq!(excerpt, body);
+        assert_eq!(
+            source,
+            "final_body_completed_event+sealed_next_chapter_boundary"
+        );
     }
 }

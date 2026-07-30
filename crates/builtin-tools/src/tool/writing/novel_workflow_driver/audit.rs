@@ -72,7 +72,7 @@ impl NovelChapterRunner {
                 ))),
             )
             .await?;
-        novel_runner::parse_final_chapter_observation(&raw)
+        novel_runner::parse_final_chapter_observation(&raw, &content)
     }
 
     pub(super) async fn settle_observed_final_chapter_state(
@@ -118,6 +118,9 @@ impl NovelChapterRunner {
             if attempt < MAX_FINAL_STATE_OBSERVER_ATTEMPTS {
                 let mut errors =
                     collect_string_array_to_vec(settlement.pointer("/validation/warnings"));
+                errors.extend(collect_string_array_to_vec(
+                    settlement.pointer("/validation/advisories"),
+                ));
                 if let Some(error) = settlement.get("observer_error").and_then(Value::as_str) {
                     errors.push(error.to_string());
                 }

@@ -10,8 +10,9 @@
 
 use crate::tool::delegation::DelegateTool;
 use crate::tool::writing::creation_contract_model::{
-    value_missing, ChapterSeedContract, CharacterContract, EndingContract, NovelCreationContract,
-    OutlineContract, TitleContract, TitleSource, VolumeContract,
+    value_missing, ChapterSeedContract, CharacterContract, CharacterRoleSlotCoverage,
+    EndingContract, NovelCreationContract, OutlineContract, TitleContract, TitleSource,
+    VolumeContract,
 };
 use crate::tool::writing::creation_contract_normalizer;
 use crate::tool::writing::intent_policy::{self, WritingIntent, WritingIntentInput};

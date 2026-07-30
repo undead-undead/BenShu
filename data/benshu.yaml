@@ -96,7 +96,8 @@ llama_cpp_runtime:
     reason: profile=balanced usable_vram=24517MiB model=17862MiB ctx=65536 total_layers=64
       estimated_gpu_layers=24
     warnings:
-    - 'kv_cache_has_no_budget_compliant_location: vram_with_kv=32298MiB vram_budget=24517MiB ram_with_kv=36764MiB ram_budget=4096MiB'
+    - 'kv_cache_has_no_budget_compliant_location: vram_with_kv=32298MiB vram_budget=24517MiB
+      ram_with_kv=36764MiB ram_budget=4096MiB'
     - 'estimated_vram_exceeds_budget: estimated=32298MiB budget=24517MiB'
   effective_diagnostics:
     tuning_mode: auto
@@ -118,7 +119,8 @@ llama_cpp_runtime:
     reload_required: false
     status: ready_with_warnings
     notes:
-    - 'kv_cache_has_no_budget_compliant_location: vram_with_kv=32298MiB vram_budget=24517MiB ram_with_kv=36764MiB ram_budget=4096MiB'
+    - 'kv_cache_has_no_budget_compliant_location: vram_with_kv=32298MiB vram_budget=24517MiB
+      ram_with_kv=36764MiB ram_budget=4096MiB'
     - 'estimated_vram_exceeds_budget: estimated=32298MiB budget=24517MiB'
     - 'effective_vram_exceeds_budget: estimated=32298MiB budget=24517MiB'
     - 'effective_ram_exceeds_budget: estimated=12188MiB budget=4096MiB'
@@ -228,9 +230,9 @@ windows_ml_bridge:
       bridge_mode: migration_pending
       note: GGUF is reserved for the main llama.cpp brain path, not the Windows-native
         small-model runtime.
-  base_url: http://172.18.176.1:28013/v1
+  base_url: http://172.18.176.1:18013/v1
   host: 172.18.176.1
-  port: 28013
+  port: 18013
 runtime_host_control:
   main_brain:
     control_mode: command
@@ -276,7 +278,7 @@ agents:
     model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   benshu:
     provider: openai
-    base_url: http://172.18.176.1:28013/v1
+    base_url: http://172.18.176.1:18013/v1
     model: benshu-main-brain
     local_model_artifact: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
     local_runtime_family: llama_cpp

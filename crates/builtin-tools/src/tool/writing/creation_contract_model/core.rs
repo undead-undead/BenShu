@@ -2252,6 +2252,52 @@ impl CharacterContract {
             || role.contains("main character")
     }
 
+    pub(crate) fn role_family(&self) -> Option<&'static str> {
+        let role = self.role.as_str();
+        let lowered = role.to_ascii_lowercase();
+        if role.contains("同伴")
+            || role.contains("盟友")
+            || role.contains("伙伴")
+            || role.contains("朋友")
+            || lowered.contains("companion")
+            || lowered.contains("ally")
+            || lowered.contains("friend")
+        {
+            return Some("companion");
+        }
+        if role.contains("关系对象")
+            || role.contains("恋人")
+            || lowered.contains("love")
+            || lowered.contains("romance")
+        {
+            return Some("relationship");
+        }
+        if role.contains("导师")
+            || role.contains("师父")
+            || role.contains("老师")
+            || lowered.contains("mentor")
+        {
+            return Some("mentor");
+        }
+        None
+    }
+
+    pub(crate) fn role_looks_like_pressure_source(&self) -> bool {
+        let role = self.role.trim();
+        !role.is_empty()
+            && [
+                "对手",
+                "反派",
+                "压力源",
+                "敌人",
+                "竞争者",
+                "antagonist",
+                "rival",
+            ]
+            .iter()
+            .any(|marker| role.contains(marker))
+    }
+
     pub(crate) fn to_draft_line(&self) -> String {
         format!(
             "character_id: {}; name: {}; aliases: {}; previous_names: {}; role: {}; desire: {}; fear: {}; bottom_line: {}; arc_start: {}; arc_end: {}; planned_entry: {}; planned_exit: {}; name_source: {}",
@@ -2269,6 +2315,25 @@ impl CharacterContract {
             self.planned_exit,
             self.name_source,
         )
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct CharacterRoleSlotCoverage {
+    pub(crate) has_supporting: bool,
+    pub(crate) has_pressure: bool,
+}
+
+impl CharacterRoleSlotCoverage {
+    pub(crate) fn from_characters(characters: &[CharacterContract]) -> Self {
+        Self {
+            has_supporting: characters.iter().any(|character| {
+                !character.role_looks_primary() && character.role_family().is_some()
+            }),
+            has_pressure: characters
+                .iter()
+                .any(CharacterContract::role_looks_like_pressure_source),
+        }
     }
 }
 

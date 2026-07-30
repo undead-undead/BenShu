@@ -154,17 +154,19 @@ pub(crate) async fn generate_execution_package(
 
 pub(crate) fn parse_final_chapter_observation(
     raw: &str,
+    content: &str,
 ) -> anyhow::Result<FinalChapterObservation> {
     let json = extract_json(raw)
         .ok_or_else(|| anyhow::anyhow!("final chapter observer did not return a JSON object"))?;
     let mut value = serde_json::from_str::<serde_json::Value>(&json)
         .map_err(|error| anyhow::anyhow!("invalid final chapter observation: {error}"))?;
-    normalize_final_observation_shape(&mut value);
+    normalize_final_observation_shape(&mut value, content);
     let mut observation = serde_json::from_value::<FinalChapterObservation>(value)
         .map_err(|error| anyhow::anyhow!("invalid final chapter observation: {error}"))?;
     observation.current_state = observation.current_state.trim().to_string();
     observation.pending_hooks = observation.pending_hooks.trim().to_string();
     observation.chapter_summary = observation.chapter_summary.trim().to_string();
+    observation.future_boundary_evidence = observation.future_boundary_evidence.trim().to_string();
     observation.continuity_updates = clean_observation_items(observation.continuity_updates);
     observation.resolved_hooks = clean_observation_items(observation.resolved_hooks);
     observation.state_changes.retain(|change| {
@@ -178,11 +180,16 @@ pub(crate) fn parse_final_chapter_observation(
     Ok(observation)
 }
 
-fn normalize_final_observation_shape(value: &mut serde_json::Value) {
+fn normalize_final_observation_shape(value: &mut serde_json::Value, content: &str) {
     let Some(object) = value.as_object_mut() else {
         return;
     };
-    for field in ["current_state", "pending_hooks", "chapter_summary"] {
+    for field in [
+        "current_state",
+        "pending_hooks",
+        "chapter_summary",
+        "future_boundary_evidence",
+    ] {
         if let Some(field_value) = object.get_mut(field) {
             if !field_value.is_string() {
                 *field_value = serde_json::Value::String(observation_text_from_value(field_value));
@@ -210,26 +217,200 @@ fn normalize_final_observation_shape(value: &mut serde_json::Value) {
         };
         *field_value = serde_json::Value::Array(items);
     }
-    for field in ["state_changes"] {
-        let Some(updates) = object
-            .get_mut(field)
-            .and_then(serde_json::Value::as_array_mut)
-        else {
-            continue;
-        };
-        for update in updates {
-            let Some(number) = update
-                .get("defer_until_chapter")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|number| !number.is_empty())
-                .and_then(|number| number.parse::<u64>().ok())
-            else {
-                continue;
-            };
+
+    let future_boundary_ids = object
+        .get("future_boundary_sentence_ids")
+        .map(observation_sentence_ids)
+        .unwrap_or_default();
+    object.insert(
+        "future_boundary_evidence".to_string(),
+        serde_json::Value::String(
+            resolve_observation_sentence_ids(content, &future_boundary_ids).unwrap_or_default(),
+        ),
+    );
+    object.remove("future_boundary_sentence_ids");
+
+    if object
+        .get("state_changes")
+        .is_some_and(|value| value.is_object())
+    {
+        let update = object.remove("state_changes").unwrap_or_default();
+        object.insert(
+            "state_changes".to_string(),
+            serde_json::Value::Array(vec![update]),
+        );
+    }
+    let Some(updates) = object
+        .get_mut("state_changes")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for update in updates {
+        let ids = update
+            .get("evidence_sentence_ids")
+            .or_else(|| update.pointer("/evidence/sentence_ids"))
+            .map(observation_sentence_ids)
+            .unwrap_or_default();
+        let excerpt = resolve_observation_sentence_ids(content, &ids).unwrap_or_default();
+        update["value"] = serde_json::Value::String(excerpt.clone());
+        update["evidence"] = serde_json::json!({"excerpt": excerpt});
+        update["authority_excerpt"] = serde_json::Value::String(String::new());
+        if let Some(number) = update
+            .get("defer_until_chapter")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|number| !number.is_empty())
+            .and_then(|number| number.parse::<u64>().ok())
+        {
             update["defer_until_chapter"] = serde_json::json!(number);
         }
+        update
+            .as_object_mut()
+            .map(|fields| fields.remove("evidence_sentence_ids"));
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IndexedBodySentence {
+    id: usize,
+    paragraph: usize,
+    start: usize,
+    end: usize,
+}
+
+pub(crate) fn render_final_body_sentence_index(content: &str) -> String {
+    let mut rendered = String::new();
+    let mut previous_paragraph = None;
+    for sentence in indexed_body_sentences(content) {
+        if !rendered.is_empty() {
+            rendered.push('\n');
+            if previous_paragraph.is_some_and(|paragraph| paragraph != sentence.paragraph) {
+                rendered.push('\n');
+            }
+        }
+        rendered.push_str(&format!(
+            "[S{:04}] {}",
+            sentence.id,
+            &content[sentence.start..sentence.end]
+        ));
+        previous_paragraph = Some(sentence.paragraph);
+    }
+    rendered
+}
+
+fn indexed_body_sentences(content: &str) -> Vec<IndexedBodySentence> {
+    let mut sentences = Vec::new();
+    let mut start = 0;
+    let mut paragraph = 0;
+    for (index, ch) in content.char_indices() {
+        let end = index + ch.len_utf8();
+        if body_char_ends_sentence(content, index, ch) {
+            push_indexed_body_sentence(content, start, end, paragraph, &mut sentences);
+            start = end;
+        } else if ch == '\n' {
+            push_indexed_body_sentence(content, start, index, paragraph, &mut sentences);
+            start = end;
+            paragraph = paragraph.saturating_add(1);
+        }
+    }
+    push_indexed_body_sentence(content, start, content.len(), paragraph, &mut sentences);
+    sentences
+}
+
+fn body_char_ends_sentence(content: &str, index: usize, ch: char) -> bool {
+    if matches!(ch, '。' | '！' | '？' | '!' | '?') {
+        return true;
+    }
+    if ch != '.' {
+        return false;
+    }
+    let previous = content[..index].chars().next_back();
+    let next = content[index + ch.len_utf8()..].chars().next();
+    !(previous.is_some_and(|value| value.is_ascii_digit())
+        && next.is_some_and(|value| value.is_ascii_digit()))
+}
+
+fn push_indexed_body_sentence(
+    content: &str,
+    start: usize,
+    end: usize,
+    paragraph: usize,
+    sentences: &mut Vec<IndexedBodySentence>,
+) {
+    if start >= end || end > content.len() {
+        return;
+    }
+    let slice = &content[start..end];
+    let Some(first) = slice.find(|ch: char| !ch.is_whitespace()) else {
+        return;
+    };
+    let Some(last) = slice.rfind(|ch: char| !ch.is_whitespace()) else {
+        return;
+    };
+    let absolute_start = start + first;
+    let absolute_end = start
+        + last
+        + slice[last..]
+            .chars()
+            .next()
+            .map(char::len_utf8)
+            .unwrap_or(0);
+    if absolute_start >= absolute_end {
+        return;
+    }
+    sentences.push(IndexedBodySentence {
+        id: sentences.len() + 1,
+        paragraph,
+        start: absolute_start,
+        end: absolute_end,
+    });
+}
+
+fn observation_sentence_ids(value: &serde_json::Value) -> Vec<usize> {
+    let values = match value {
+        serde_json::Value::Array(values) => values.iter().collect::<Vec<_>>(),
+        value => vec![value],
+    };
+    values
+        .into_iter()
+        .filter_map(|value| match value {
+            serde_json::Value::Number(number) => number
+                .as_u64()
+                .and_then(|number| usize::try_from(number).ok()),
+            serde_json::Value::String(value) => value
+                .trim()
+                .trim_start_matches(['S', 's'])
+                .parse::<usize>()
+                .ok(),
+            _ => None,
+        })
+        .collect()
+}
+
+fn resolve_observation_sentence_ids(content: &str, ids: &[usize]) -> Option<String> {
+    if ids.is_empty() || ids.len() > 3 {
+        return None;
+    }
+    let sentences = indexed_body_sentences(content);
+    let selected = ids
+        .iter()
+        .map(|id| sentences.get(id.checked_sub(1)?).copied())
+        .collect::<Option<Vec<_>>>()?;
+    let first = *selected.first()?;
+    if selected.iter().enumerate().any(|(offset, sentence)| {
+        sentence.id != first.id + offset || sentence.paragraph != first.paragraph
+    }) {
+        return None;
+    }
+    let last = *selected.last()?;
+    let excerpt = content[first.start..last.end].trim();
+    if excerpt.is_empty() || excerpt.chars().count() > 320 {
+        return None;
+    }
+    let mut matches = content.match_indices(excerpt);
+    matches.next()?;
+    matches.next().is_none().then(|| excerpt.to_string())
 }
 
 fn observation_text_from_value(value: &serde_json::Value) -> String {

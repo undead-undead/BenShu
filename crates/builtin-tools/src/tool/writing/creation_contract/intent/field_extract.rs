@@ -544,8 +544,10 @@ pub fn strip_creation_prefix(value: &str) -> String {
             "完整创作",
             "完整写",
             "并自动创作",
+            "并自动写完",
             "并自动写",
             "自动创作",
+            "自动写完",
             "自动写",
             "并创作",
             "并写",
@@ -563,6 +565,8 @@ pub fn strip_creation_prefix(value: &str) -> String {
             "一个",
             "一部",
             "一本",
+            "全新的",
+            "新的",
             "的",
         ];
         if let Some(tail) = out.strip_prefix('并') {
@@ -744,7 +748,7 @@ fn creation_parameter_control_clause(value: &str) -> bool {
         || compact.contains("万")
         || compact.chars().any(|ch| ch.is_ascii_digit());
     unit_marker
-        && [
+        && ([
             "每章",
             "总字数",
             "目标字数",
@@ -761,12 +765,52 @@ fn creation_parameter_control_clause(value: &str) -> bool {
         ]
         .iter()
         .any(|marker| compact.contains(marker))
+            || creation_limited_write_scope_clause(&compact))
+}
+
+fn creation_limited_write_scope_clause(compact: &str) -> bool {
+    ["只写", "仅写"].iter().any(|marker| {
+        compact.find(marker).is_some_and(|index| {
+            let tail = &compact[index + marker.len()..];
+            tail.contains('章')
+                || (tail.contains('字')
+                    && tail.chars().any(|ch| {
+                        ch.is_ascii_digit()
+                            || matches!(
+                                ch,
+                                '零' | '一'
+                                    | '二'
+                                    | '两'
+                                    | '三'
+                                    | '四'
+                                    | '五'
+                                    | '六'
+                                    | '七'
+                                    | '八'
+                                    | '九'
+                                    | '十'
+                                    | '百'
+                                    | '千'
+                                    | '万'
+                                    | '半'
+                            )
+                    }))
+        })
+    })
 }
 
 fn creation_process_control_clause(value: &str) -> bool {
     let compact = value.replace(char::is_whitespace, "");
     if compact.is_empty() {
         return false;
+    }
+    if compact.contains("合同")
+        && compact.contains("流程")
+        && ["建立", "生成", "整理", "确认"]
+            .iter()
+            .any(|action| compact.contains(action))
+    {
+        return true;
     }
     if creation_wait_control_clause(&compact) {
         return true;
@@ -909,9 +953,20 @@ fn creation_process_control_clause(value: &str) -> bool {
 
 fn creation_confirm_then_write_control_clause(compact: &str) -> bool {
     (compact.contains("确认后") || compact.contains("确认再") || compact.contains("确认了再"))
-        && ["开始写", "再开始写", "再写", "正式写", "开始正文", "写正文"]
-            .iter()
-            .any(|term| compact.contains(term))
+        && [
+            "开始写",
+            "再开始写",
+            "再写",
+            "正式写",
+            "开始正文",
+            "写正文",
+            "自动写",
+            "持续写",
+            "继续写",
+            "写作",
+        ]
+        .iter()
+        .any(|term| compact.contains(term))
 }
 
 fn creation_wait_control_clause(compact: &str) -> bool {
@@ -1484,6 +1539,19 @@ mod tests {
                 "总因果链以朝局稳定并主动归隐这一事件结果收束",
             ]
         );
+    }
+
+    #[test]
+    fn limited_write_scope_does_not_consume_story_actions_that_contain_name_characters() {
+        assert!(!creation_parameter_control_clause(
+            "主角只写名字，不肯当面说出真相"
+        ));
+        assert_eq!(
+            strip_creation_parameter_control_clauses("主角只写名字，不肯当面说出真相，每章2500字"),
+            "主角只写名字，不肯当面说出真相"
+        );
+        assert!(creation_parameter_control_clause("本轮只写第一章"));
+        assert!(creation_parameter_control_clause("正文只写2500字"));
     }
 
     #[test]

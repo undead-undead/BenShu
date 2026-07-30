@@ -4387,7 +4387,7 @@ fn chapter_quality_advises_on_supporting_character_dominance_without_hard_eviden
 }
 
 #[test]
-fn chapter_quality_blocks_completed_next_chapter_boundary_but_not_intent() {
+fn chapter_quality_leaves_semantic_future_boundary_decisions_to_sealed_observer() {
     use crate::tool::writing::creation_contract_model::ChapterSeedContract;
 
     let mut manifest = test_manifest_with_primary_character();
@@ -4432,16 +4432,18 @@ fn chapter_quality_blocks_completed_next_chapter_boundary_but_not_intent() {
         .iter()
         .any(|finding| finding.code == "future_chapter_consumed"));
 
-    let consumed = chapter_quality_gate(
+    let lexical_overlap = chapter_quality_gate(
         &manifest,
         &chapter,
         "黎启洄检查胶囊，发现其中的源头直指上层区的主脑核心。",
         &[],
     );
-    assert!(consumed
+    assert!(!lexical_overlap
         .findings
         .iter()
-        .any(|finding| finding.code == "future_chapter_consumed"));
+        .any(|finding| finding.code == "future_chapter_consumed"),
+        "the generic studio gate must not recreate the sealed final-body observer with lexical overlap"
+    );
 }
 
 #[test]

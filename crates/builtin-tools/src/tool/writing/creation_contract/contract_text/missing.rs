@@ -72,16 +72,3 @@ pub(crate) fn fiction_character_line_has_placeholder_name(line: &str) -> bool {
         || lowered.contains("unnamed")
         || lowered.contains("placeholder")
 }
-
-pub(crate) fn fiction_primary_character_count(lines: &[String]) -> usize {
-    lines
-        .iter()
-        .filter(|line| {
-            let lowered = line.to_ascii_lowercase();
-            line.contains("role: 主角")
-                || line.contains("role：主角")
-                || lowered.contains("role: protagonist")
-                || lowered.contains("role：protagonist")
-        })
-        .count()
-}

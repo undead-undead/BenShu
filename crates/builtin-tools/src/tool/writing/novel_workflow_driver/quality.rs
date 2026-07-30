@@ -2499,7 +2499,7 @@ pub(super) fn govern_generated_execution_package(
     package.memo = canonical.memo;
     package.scene_goal = canonical.scene_goal;
     package.title_basis = canonical.title_basis;
-    package.architecture = if generated_architecture.is_empty() {
+    let architecture = if generated_architecture.is_empty() {
         canonical.architecture
     } else if language_looks_cjk(language) {
         format!(
@@ -2512,6 +2512,7 @@ pub(super) fn govern_generated_execution_package(
             canonical.architecture, generated_architecture
         )
     };
+    package.architecture = novel_runner::render_execution_contract_header(&package) + &architecture;
     package
 }
 
@@ -4069,11 +4070,11 @@ pub(super) fn expansion_addition_repeats_existing_content(
     if existing.contains(&addition) {
         return true;
     }
-    let addition_bigrams = cjk_bigrams_for_overlap(&addition);
+    let addition_bigrams = chapter_quality::adjacent_bigrams(&addition);
     if addition_bigrams.len() < 80 {
         return false;
     }
-    let existing_bigrams = cjk_bigrams_for_overlap(&existing)
+    let existing_bigrams = chapter_quality::adjacent_bigrams(&existing)
         .into_iter()
         .collect::<BTreeSet<_>>();
     if existing_bigrams.is_empty() {
@@ -4101,11 +4102,11 @@ fn expansion_addition_repeats_recent_tail(
     if tail.contains(&prefix) {
         return true;
     }
-    let prefix_bigrams = cjk_bigrams_for_overlap(&prefix);
+    let prefix_bigrams = chapter_quality::adjacent_bigrams(&prefix);
     if prefix_bigrams.len() < 30 {
         return false;
     }
-    let tail_bigrams = cjk_bigrams_for_overlap(&tail)
+    let tail_bigrams = chapter_quality::adjacent_bigrams(&tail)
         .into_iter()
         .collect::<BTreeSet<_>>();
     if tail_bigrams.is_empty() {
@@ -4128,7 +4129,7 @@ fn expansion_addition_replays_existing_paragraph(
         .map(|paragraph| normalize_expansion_overlap_text(paragraph, language))
         .filter(|paragraph| paragraph.chars().count() >= 55)
         .filter_map(|paragraph| {
-            let paragraph_bigrams = cjk_bigrams_for_overlap(&paragraph);
+            let paragraph_bigrams = chapter_quality::adjacent_bigrams(&paragraph);
             if paragraph_bigrams.len() < 45 {
                 return None;
             }
@@ -4148,7 +4149,7 @@ fn expansion_addition_replays_existing_paragraph(
         .map(|paragraph| normalize_expansion_overlap_text(paragraph, language))
         .filter(|paragraph| paragraph.chars().count() >= 55)
         .any(|addition_paragraph| {
-            let addition_bigrams = cjk_bigrams_for_overlap(&addition_paragraph);
+            let addition_bigrams = chapter_quality::adjacent_bigrams(&addition_paragraph);
             if addition_bigrams.len() < 45 {
                 return false;
             }
@@ -4233,14 +4234,6 @@ fn normalize_expansion_overlap_text(value: &str, language: &str) -> String {
             .collect::<Vec<_>>()
             .join(" ")
     }
-}
-
-fn cjk_bigrams_for_overlap(value: &str) -> Vec<String> {
-    let chars = value.chars().collect::<Vec<_>>();
-    chars
-        .windows(2)
-        .map(|pair| pair.iter().collect::<String>())
-        .collect()
 }
 
 pub(super) fn append_chapter_addition(

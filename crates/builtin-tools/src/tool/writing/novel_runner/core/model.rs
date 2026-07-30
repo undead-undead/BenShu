@@ -115,6 +115,8 @@ pub(crate) struct FinalChapterObservation {
     #[serde(default)]
     pub resolved_hooks: Vec<String>,
     #[serde(default)]
+    pub future_boundary_evidence: String,
+    #[serde(default)]
     pub state_changes: Vec<ChapterStateChange>,
 }
 

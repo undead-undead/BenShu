@@ -83,8 +83,12 @@ pub(crate) fn parse_chapter_execution_package(
                     }
                     return Ok(ChapterExecutionPackage {
                         memo,
-                        architecture: render_execution_contract_header(&parsed)
-                            + architecture.trim(),
+                        // Keep scene refinement separate from typed execution
+                        // fields. The workflow governs those fields first and
+                        // renders one canonical header afterwards; embedding a
+                        // raw copy here lets rejected model claims bypass that
+                        // governance through architecture text.
+                        architecture: architecture.trim().to_string(),
                         scene_goal: execution_package_optional_text(&parsed.scene_goal),
                         conflict: execution_package_optional_text(&parsed.conflict),
                         choice: execution_package_optional_text(&parsed.choice),
@@ -266,70 +270,28 @@ fn execution_package_character_requests(
         .collect()
 }
 
-fn render_execution_contract_header(parsed: &RawChapterExecutionPackage) -> String {
-    let scene_goal = execution_package_optional_text(&parsed.scene_goal);
-    let conflict = execution_package_optional_text(&parsed.conflict);
-    let choice = execution_package_optional_text(&parsed.choice);
-    let cost = execution_package_optional_text(&parsed.cost);
-    let reveal = execution_package_optional_text(&parsed.reveal);
-    let emotional_beat = execution_package_optional_text(&parsed.emotional_beat);
-    let chapter_function = parsed
-        .chapter_function
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
-    let irreversible_event = parsed
-        .irreversible_event
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
-    let new_state_after_chapter = parsed
-        .new_state_after_chapter
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
-    let world_change = parsed
-        .world_change
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
-    let character_change = parsed
-        .character_change
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
-    let relationship_change = parsed
-        .relationship_change
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
-    let power_delta = execution_package_optional_text(&parsed.power_delta);
-    let resource_delta = execution_package_optional_text(&parsed.resource_delta);
-    let hook_opened = execution_package_string_array(parsed.hook_opened.as_ref()).join("; ");
-    let hook_paid_off = execution_package_hook_paid_off(parsed).join("; ");
-    let title_basis = parsed
-        .title_basis
-        .as_ref()
-        .map(|value| execution_package_value_to_text(value, "meta"))
-        .unwrap_or_default();
+pub(crate) fn render_execution_contract_header(package: &ChapterExecutionPackage) -> String {
     let lines = [
-        ("scene_goal", scene_goal),
-        ("conflict", conflict),
-        ("choice", choice),
-        ("cost", cost),
-        ("reveal", reveal),
-        ("emotional_beat", emotional_beat),
-        ("chapter_function", chapter_function),
-        ("irreversible_event", irreversible_event),
-        ("new_state_after_chapter", new_state_after_chapter),
-        ("world_change", world_change),
-        ("character_change", character_change),
-        ("relationship_change", relationship_change),
-        ("power_delta", power_delta),
-        ("resource_delta", resource_delta),
-        ("hook_opened", hook_opened),
-        ("hook_paid_off", hook_paid_off),
-        ("title_basis", title_basis),
+        ("scene_goal", package.scene_goal.clone()),
+        ("conflict", package.conflict.clone()),
+        ("choice", package.choice.clone()),
+        ("cost", package.cost.clone()),
+        ("reveal", package.reveal.clone()),
+        ("emotional_beat", package.emotional_beat.clone()),
+        ("chapter_function", package.chapter_function.clone()),
+        ("irreversible_event", package.irreversible_event.clone()),
+        (
+            "new_state_after_chapter",
+            package.new_state_after_chapter.clone(),
+        ),
+        ("world_change", package.world_change.clone()),
+        ("character_change", package.character_change.clone()),
+        ("relationship_change", package.relationship_change.clone()),
+        ("power_delta", package.power_delta.clone()),
+        ("resource_delta", package.resource_delta.clone()),
+        ("hook_opened", package.hook_opened.join("; ")),
+        ("hook_paid_off", package.hook_paid_off.join("; ")),
+        ("title_basis", package.title_basis.clone()),
     ]
     .into_iter()
     .filter(|(_, value)| !value.trim().is_empty())

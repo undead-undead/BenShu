@@ -599,6 +599,21 @@ fn authority_allowance(
             path
         ));
     }
+    let cjk = value
+        .chars()
+        .chain(change.evidence.excerpt.chars())
+        .any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch));
+    if !governance::contract_change_supported_by_final_evidence(
+        value,
+        &change.evidence.excerpt,
+        cjk,
+    ) {
+        return Err(format!(
+            "state change {} evidence does not support sealed authority field {}",
+            change.change_id.trim(),
+            path
+        ));
+    }
     Ok(Allowance::Contract)
 }
 

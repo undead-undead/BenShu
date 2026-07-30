@@ -248,7 +248,6 @@ fn sentence_has_contract_meta_surface(sentence: &str) -> bool {
         "大纲",
         "提纲",
         "设定",
-        "故事",
         "本文",
         "本章",
         "主角弧线",
@@ -284,6 +283,16 @@ mod tests {
         ));
         assert!(sentence_has_contract_meta_surface(
             "按照小说合同字段，终局必须兑现伏笔"
+        ));
+    }
+
+    #[test]
+    fn in_story_use_of_story_is_not_writing_meta_surface() {
+        assert!(!sentence_has_contract_meta_surface(
+            "这片地下空间像一个曾经承载过生命且带有某种未竟故事的遗迹"
+        ));
+        assert!(sentence_has_contract_meta_surface(
+            "这份故事合同要求本章必须完成失踪案线索"
         ));
     }
 }

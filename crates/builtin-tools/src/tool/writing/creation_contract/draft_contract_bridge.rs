@@ -976,7 +976,14 @@ pub(crate) fn creation_draft_visible_approval_readiness_issues(
                 .to_string(),
         );
     }
-    if fiction_primary_character_count(&draft.fiction_characters) > 1 {
+    if draft
+        .fiction_characters
+        .iter()
+        .map(|line| draft_character_line_to_contract(line))
+        .filter(CharacterContract::role_looks_primary)
+        .count()
+        > 1
+    {
         issues.push(
             "小说合同角色权威表包含多个主角槽位，必须先收敛为一个主角或由用户明确要求多主角"
                 .to_string(),

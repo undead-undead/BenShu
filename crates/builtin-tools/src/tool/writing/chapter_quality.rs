@@ -146,23 +146,27 @@ pub(crate) fn future_chapter_consumed_finding(
 /// validation share this primitive so their event-boundary decisions cannot
 /// drift into separate similarity mechanisms.
 pub(crate) fn shared_distinctive_bigram_count(left: &str, right: &str) -> usize {
-    let right_bigrams = right
-        .chars()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .map(|window| window.iter().collect::<String>())
-        .collect::<BTreeSet<_>>();
+    let right_bigrams = adjacent_bigrams(right).into_iter().collect::<BTreeSet<_>>();
     let generic = [
         "主角", "角色", "故事", "事件", "最终", "终局", "完成", "实现", "达成", "进入", "成为",
         "开始", "进行", "通过", "为了", "以及", "他们", "两人", "一个",
     ];
-    left.chars()
-        .collect::<Vec<_>>()
-        .windows(2)
-        .map(|window| window.iter().collect::<String>())
+    adjacent_bigrams(left)
+        .into_iter()
         .filter(|bigram| !generic.contains(&bigram.as_str()) && right_bigrams.contains(bigram))
         .collect::<BTreeSet<_>>()
         .len()
+}
+
+/// Splits normalized text into adjacent two-character fragments. Domain
+/// filters, deduplication and scoring remain with the owning validator.
+pub(crate) fn adjacent_bigrams(value: &str) -> Vec<String> {
+    value
+        .chars()
+        .collect::<Vec<_>>()
+        .windows(2)
+        .map(|window| window.iter().collect::<String>())
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

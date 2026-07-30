@@ -210,6 +210,93 @@ pub(crate) fn event_text_is_grounded_in_current_chapter(
     }
 }
 
+/// Verifies that a bounded final-body excerpt supports the event portion of a
+/// sealed contract change, rather than passing merely because both strings
+/// contain the same character name. This is intentionally stricter than
+/// `truth_item_supported_by_chapter`, which is designed for advisory summary
+/// cleanup rather than durable state admission.
+pub(crate) fn contract_change_supported_by_final_evidence(
+    authority_value: &str,
+    evidence: &str,
+    cjk: bool,
+) -> bool {
+    if contains_unexpected_script_residue(authority_value, evidence) {
+        return false;
+    }
+    if cjk {
+        let authority = compact_event_probe_text(strip_truth_label(authority_value));
+        let evidence = compact_event_probe_text(evidence);
+        if authority.is_empty() || evidence.is_empty() {
+            return false;
+        }
+        let authority_event = without_shared_leading_cjk_subject(&authority, &evidence);
+        let evidence_event = without_shared_leading_cjk_subject(&evidence, &authority);
+        return super::chapter_quality::shared_distinctive_bigram_count(
+            &authority_event,
+            &evidence_event,
+        ) >= 2;
+    }
+
+    let authority_terms = distinctive_english_event_terms(authority_value, evidence);
+    let evidence_terms = distinctive_english_event_terms(evidence, authority_value)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    authority_terms
+        .into_iter()
+        .filter(|term| evidence_terms.contains(term))
+        .collect::<BTreeSet<_>>()
+        .len()
+        >= 2
+}
+
+fn distinctive_english_event_terms(value: &str, other: &str) -> Vec<String> {
+    let mut terms = value
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+                .to_ascii_lowercase()
+        })
+        .filter(|term| {
+            !term.is_empty()
+                && !matches!(
+                    term.as_str(),
+                    "the"
+                        | "a"
+                        | "an"
+                        | "and"
+                        | "or"
+                        | "to"
+                        | "of"
+                        | "in"
+                        | "on"
+                        | "at"
+                        | "is"
+                        | "was"
+                        | "are"
+                        | "were"
+                )
+        })
+        .collect::<Vec<_>>();
+    let other_terms = other
+        .split_whitespace()
+        .map(|term| {
+            term.trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+                .to_ascii_lowercase()
+        })
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    let shared_leading = terms
+        .iter()
+        .zip(other_terms.iter())
+        .take_while(|(left, right)| left == right)
+        .count()
+        .min(3);
+    if shared_leading > 0 && terms.len() > shared_leading {
+        terms.drain(..shared_leading);
+    }
+    terms
+}
+
 pub(crate) fn text_consumes_future_chapter(
     text: &str,
     current_seed: &str,
@@ -346,42 +433,29 @@ pub(crate) fn final_body_future_consumption_evidence(
         .map(ToString::to_string)
 }
 
-/// Uses the final-body observer as a semantic witness without allowing its
-/// paraphrase to become authority by itself. A reported future event is only
-/// accepted as evidence when a completed sentence in the immutable body also
-/// visibly supports that report.
-pub(crate) fn observer_confirmed_future_consumption_evidence(
+/// Accepts the sealed final-body observer's semantic decision only as one
+/// bounded, unique, verbatim span from the immutable final body. The workflow
+/// may fall back to the deterministic completed-event check against the same
+/// sealed current/next boundary, but generic quality checks must not scan
+/// mutable manifest seeds. Observer paraphrases never become authority.
+pub(crate) fn validated_future_boundary_observer_evidence(
     body: &str,
-    observation_facts: &[String],
+    evidence: &str,
     current_seed: &str,
     next_seed: &str,
     cjk: bool,
 ) -> Option<String> {
-    observation_facts
-        .iter()
-        .map(String::as_str)
-        .filter(|fact| {
-            final_body_future_consumption_evidence(fact, current_seed, next_seed, cjk).is_some()
-        })
-        .find_map(|fact| {
-            body.split_inclusive(['。', '！', '？', '.', '!', '?', '\n'])
-                .map(str::trim)
-                .filter(|sentence| !sentence.is_empty())
-                .find(|sentence| {
-                    sentence_reports_completed_outcome(sentence, cjk)
-                        && truth_item_supported_by_chapter(fact, sentence)
-                        && if cjk {
-                            let fact = compact_event_probe_text(fact);
-                            let sentence = compact_event_probe_text(sentence);
-                            contains_distinctive_cjk_span(&sentence, &fact, 5)
-                                || contains_distinctive_cjk_span(&fact, &sentence, 5)
-                        } else {
-                            contains_distinctive_english_span(sentence, fact)
-                                || contains_distinctive_english_span(fact, sentence)
-                        }
-                })
-                .map(ToString::to_string)
-        })
+    let evidence = evidence.trim();
+    if evidence.is_empty() || evidence.chars().count() > 320 {
+        return None;
+    }
+    let mut matches = body.match_indices(evidence);
+    matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    final_body_future_consumption_evidence(evidence, current_seed, next_seed, cjk)?;
+    Some(evidence.to_string())
 }
 
 /// Reads the current and next chapter seeds from the already sealed authority
@@ -1405,12 +1479,10 @@ fn cjk_bigram_supports(item: &str, content: &str) -> bool {
 }
 
 fn cjk_bigrams(value: &str) -> Vec<String> {
-    let chars: Vec<char> = cjk_compact(value).chars().collect();
     let mut out = Vec::new();
-    for pair in chars.windows(2) {
-        let value: String = pair.iter().collect();
-        if !out.contains(&value) {
-            out.push(value);
+    for bigram in super::chapter_quality::adjacent_bigrams(&cjk_compact(value)) {
+        if !out.contains(&bigram) {
+            out.push(bigram);
         }
     }
     out
@@ -1486,6 +1558,31 @@ fn render_yaml_list(items: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn contract_change_evidence_requires_event_support_beyond_character_name() {
+        let authority = "宋泊禾发现影契正在加速衰老";
+
+        assert!(!contract_change_supported_by_final_evidence(
+            authority,
+            "宋泊禾推开房门，窗外正下着雨。",
+            true,
+        ));
+        assert!(contract_change_supported_by_final_evidence(
+            authority,
+            "宋泊禾终于发现影契正在加速他的衰老。",
+            true,
+        ));
+    }
+
+    #[test]
+    fn contract_change_evidence_accepts_shared_object_state_without_exact_wording() {
+        assert!(contract_change_supported_by_final_evidence(
+            "闻庭安取得铜钥匙",
+            "闻庭安带着铜钥匙离开旧站。",
+            true,
+        ));
+    }
 
     #[test]
     fn truth_support_allows_paraphrased_chinese_frequency_fact() {
@@ -1856,40 +1953,29 @@ mod tests {
     }
 
     #[test]
-    fn final_observer_confirms_paraphrased_future_event_from_final_body() {
-        let current = "陆昭岚利用季节更替规律赚取第一笔启动资金；南知衡开始探寻她的变化";
-        let next = "面对梁砚桥派出的使者进行物资试探，陆昭岚稳住阵脚；梁砚桥察觉到陆家庄园存在异常繁荣迹象，竞争压力开始显现";
-        let body = "陆昭岚完成了第一笔交易。然而，在不远处的梁家，关于陆家近期物资流动频繁的消息，已经悄然传到了梁砚桥的耳中。";
-        let observation = vec![
-            "陆昭岚获得了第一笔启动资金。".to_string(),
-            "梁砚桥已察觉到陆家近期物资流动频繁，竞争压力开始显现。".to_string(),
-        ];
+    fn final_observer_evidence_must_be_unique_verbatim_final_body_text() {
+        let current = "陆昭岚完成第一笔交易";
+        let next = "梁砚桥察觉到陆家庄园存在异常繁荣迹象，竞争压力开始显现";
+        let body =
+            "陆昭岚完成了第一笔交易。梁砚桥已经察觉到陆家庄园存在异常繁荣迹象，竞争压力开始显现。";
+        let evidence = "梁砚桥已经察觉到陆家庄园存在异常繁荣迹象，竞争压力开始显现。";
 
         assert_eq!(
-            observer_confirmed_future_consumption_evidence(
-                body,
-                &observation,
-                current,
-                next,
-                true,
-            )
-            .as_deref(),
-            Some(
-                "然而，在不远处的梁家，关于陆家近期物资流动频繁的消息，已经悄然传到了梁砚桥的耳中。"
-            )
+            validated_future_boundary_observer_evidence(body, evidence, current, next, true)
+                .as_deref(),
+            Some(evidence)
         );
     }
 
     #[test]
-    fn final_observer_cannot_block_without_body_support_for_its_future_claim() {
+    fn final_observer_cannot_block_with_absent_or_paraphrased_evidence() {
         let current = "陆昭岚完成第一笔交易";
         let next = "梁砚桥察觉到陆家庄园的异常繁荣，竞争压力开始显现";
         let body = "梁砚桥已经派人向陆家送去节礼，但无人讨论庄园近况。";
-        let observation = vec!["梁砚桥已察觉到陆家庄园的异常繁荣，竞争压力开始显现。".to_string()];
 
-        assert!(observer_confirmed_future_consumption_evidence(
+        assert!(validated_future_boundary_observer_evidence(
             body,
-            &observation,
+            "梁砚桥已察觉到陆家庄园的异常繁荣。",
             current,
             next,
             true,

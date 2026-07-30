@@ -183,24 +183,58 @@ fn character_patch_prompt(
 ) -> String {
     let profile_hint = genre_patch_prompt_hint(draft, user_message);
     let repairs_existing_authority = !draft.fiction_characters.is_empty();
+    let current_characters = draft
+        .fiction_characters
+        .iter()
+        .map(|line| super::draft_character_line_to_contract(line))
+        .collect::<Vec<_>>();
+    let slot_coverage = CharacterRoleSlotCoverage::from_characters(&current_characters);
+    let missing_supporting_slot = repairs_existing_authority && !slot_coverage.has_supporting;
+    let missing_pressure_slot = repairs_existing_authority && !slot_coverage.has_pressure;
+    let repairs_missing_role_slots = missing_supporting_slot || missing_pressure_slot;
     let repairs_locked_roles = repairs_existing_authority
         && ContractIssueSet::new(issues).actionable().any(|issue| {
             issue.code == "semantic.user_story_authority"
                 && issue.kind == ContractIssueKind::Characters
+                && !issue.evidence.observed.contains("<missing>")
         });
     let patch_scope_guidance = if repairs_locked_roles {
-        "当前角色姓名权威已锁定，但质量门明确指出角色定位与用户故事权威冲突。本轮必须输出完整角色表：所有 canonical_name 必须原样保留且每人恰好出现一次，不得新建、删除、合并或互换姓名；必须按用户权威和稳定故事锚点纠正 role，并同步重写与新 role 一致的欲望、恐惧、底线、弧线和计划登场/离场字段。这是角色功能权威纠错，不是改名。"
+        "当前角色姓名权威已锁定，但质量门明确指出角色定位与用户故事权威冲突。本轮必须输出完整角色表：所有 canonical_name 必须原样保留且每人恰好出现一次，不得新建、删除、合并或互换姓名；必须按用户权威和稳定故事锚点纠正 role，并同步重写与新 role 一致的欲望、恐惧、底线、弧线和计划登场/离场字段。这是角色功能权威纠错，不是改名。".to_string()
+    } else if repairs_missing_role_slots {
+        let missing = [
+            missing_supporting_slot.then_some("关系对象/盟友/导师"),
+            missing_pressure_slot.then_some("关键对手/反派/压力源"),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join("和");
+        format!(
+            "当前角色权威表缺少必要的{missing}槽位。本轮只新增每个缺失槽位各一个完整角色；不得删除、改名、合并或重复现有角色。新增角色必须来自当前故事中的既有职责，并提供完整欲望、恐惧、底线、弧线和计划登场/离场字段。"
+        )
     } else if repairs_existing_authority {
-        "当前角色权威表已经建立。本轮只输出质量门点名角色的局部修复：canonical_name 必须原样复用；只填写需要替换的欲望、恐惧、底线、弧线、计划登场或计划离场字段，未出错字段可以省略。如果质量门点名计划登场/离场，补丁必须返回对应的 planned_entry/planned_exit，并引用稳定锚点中的实际分卷。不得新建角色或改变角色定位。如果缺口点名权威表外人物姓名，必须在该锚点中删除这个姓名并保留准确的无姓名身份泛称（例如“妹妹”“导师”“对手”），或者改用角色权威表中语义确实对应的 canonical_name；不得原样返回含表外姓名的旧锚点，也不得为绕过质量门而虚构替代姓名。"
+        "当前角色权威表已经建立。本轮只输出质量门点名角色的局部修复：canonical_name 必须原样复用；只填写需要替换的欲望、恐惧、底线、弧线、计划登场或计划离场字段，未出错字段可以省略。如果质量门点名计划登场/离场，补丁必须返回对应的 planned_entry/planned_exit，并引用稳定锚点中的实际分卷。不得新建角色或改变角色定位。如果缺口点名权威表外人物姓名，必须在该锚点中删除这个姓名并保留准确的无姓名身份泛称（例如“妹妹”“导师”“对手”），或者改用角色权威表中语义确实对应的 canonical_name；不得原样返回含表外姓名的旧锚点，也不得为绕过质量门而虚构替代姓名。".to_string()
     } else {
-        "当前尚未建立角色权威表，必须一次生成完整角色表。"
+        "当前尚未建立角色权威表，必须一次生成完整角色表。".to_string()
     };
     let character_patch_example = if repairs_locked_roles {
-        INITIAL_CHARACTER_PATCH_EXAMPLE
+        INITIAL_CHARACTER_PATCH_EXAMPLE.to_string()
+    } else if repairs_missing_role_slots {
+        let mut characters = Vec::new();
+        if missing_supporting_slot {
+            characters.push(r#"{"canonical_name":"关系角色候选名","role":"关键关系对象","desire":"具体欲望","fear":"具体恐惧","bottom_line":"带具体对象的底线","arc_start":"弧线起点","arc_end":"弧线终点","planned_entry":"实际分卷","planned_exit":"终局状态"}"#);
+        }
+        if missing_pressure_slot {
+            characters.push(r#"{"canonical_name":"对手候选名","role":"关键对手","desire":"具体欲望","fear":"具体恐惧","bottom_line":"带具体对象的底线","arc_start":"弧线起点","arc_end":"弧线终点","planned_entry":"实际分卷","planned_exit":"终局状态"}"#);
+        }
+        format!(
+            r#"{{"patch_type":"character_patch","characters":[{}]}}"#,
+            characters.join(",")
+        )
     } else if repairs_existing_authority {
-        r#"{"patch_type":"character_patch","characters":[{"canonical_name":"已有姓名","bottom_line":"带具体对象的明确禁令或承诺"}]}"#
+        r#"{"patch_type":"character_patch","characters":[{"canonical_name":"已有姓名","bottom_line":"带具体对象的明确禁令或承诺"}]}"#.to_string()
     } else {
-        INITIAL_CHARACTER_PATCH_EXAMPLE
+        INITIAL_CHARACTER_PATCH_EXAMPLE.to_string()
     };
     let issue_focus = contract_patch_issue_focus_text(&stage_relevant_contract_issues(
         ContractCompletionStage::Characters,
@@ -900,6 +934,78 @@ mod tests {
 
         assert_eq!(patch.characters.len(), 3);
         assert_eq!(names.len(), 3);
+    }
+
+    #[test]
+    fn missing_role_repair_prompt_emits_every_missing_role_slot() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-character-missing-both-slots",
+            "fiction",
+            "写一部异界冒险小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            "name: 谢星遥; role: 主角; desire: 修复传送门; fear: 边境塌陷; bottom_line: 不牺牲边民; arc_start: 独自维修; arc_end: 公开真相"
+                .to_string(),
+        ];
+        let issues = ContractIssueList::single(
+            "semantic.user_story_authority",
+            ContractIssueKind::Characters,
+            "候选合同角色权威表",
+            "ContractBlocker[semantic.user_story_authority]: 用户明确要求的合作角色未登记；权威证据 用户故事核心权威=`她必须与一名测绘师合作`；候选证据 候选合同角色权威表=`<missing>`",
+        );
+
+        let prompt = character_patch_prompt(
+            &draft,
+            "继续修复当前合同",
+            &issues,
+            "稳定锚点",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(
+            prompt.contains("关系对象/盟友/导师和关键对手/反派/压力源"),
+            "{prompt}"
+        );
+        assert!(prompt.contains(r#""role":"关键关系对象""#), "{prompt}");
+        assert!(prompt.contains(r#""role":"关键对手""#), "{prompt}");
+    }
+
+    #[test]
+    fn explicit_role_authority_conflict_precedes_missing_slot_completion() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-role-conflict-before-slot-fill",
+            "fiction",
+            "写一部都市言情小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            "name: 谢星遥; role: 主角; desire: 修复旧街; fear: 真相被掩盖; bottom_line: 不销毁原始档案; arc_start: 独自调查; arc_end: 公开真相"
+                .to_string(),
+        ];
+        let issues = ContractIssueList::single(
+            "semantic.user_story_authority",
+            ContractIssueKind::Characters,
+            "候选合同角色权威表",
+            "ContractBlocker: 用户指定的角色定位与候选角色权威冲突",
+        );
+
+        let prompt = character_patch_prompt(
+            &draft,
+            "继续修复当前合同",
+            &issues,
+            "稳定锚点",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(prompt.contains("当前角色姓名权威已锁定"), "{prompt}");
+        assert!(!prompt.contains("当前角色权威表缺少必要的"), "{prompt}");
     }
 
     #[test]

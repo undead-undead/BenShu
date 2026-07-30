@@ -182,12 +182,6 @@ pub(super) fn chapter_quality_gate_with_scan(
         "character_pronoun_drift",
         authority_fingerprint,
     ));
-    findings.extend(future_chapter_consumption_findings(
-        manifest,
-        chapter,
-        content,
-        authority_fingerprint,
-    ));
     for (messages, source) in [
         (language_script_issues(manifest, content), "language_script"),
         (cjk_layout_issues(manifest, content), "cjk_layout"),
@@ -279,98 +273,6 @@ pub(super) fn chapter_quality_gate_with_scan(
     ));
 
     ChapterQualityGate::from_findings(findings)
-}
-
-fn manifest_chapter_seed(
-    manifest: &NovelProjectManifest,
-    chapter_number: usize,
-) -> Option<(String, String)> {
-    if let Some((index, seed)) = manifest
-        .contract
-        .as_ref()
-        .and_then(|contract| contract.authority_contract.as_ref())
-        .and_then(|contract| {
-            contract
-                .outline
-                .near_chapters
-                .iter()
-                .enumerate()
-                .find(|(_, seed)| seed.number == Some(chapter_number))
-        })
-    {
-        let text = [seed.goal.as_str(), seed.expected_turn.as_str()]
-            .into_iter()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .collect::<Vec<_>>()
-            .join("；");
-        if !text.is_empty() {
-            return Some((
-                format!("/canonical_contract/outline/near_chapters/{index}"),
-                text,
-            ));
-        }
-    }
-    manifest
-        .story_bible
-        .as_ref()
-        .and_then(|bible| {
-            bible
-                .narrative_graph
-                .chapter_goals
-                .iter()
-                .enumerate()
-                .find(|(_, goal)| goal.chapter_number == chapter_number)
-        })
-        .and_then(|(index, goal)| {
-            let text = [goal.goal.as_str(), goal.moves_toward_ending.as_str()]
-                .into_iter()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .collect::<Vec<_>>()
-                .join("；");
-            (!text.is_empty()).then(|| {
-                (
-                    format!("/truth_as_of_chapter/narrative_graph/chapter_goals/{index}"),
-                    text,
-                )
-            })
-        })
-}
-
-fn future_chapter_consumption_findings(
-    manifest: &NovelProjectManifest,
-    chapter: &ChapterRecord,
-    content: &str,
-    authority_fingerprint: &str,
-) -> Vec<chapter_quality::ChapterFinding> {
-    let Some(next_number) = chapter.number.checked_add(1) else {
-        return Vec::new();
-    };
-    let Some((_, current_seed)) = manifest_chapter_seed(manifest, chapter.number) else {
-        return Vec::new();
-    };
-    let Some((next_path, next_seed)) = manifest_chapter_seed(manifest, next_number) else {
-        return Vec::new();
-    };
-    let cjk = is_chinese_language(&manifest.language);
-    let Some(excerpt) =
-        governance::final_body_future_consumption_evidence(content, &current_seed, &next_seed, cjk)
-    else {
-        return Vec::new();
-    };
-    chapter_quality::future_chapter_consumed_finding(
-        chapter.number,
-        next_number,
-        next_path,
-        next_seed,
-        excerpt,
-        "sealed_next_chapter_boundary",
-        authority_fingerprint,
-        content,
-    )
-    .into_iter()
-    .collect()
 }
 
 fn findings_from_messages(

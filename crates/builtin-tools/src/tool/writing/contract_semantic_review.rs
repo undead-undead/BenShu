@@ -372,6 +372,7 @@ impl OutlineCharacterAuthorityReviewRequest {
              不得改写合同，不得输出补丁，也不要因为措辞不同就判冲突。\n\
              必须逐一核对具名角色的身份、职责、欲望、恐惧、底线、弧线、身体特征、能力边界、关系和终局命运。\n\
              角色权威标明男主、女主或其他明确性别身份时，大纲和兑现矩阵中的性别称谓、代词、亲属身份与年龄身份必须一致；把女主写成男性代词或男性年龄身份、把男主写成女性代词或女性年龄身份，且合同没有建立身份变化时，必须判 conflict。\n\
+             角色权威只写“主角”而未明确男主、女主或其他性别身份时，不得从姓名用字、常见印象、题材常识或代词反推性别、年龄和身份；裸姓名只证明实体标识，不能作为这些冲突的权威证据。\n\
              如果大纲或兑现矩阵把一名角色的身体特征、特殊能力、弱点、身份、关系或命运明确转移给另一名角色，必须判 conflict。\n\
              角色权威中的“同伴”“盟友”“导师”“关键关系对象”是广义叙事职能；大纲中的朋友、恋人、亲属、旧识、合作者等可以是兼容的具体关系。只有候选文本明确把同一人写成互斥的另一职能、或把已锁定关系归给另一人时才能判 conflict；不得用更具体的关系称谓反推权威表缺失了性别或另一职能。\n\
              角色欲望和恐惧是推动选择与弧线的动机锚点，不是保证欲望必然实现、恐惧必然成真的命运预言。终局克服或避免恐惧、没有实现初始欲望、或者从弧线起点成长到弧线终点，本身都不构成 conflict；只有候选把欲望、恐惧或弧线归给错误角色，或明确否定合同已经锁定的角色身份、能力、关系、选择与终局结果时才可判 conflict。\n\
@@ -434,8 +435,65 @@ impl OutlineCharacterAuthorityReviewRequest {
             finding.verdict = SemanticReviewVerdict::Uncertain;
             finding.evidence = None;
         }
+        if finding.verdict == SemanticReviewVerdict::Conflict
+            && finding.evidence.as_ref().is_some_and(|evidence| {
+                evidence_quote_is_only_character_name(
+                    &self.character_authority,
+                    &evidence.authority_quote,
+                ) && rationale_infers_identity_from_character_name(&finding.rationale)
+            })
+        {
+            finding.verdict = SemanticReviewVerdict::Uncertain;
+            finding.evidence = None;
+        }
         finding
     }
+}
+
+fn evidence_quote_is_only_character_name(character_authority: &str, quote: &str) -> bool {
+    let quote = quote
+        .trim()
+        .trim_matches(|ch: char| matches!(ch, '`' | '“' | '”' | '"' | '‘' | '’'));
+    character_authority.lines().any(|line| {
+        line.split('；').any(|field| {
+            let field = field.trim();
+            let name = field
+                .strip_prefix("姓名：")
+                .or_else(|| field.strip_prefix("姓名:"))
+                .map(str::trim);
+            name.is_some_and(|name| {
+                !name.is_empty()
+                    && matches!(
+                        quote,
+                        value if value == name
+                            || value == format!("姓名：{name}")
+                            || value == format!("姓名:{name}")
+                    )
+            })
+        })
+    })
+}
+
+fn rationale_infers_identity_from_character_name(rationale: &str) -> bool {
+    [
+        "通常为男性名",
+        "通常为女性名",
+        "像男性名",
+        "像女性名",
+        "姓名暗示",
+        "名字暗示",
+        "从姓名推断",
+        "从名字推断",
+        "根据姓名推断",
+        "根据名字推断",
+        "常见印象",
+        "name implies",
+        "name suggests",
+        "typically a male name",
+        "typically a female name",
+    ]
+    .iter()
+    .any(|marker| rationale.to_ascii_lowercase().contains(marker))
 }
 
 fn evidence_quote_is_character_motivational_anchor(character_authority: &str, quote: &str) -> bool {
@@ -865,6 +923,60 @@ mod tests {
         ));
         assert_eq!(fabricated.verdict, SemanticReviewVerdict::Uncertain);
         assert!(fabricated.evidence.is_none());
+    }
+
+    #[test]
+    fn outline_review_rejects_identity_inference_from_bare_character_name() {
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：季望野；角色：主角；欲望：找回失落记忆".to_string(),
+            story_authority: "故事前提：季望野追查被抹除的记忆".to_string(),
+            contract_fields: "故事简述：季望野追查旧事故".to_string(),
+            outline: "她与治安官从对立转为合作".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"季望野通常为男性名，因此与女性代词冲突","evidence":{"authority_field":"角色权威","authority_quote":"季望野","candidate_field":"大纲","candidate_quote":"她与治安官从对立转为合作"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Uncertain);
+        assert!(finding.evidence.is_none());
+        assert!(request
+            .prompt()
+            .contains("不得从姓名用字、常见印象、题材常识或代词反推"));
+    }
+
+    #[test]
+    fn outline_review_keeps_explicit_gender_authority_conflict() {
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：岑知声；角色：女主".to_string(),
+            story_authority: "故事前提：岑知声追查旧案".to_string(),
+            contract_fields: "故事简述：岑知声还原真相".to_string(),
+            outline: "他独自进入矿井".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"女主被写成男性代词","evidence":{"authority_field":"角色权威.role","authority_quote":"女主","candidate_field":"大纲","candidate_quote":"他独自进入矿井"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+        assert!(finding.evidence.is_some());
+    }
+
+    #[test]
+    fn outline_review_keeps_name_drift_without_relying_on_rationale_keywords() {
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：岑知声；角色：主角".to_string(),
+            story_authority: "故事前提：岑知声追查旧案".to_string(),
+            contract_fields: "故事简述：岑知声还原真相".to_string(),
+            outline: "顾知声独自进入矿井".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"候选大纲使用了另一个人物标识","evidence":{"authority_field":"角色权威","authority_quote":"岑知声","candidate_field":"大纲","candidate_quote":"顾知声独自进入矿井"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+        assert!(finding.evidence.is_some());
     }
 
     #[test]

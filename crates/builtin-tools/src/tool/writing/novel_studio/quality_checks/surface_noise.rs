@@ -1031,15 +1031,23 @@ pub(in crate::tool::writing::novel_studio) fn line_looks_like_artifact_receipt_s
     }
     let lowered = trimmed.to_ascii_lowercase();
     let has_path = trimmed.contains("文件路径")
-        || trimmed.contains("路径")
+        || trimmed.contains("保存路径")
+        || trimmed.contains("输出路径")
+        || trimmed.contains("章节路径")
+        || trimmed.contains("路径：")
+        || trimmed.contains("路径:")
         || lowered.contains("artifact_path")
         || lowered.contains("project_path")
         || lowered.contains("txt_artifact_path");
     let has_receipt = trimmed.contains("修改摘要")
         || trimmed.contains("修改状态")
         || trimmed.contains("审查状态")
-        || trimmed.contains("同步")
-        || trimmed.contains("导出")
+        || trimmed.contains("同步状态")
+        || trimmed.contains("已同步")
+        || trimmed.contains("导出状态")
+        || trimmed.contains("已导出")
+        || trimmed.contains("导出：")
+        || trimmed.contains("导出:")
         || lowered.contains("runtime_effect")
         || lowered.contains("quality_gate")
         || lowered.contains("audit_status");
@@ -1188,5 +1196,15 @@ mod tests {
                 .any(|issue| issue.contains("embedded model-generated chapter heading")),
             "{issues:?}"
         );
+    }
+
+    #[test]
+    fn artifact_receipt_detection_does_not_delete_narrative_path_and_deduction() {
+        let prose = "她已经看到通往真相的路径，必须在对手察觉前把能量谎言彻底推导出来。";
+
+        assert!(!line_looks_like_artifact_receipt_surface(prose));
+        assert!(line_looks_like_artifact_receipt_surface(
+            "第3章：字数：2378，文件路径：/tmp/chapter-3.txt，修改状态：已完成。"
+        ));
     }
 }

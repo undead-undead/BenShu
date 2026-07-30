@@ -462,3 +462,15 @@ fn is_chinese_foreign_noise_context(prev: Option<char>, next: Option<char>) -> b
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_saved_prose;
+
+    #[test]
+    fn saved_prose_keeps_narrative_path_and_deduction_on_one_line() {
+        let prose = "她已经看到通往真相的路径，必须在对手察觉前把能量谎言彻底推导出来。";
+
+        assert_eq!(sanitize_saved_prose(prose), prose);
+    }
+}

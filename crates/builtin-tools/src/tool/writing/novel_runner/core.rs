@@ -136,6 +136,8 @@ mod tests {
         assert_eq!(package.power_delta, "沈砚掌握一次受限的旧阵感知");
         assert_eq!(package.resource_delta, "沈砚获得入门资格");
         assert_eq!(package.hook_opened, vec!["旧阵为何干预试炼"]);
+        assert!(!package.architecture.contains("scene_goal:"));
+        assert!(render_execution_contract_header(&package).contains("scene_goal: 沈砚通过入门试炼"));
     }
 
     #[test]
@@ -167,7 +169,13 @@ mod tests {
         let package = parse_chapter_execution_package(raw, "zh").expect("package");
 
         assert_eq!(package.hook_paid_off, vec!["失踪证人", "旧信来历"]);
-        assert_eq!(package.architecture.matches("hook_paid_off:").count(), 1);
+        assert!(!package.architecture.contains("hook_paid_off:"));
+        assert_eq!(
+            render_execution_contract_header(&package)
+                .matches("hook_paid_off:")
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -318,7 +326,8 @@ mod tests {
         let raw = r#"```json
 {"current_state":"闻庭安带着铜钥匙离开旧站","pending_hooks":"铜钥匙对应的门仍未找到","chapter_summary":"闻庭安从旧站取走铜钥匙并避开巡守","continuity_updates":["闻庭安持有铜钥匙"],"resolved_hooks":["旧站储物柜的开启方法已揭示"]}
 ```"#;
-        let observation = parse_final_chapter_observation(raw).expect("observation");
+        let observation =
+            parse_final_chapter_observation(raw, "闻庭安从旧站取走铜钥匙。").expect("observation");
         assert_eq!(observation.continuity_updates, ["闻庭安持有铜钥匙"]);
         assert_eq!(observation.resolved_hooks.len(), 1);
     }
@@ -334,7 +343,8 @@ mod tests {
   "state_changes": []
 }"#;
 
-        let observation = parse_final_chapter_observation(raw).expect("observation");
+        let observation =
+            parse_final_chapter_observation(raw, "闻庭安从旧站取走铜钥匙。").expect("observation");
 
         assert!(observation
             .current_state
@@ -349,7 +359,8 @@ mod tests {
     }
 
     #[test]
-    fn final_chapter_observation_allows_local_evidence_offset_binding() {
+    fn final_chapter_observation_resolves_sentence_ids_to_exact_local_evidence() {
+        let body = "闻庭安进入旧站。闻庭安带着铜钥匙离开旧站。";
         let raw = r#"{
   "current_state": "闻庭安带着铜钥匙离开旧站",
   "pending_hooks": "",
@@ -359,21 +370,73 @@ mod tests {
   "state_changes": [{
     "entity_id": "character-0001",
     "event_type": "resource",
-    "value": "带着铜钥匙",
-    "evidence": {"excerpt": "闻庭安带着铜钥匙离开旧站"},
     "authority_path": "chapter_contract.resource_delta",
-    "authority_excerpt": "闻庭安取得铜钥匙"
+    "evidence_sentence_ids": [2]
   }]
 }"#;
 
-        let observation = parse_final_chapter_observation(raw).expect("observation");
+        let observation = parse_final_chapter_observation(raw, body).expect("observation");
 
         assert_eq!(observation.state_changes[0].evidence.start_char, 0);
         assert_eq!(observation.state_changes[0].evidence.end_char, 0);
         assert_eq!(
             observation.state_changes[0].evidence.excerpt,
-            "闻庭安带着铜钥匙离开旧站"
+            "闻庭安带着铜钥匙离开旧站。"
         );
+        assert_eq!(
+            observation.state_changes[0].value,
+            observation.state_changes[0].evidence.excerpt
+        );
+        assert!(observation.state_changes[0].authority_excerpt.is_empty());
+    }
+
+    #[test]
+    fn final_chapter_observation_rejects_non_contiguous_sentence_ids() {
+        let body = "闻庭安进入旧站。闻庭安打开铜柜。闻庭安带着铜钥匙离开。";
+        let raw = r#"{
+  "current_state": "闻庭安离开旧站",
+  "chapter_summary": "闻庭安取得铜钥匙",
+  "state_changes": [{
+    "entity_id": "character-0001",
+    "event_type": "resource",
+    "authority_path": "chapter_contract.resource_delta",
+    "evidence_sentence_ids": [1, 3]
+  }]
+}"#;
+
+        let observation = parse_final_chapter_observation(raw, body).expect("observation");
+
+        assert!(observation.state_changes.is_empty());
+    }
+
+    #[test]
+    fn final_chapter_observation_rejects_evidence_across_single_newline_paragraphs() {
+        let body = "闻庭安打开铜柜。\n闻庭安带着铜钥匙离开。";
+        let raw = r#"{
+  "current_state": "闻庭安离开旧站",
+  "chapter_summary": "闻庭安取得铜钥匙",
+  "state_changes": [{
+    "entity_id": "character-0001",
+    "event_type": "resource",
+    "authority_path": "chapter_contract.resource_delta",
+    "evidence_sentence_ids": [1, 2]
+  }]
+}"#;
+
+        let observation = parse_final_chapter_observation(raw, body).expect("observation");
+
+        assert!(observation.state_changes.is_empty());
+        assert!(render_final_body_sentence_index(body).contains("。\n\n[S0002]"));
+    }
+
+    #[test]
+    fn final_body_sentence_index_keeps_decimal_measurements_in_one_sentence() {
+        let body = "裂缝宽度稳定在3.14毫米。闻庭安记下读数。";
+        let rendered = render_final_body_sentence_index(body);
+
+        assert!(rendered.contains("[S0001] 裂缝宽度稳定在3.14毫米。"));
+        assert!(rendered.contains("[S0002] 闻庭安记下读数。"));
+        assert_eq!(rendered.matches("[S").count(), 2);
     }
 
     #[test]
@@ -386,8 +449,8 @@ mod tests {
             None,
         );
 
-        assert!(prompt.contains("字符偏移和 change_id 由本地验证器绑定"));
-        assert!(!prompt.contains("按最终正文 Unicode 字符"));
+        assert!(prompt.contains("本地验证器会从不可变最终正文按句子编号恢复精确原文"));
+        assert!(prompt.contains("[S0001] 闻庭安带着铜钥匙离开旧站。"));
     }
 
     #[test]
@@ -400,10 +463,15 @@ mod tests {
             None,
         );
 
-        assert!(prompt.contains("最多 3 个相邻句子"));
-        assert!(prompt.contains("不得超过 320 个字符"));
+        assert!(prompt.contains("1 至 3 个同段、连续、正序的整数编号"));
+        assert!(prompt.contains("不得超过 320 字"));
         assert!(prompt.contains("authority_path=chapter_contract.new_state_after_chapter"));
+        assert!(prompt.contains("不要求逐字同措辞"));
+        assert!(prompt.contains("entity_id 使用稳定 ID"));
         assert!(prompt.contains("\"authority_path\":\"chapter_contract.new_state_after_chapter\""));
+        assert!(prompt.contains("\"evidence_sentence_ids\":[12,13]"));
+        assert!(!prompt.contains("\"authority_excerpt\""));
+        assert!(!prompt.contains("\"value\":\"正文"));
     }
 
     #[test]
@@ -504,6 +572,9 @@ mod tests {
         assert!(prompt.contains("约 4400 字"));
         assert!(prompt.contains("面板/worker 的章节最低目标"));
         assert!(prompt.contains("同一关键物件的来源、持有者、位置、状态和首次获得事件"));
+        assert!(prompt.contains("new_state_after_chapter"));
+        assert!(prompt.contains("点名受影响的既有权威实体"));
+        assert!(prompt.contains("不超过 320 个字符"));
         assert!(!prompt.contains("本章参考字数"));
     }
 

@@ -782,6 +782,7 @@ fn validate_character_patch_scope(
         issues.push("character_patch 没有可合并的角色字段".to_string());
         return;
     }
+    let mut slot_coverage = CharacterRoleSlotCoverage::from_characters(&existing);
     for character in &patch.characters {
         let name = character.canonical_name.trim();
         if value_missing(name) {
@@ -792,9 +793,39 @@ fn validate_character_patch_scope(
             .iter()
             .any(|known| known.canonical_name.trim() == name)
         {
-            issues.push(format!(
-                "character_patch 局部修复引用了角色权威表外姓名 `{name}`"
-            ));
+            let fills_missing_support = !slot_coverage.has_supporting
+                && !character.role_looks_primary()
+                && character.role_family().is_some();
+            let fills_missing_pressure =
+                !slot_coverage.has_pressure && character.role_looks_like_pressure_source();
+            if fills_missing_support && fills_missing_pressure {
+                issues.push(format!(
+                    "character_patch 新增角色 `{name}` 不能同时占用关系角色和压力角色两个互斥槽位"
+                ));
+                continue;
+            }
+            if !fills_missing_support && !fills_missing_pressure {
+                issues.push(format!(
+                    "character_patch 局部修复引用了角色权威表外姓名 `{name}`"
+                ));
+                continue;
+            }
+            if value_missing(&character.role)
+                || value_missing(&character.desire)
+                || value_missing(&character.fear)
+                || value_missing(&character.bottom_line)
+                || value_missing(&character.arc_start)
+                || value_missing(&character.arc_end)
+                || value_missing(&character.planned_entry)
+                || value_missing(&character.planned_exit)
+            {
+                issues.push(format!(
+                    "character_patch 新增的缺失角色槽位 `{name}` 必须提供完整欲望、恐惧、底线和弧线字段"
+                ));
+                continue;
+            }
+            slot_coverage.has_supporting |= fills_missing_support;
+            slot_coverage.has_pressure |= fills_missing_pressure;
             continue;
         }
         if [
@@ -2006,18 +2037,15 @@ pub(crate) fn character_contract_roles_match(
     {
         return true;
     }
-    if left.role_looks_primary() && right.role_looks_primary() {
+    let left_is_primary = left.role_looks_primary();
+    let right_is_primary = right.role_looks_primary();
+    if left_is_primary || right_is_primary {
+        return left_is_primary && right_is_primary;
+    }
+    if left.role_looks_like_pressure_source() && right.role_looks_like_pressure_source() {
         return true;
     }
-    if character_role_looks_like_pressure_source(&left.role)
-        && character_role_looks_like_pressure_source(&right.role)
-    {
-        return true;
-    }
-    if let (Some(left_family), Some(right_family)) = (
-        character_role_family(&left.role),
-        character_role_family(&right.role),
-    ) {
+    if let (Some(left_family), Some(right_family)) = (left.role_family(), right.role_family()) {
         if left_family == right_family {
             return true;
         }
@@ -2025,37 +2053,6 @@ pub(crate) fn character_contract_roles_match(
     let left_role = compact_role_label(&left.role);
     let right_role = compact_role_label(&right.role);
     !left_role.is_empty() && left_role == right_role
-}
-
-pub(super) fn character_role_family(role: &str) -> Option<&'static str> {
-    let lowered = role.to_ascii_lowercase();
-    if role.contains("同伴")
-        || role.contains("盟友")
-        || role.contains("伙伴")
-        || role.contains("朋友")
-        || lowered.contains("companion")
-        || lowered.contains("ally")
-        || lowered.contains("friend")
-    {
-        return Some("companion");
-    }
-    if role.contains("关系对象")
-        || role.contains("恋人")
-        || role.contains("女主")
-        || role.contains("男主")
-        || lowered.contains("love")
-        || lowered.contains("romance")
-    {
-        return Some("relationship");
-    }
-    if role.contains("导师")
-        || role.contains("师父")
-        || role.contains("老师")
-        || lowered.contains("mentor")
-    {
-        return Some("mentor");
-    }
-    None
 }
 
 fn compact_role_label(role: &str) -> String {
@@ -3203,7 +3200,7 @@ impl CharacterAuthority {
             });
         let pressure_source = characters
             .iter()
-            .find(|character| character_role_looks_like_pressure_source(&character.role))
+            .find(|character| character.role_looks_like_pressure_source())
             .map(|character| character.canonical_name.trim().to_string())
             .or_else(|| {
                 characters
@@ -3284,22 +3281,6 @@ impl CharacterAuthority {
                         .all(external_character_reference_trailing_action_noise)
             })
     }
-}
-
-pub(super) fn character_role_looks_like_pressure_source(role: &str) -> bool {
-    let role = role.trim();
-    !role.is_empty()
-        && [
-            "对手",
-            "反派",
-            "压力源",
-            "敌人",
-            "竞争者",
-            "antagonist",
-            "rival",
-        ]
-        .iter()
-        .any(|marker| role.contains(marker))
 }
 
 fn canonicalize_character_anchor_lines_to_authority(
@@ -4053,6 +4034,23 @@ mod tests {
     use crate::tool::writing::novel_contract_v2::AntagonistRecord;
 
     #[test]
+    fn primary_role_never_matches_a_relationship_slot() {
+        let primary = CharacterContract {
+            canonical_name: "顾怀声".to_string(),
+            role: "女主".to_string(),
+            ..Default::default()
+        };
+        let collaborator = CharacterContract {
+            canonical_name: "程谨岚".to_string(),
+            role: "关键关系对象".to_string(),
+            ..Default::default()
+        };
+
+        assert!(!character_contract_roles_match(&primary, &collaborator));
+        assert!(!character_contract_roles_match(&collaborator, &primary));
+    }
+
+    #[test]
     fn rejected_title_repair_keeps_existing_title_and_rationale_atomic() {
         let mut draft = super::super::build_initial_creation_draft(
             "session",
@@ -4671,6 +4669,88 @@ mod tests {
         let report = patch.validate_scope(&draft);
 
         assert!(report.ready(), "unexpected issues: {:?}", report.issues);
+    }
+
+    #[test]
+    fn character_patch_can_fill_a_missing_support_slot_after_authority_exists() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-character-missing-support",
+            "fiction",
+            "写一部都市悬疑小说，每章2500字，一共10万字",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            "name: 阮砚澜; role: 女主; desire: 公开并购证据; fear: 证据链被销毁; bottom_line: 不牺牲无辜员工; arc_start: 独自审计; arc_end: 公开追责; name_source: generated_by_writing_tool_policy".to_string(),
+            "name: 南照舟; role: 关键对手; desire: 掩盖并购黑幕; fear: 私账曝光; bottom_line: 不放弃董事会控制; arc_start: 幕后操盘; arc_end: 接受审判; name_source: generated_by_writing_tool_policy".to_string(),
+        ];
+        let patch = CreationContractPatch::Characters(CharacterPatch {
+            characters: vec![CharacterContract {
+                canonical_name: "顾临川".to_string(),
+                role: "关键关系对象".to_string(),
+                desire: "完成独立法律尽调".to_string(),
+                fear: "关键证人被收买".to_string(),
+                bottom_line: "不销毁原始律师底稿".to_string(),
+                arc_start: "只信书面程序".to_string(),
+                arc_end: "愿意与阮砚澜共同公开证据".to_string(),
+                planned_entry: "第一卷".to_string(),
+                planned_exit: "终局共同作证".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+
+        let report = patch.validate_scope(&draft);
+
+        assert!(report.ready(), "unexpected issues: {:?}", report.issues);
+        patch.apply_to_draft(&mut draft);
+        let characters = draft
+            .fiction_characters
+            .iter()
+            .map(|line| super::draft_character_line_to_contract(line))
+            .collect::<Vec<_>>();
+        assert_eq!(characters.len(), 3);
+        assert!(characters.iter().any(|character| {
+            character.role_family().is_some() && !character.role_looks_primary()
+        }));
+    }
+
+    #[test]
+    fn character_patch_still_rejects_an_unrequested_extra_name_when_slots_are_complete() {
+        let mut draft = super::build_initial_creation_draft(
+            "session-character-complete-slots",
+            "fiction",
+            "写一部都市悬疑小说，每章2500字，一共10万字",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            "name: 阮砚澜; role: 女主; desire: 公开并购证据; fear: 证据链被销毁; bottom_line: 不牺牲无辜员工; arc_start: 独自审计; arc_end: 公开追责".to_string(),
+            "name: 顾临川; role: 关键关系对象; desire: 完成法律尽调; fear: 证人被收买; bottom_line: 不销毁底稿; arc_start: 只信程序; arc_end: 共同作证".to_string(),
+            "name: 南照舟; role: 关键对手; desire: 掩盖并购黑幕; fear: 私账曝光; bottom_line: 不放弃控制; arc_start: 幕后操盘; arc_end: 接受审判".to_string(),
+        ];
+        let patch = CreationContractPatch::Characters(CharacterPatch {
+            characters: vec![CharacterContract {
+                canonical_name: "林默".to_string(),
+                role: "关键关系对象".to_string(),
+                desire: "加入调查".to_string(),
+                fear: "调查失败".to_string(),
+                bottom_line: "不伪造证据".to_string(),
+                arc_start: "局外人".to_string(),
+                arc_end: "证人".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+
+        let report = patch.validate_scope(&draft);
+
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.contains("角色权威表外姓名 `林默`")),
+            "unexpected issues: {:?}",
+            report.issues
+        );
     }
 
     #[test]
