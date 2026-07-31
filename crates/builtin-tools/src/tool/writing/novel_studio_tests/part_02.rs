@@ -424,7 +424,8 @@
 
     #[test]
     fn chapter_title_quality_requires_story_evidence() {
-        let manifest = test_manifest_with_primary_character();
+        let mut manifest = test_manifest_with_primary_character();
+        manifest.chapter_unit_target = None;
         let chapter = ChapterRecord {
             number: 5,
             title: "霜河旧钟".to_string(),
@@ -454,7 +455,8 @@
 
     #[test]
     fn chapter_metadata_gate_repairs_bare_abstract_concept_stack_title() {
-        let manifest = test_manifest_with_primary_character();
+        let mut manifest = test_manifest_with_primary_character();
+        manifest.chapter_unit_target = None;
         let chapter = ChapterRecord {
             number: 2,
             title: "频率过载".to_string(),

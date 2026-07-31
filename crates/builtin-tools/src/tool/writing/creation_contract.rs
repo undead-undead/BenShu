@@ -31,7 +31,7 @@ use benshu_compression::preview_text;
 use benshu_runtime_policy_core::{
     detect_creation_artifact_kind, evaluate_creation_intake, resolve_language_contract,
 };
-use generated_gate::contract_gate_from_issues;
+use generated_gate::contract_gate_from_findings;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 

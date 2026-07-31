@@ -83,7 +83,8 @@ fn persisted_contract_quality_findings(
     issues: &[String],
 ) -> super::super::issue::ContractIssueList {
     use super::super::issue::{
-        ContractIssue, ContractIssueEvidence, ContractIssueKind, ContractIssueList,
+        ContractIssue, ContractIssueDisposition, ContractIssueEvidence, ContractIssueKind,
+        ContractIssueList,
     };
 
     let mut findings = ContractIssueList::new(
@@ -120,6 +121,7 @@ fn persisted_contract_quality_findings(
         findings.push_issue(ContractIssue::new(
             code,
             kind,
+            ContractIssueDisposition::Diagnostic,
             ContractIssueEvidence::new(field, issue.clone()),
             issue.clone(),
         ));

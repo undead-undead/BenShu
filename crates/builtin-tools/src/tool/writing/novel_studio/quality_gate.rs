@@ -51,17 +51,42 @@ pub(super) fn mechanical_chapter_issues_with_scan(
     issues
 }
 
-fn contract_must_avoid_issues(manifest: &NovelProjectManifest, content: &str) -> Vec<String> {
+fn contract_must_avoid_findings(
+    manifest: &NovelProjectManifest,
+    content: &str,
+    authority_fingerprint: &str,
+) -> Vec<chapter_quality::ChapterFinding> {
     let Some(contract) = &manifest.contract else {
         return Vec::new();
     };
     contract
         .must_avoid
         .iter()
-        .filter_map(|banned| {
+        .enumerate()
+        .filter_map(|(index, banned)| {
             let banned = banned.trim();
-            (!banned.is_empty() && content.contains(banned))
-                .then(|| format!("chapter contains must_avoid phrase: {banned}"))
+            let start = (!banned.is_empty())
+                .then(|| content.find(banned))
+                .flatten()?;
+            Some(chapter_quality::ChapterFinding {
+                code: "world_rule_conflict".to_string(),
+                class: chapter_quality::ChapterFindingClass::Contract,
+                disposition: chapter_quality::ChapterFindingDisposition::HardBlock,
+                evidence_grade: chapter_quality::FindingEvidenceGrade::EvidenceBackedSemantic,
+                source: "contract_must_avoid".to_string(),
+                message: format!("chapter contains must_avoid phrase: {banned}"),
+                authority_evidence: vec![chapter_quality::AuthorityEvidenceRef {
+                    path: format!("/contract/must_avoid/{index}"),
+                    excerpt: banned.to_string(),
+                }],
+                body_evidence: vec![chapter_quality::BodyEvidenceSpan {
+                    start,
+                    end: start + banned.len(),
+                    excerpt: banned.to_string(),
+                }],
+                authority_fingerprint: authority_fingerprint.to_string(),
+                body_fingerprint: chapter_quality::chapter_body_fingerprint(content),
+            })
         })
         .collect()
 }
@@ -235,15 +260,10 @@ pub(super) fn chapter_quality_gate_with_scan(
         authority_fingerprint,
         content,
     ));
-    findings.extend(findings_from_messages(
-        contract_must_avoid_issues(manifest, content),
-        "world_rule_conflict",
-        chapter_quality::ChapterFindingClass::Contract,
-        chapter_quality::ChapterFindingDisposition::HardBlock,
-        chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
-        "contract_must_avoid",
-        authority_fingerprint,
+    findings.extend(contract_must_avoid_findings(
+        manifest,
         content,
+        authority_fingerprint,
     ));
     findings.extend(findings_from_messages(
         truth_issues
@@ -430,7 +450,7 @@ fn body_evidence_around(content: &str, term: &str) -> Option<chapter_quality::Bo
 
 fn chapter_length_findings(
     manifest: &NovelProjectManifest,
-    chapter: &ChapterRecord,
+    _chapter: &ChapterRecord,
     scan: &TextScanReport,
     authority_fingerprint: &str,
     content: &str,
@@ -438,17 +458,32 @@ fn chapter_length_findings(
     let Some(target) = manifest.chapter_unit_target.filter(|target| *target > 0) else {
         return Vec::new();
     };
-    let measured_units = chapter.unit_count.max(scan.units);
+    let measured_units = scan.units;
     let mut findings = Vec::new();
-    if measured_units < target {
+    let usable_floor = longform_policy::minimum_usable_chapter_units(target);
+    if measured_units < usable_floor {
         findings.push(chapter_quality::ChapterFinding::local(
-            "length_below_minimum",
-            chapter_quality::ChapterFindingClass::Length,
+            "length_below_usable_floor",
+            chapter_quality::ChapterFindingClass::BodyIntegrity,
             chapter_quality::ChapterFindingDisposition::HardBlock,
             chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
             "chapter_length",
             format!(
-                "chapter length is below minimum target: {} of {} units",
+                "chapter body is below the usable floor: {} of {} units (target {})",
+                measured_units, usable_floor, target
+            ),
+            authority_fingerprint,
+            content,
+        ));
+    } else if measured_units < target {
+        findings.push(chapter_quality::ChapterFinding::local(
+            "length_below_target",
+            chapter_quality::ChapterFindingClass::Length,
+            chapter_quality::ChapterFindingDisposition::DeterministicRepair,
+            chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+            "chapter_length",
+            format!(
+                "chapter length is below the soft target: {} of {} units",
                 measured_units, target
             ),
             authority_fingerprint,

@@ -1,5 +1,24 @@
 use super::*;
 
+pub(in crate::tool::writing::novel_workflow_driver) fn typed_findings_in_value(
+    value: &Value,
+) -> Vec<chapter_quality::ChapterFinding> {
+    [
+        "/quality_gate/findings",
+        "/metadata_gate/findings",
+        "/review/findings",
+        "/findings",
+    ]
+    .into_iter()
+    .filter_map(|pointer| value.pointer(pointer))
+    .filter_map(Value::as_array)
+    .flatten()
+    .filter_map(|finding| {
+        serde_json::from_value::<chapter_quality::ChapterFinding>(finding.clone()).ok()
+    })
+    .collect()
+}
+
 pub(in crate::tool::writing::novel_workflow_driver) fn needs_revision(value: &Value) -> bool {
     value_has_hard_findings(value)
         || !json_array_is_empty(value.pointer("/truth_validation/issues"))
@@ -15,17 +34,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn audit_passed(value: &Valu
         .pointer("/review/locally_validated")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let has_typed_findings = ["/quality_gate/findings", "/review/findings", "/findings"]
-        .into_iter()
-        .any(|pointer| value.pointer(pointer).is_some());
-    let has_legacy_issues = value.get("issues").and_then(Value::as_array).is_some()
-        || value
-            .pointer("/review/issues")
-            .and_then(Value::as_array)
-            .is_some();
-    let legacy_untyped_review = !locally_validated && !has_typed_findings && has_legacy_issues;
-    !value_has_hard_findings(value)
-        && ((verdict_passed && locally_validated) || legacy_untyped_review)
+    !value_has_hard_findings(value) && verdict_passed && locally_validated
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn audit_next_action_blocked(
@@ -45,57 +54,33 @@ pub(in crate::tool::writing::novel_workflow_driver) fn audit_next_action_blocked
 pub(in crate::tool::writing::novel_workflow_driver) fn value_has_hard_findings(
     value: &Value,
 ) -> bool {
-    ["/quality_gate/findings", "/review/findings", "/findings"]
-        .into_iter()
-        .filter_map(|pointer| value.pointer(pointer))
-        .filter_map(Value::as_array)
-        .flatten()
-        .any(|finding| {
-            finding
-                .get("disposition")
-                .and_then(Value::as_str)
-                .is_some_and(|disposition| disposition == "hard_block")
-        })
+    typed_findings_in_value(value)
+        .iter()
+        .any(chapter_quality::ChapterFinding::hard_blocking)
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn finding_codes_with_disposition(
     value: &Value,
-    disposition: &str,
+    disposition: chapter_quality::ChapterFindingDisposition,
 ) -> BTreeSet<String> {
-    ["/quality_gate/findings", "/review/findings", "/findings"]
+    typed_findings_in_value(value)
         .into_iter()
-        .filter_map(|pointer| value.pointer(pointer))
-        .filter_map(Value::as_array)
-        .flatten()
-        .filter(|finding| {
-            finding
-                .get("disposition")
-                .and_then(Value::as_str)
-                .is_some_and(|value| value == disposition)
+        .filter(|finding| match disposition {
+            chapter_quality::ChapterFindingDisposition::HardBlock => finding.hard_blocking(),
+            expected => finding.disposition == expected,
         })
-        .filter_map(|finding| finding.get("code").and_then(Value::as_str))
-        .map(str::to_string)
+        .map(|finding| finding.code)
         .collect()
 }
 
-pub(in crate::tool::writing::novel_workflow_driver) fn value_has_non_metadata_deterministic_repairs(
+pub(in crate::tool::writing::novel_workflow_driver) fn value_has_local_cleanup_repairs(
     value: &Value,
 ) -> bool {
-    ["/quality_gate/findings", "/review/findings", "/findings"]
-        .into_iter()
-        .filter_map(|pointer| value.pointer(pointer))
-        .filter_map(Value::as_array)
-        .flatten()
-        .any(|finding| {
-            finding
-                .get("disposition")
-                .and_then(Value::as_str)
-                .is_some_and(|disposition| disposition == "deterministic_repair")
-                && !finding
-                    .get("class")
-                    .and_then(Value::as_str)
-                    .is_some_and(|class| class == "metadata")
-        })
+    typed_findings_in_value(value).into_iter().any(|finding| {
+        finding.disposition == chapter_quality::ChapterFindingDisposition::DeterministicRepair
+            && finding.class != chapter_quality::ChapterFindingClass::Metadata
+            && finding.code != "length_below_target"
+    })
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn write_result_is_clean_for_rule_audit(

@@ -135,23 +135,50 @@ pub(super) async fn durable_chapter_progress(
             ));
             break;
         }
-        match super::read_approval_receipt(project_dir, expected).await {
-            Ok(Some(receipt)) => {
-                progress.latest_receipt_present = true;
-                progress.latest_receipt_matches_body = receipt.body_fingerprint
-                    == super::chapter_quality::chapter_body_fingerprint(&body);
-                progress.latest_receipt_matches_truth = !receipt.truth_fingerprint.is_empty()
-                    && receipt.truth_fingerprint
-                        == super::approval_transaction::approval_truth_fingerprint(manifest);
-                progress.latest_receipt_legacy = receipt.legacy;
+        let receipt = match super::read_approval_receipt(project_dir, expected).await {
+            Ok(Some(receipt)) => receipt,
+            Ok(None) => {
+                progress.next_chapter = expected;
+                progress.first_unapproved_chapter = Some(expected);
+                progress.blockers.push(format!(
+                    "chapter {expected} approval receipt is missing from the approved prefix"
+                ));
+                break;
             }
-            _ => {
-                progress.latest_receipt_present = false;
-                progress.latest_receipt_matches_body = false;
-                progress.latest_receipt_matches_truth = false;
-                progress.latest_receipt_legacy = false;
+            Err(error) => {
+                progress.next_chapter = expected;
+                progress.first_unapproved_chapter = Some(expected);
+                progress.blockers.push(format!(
+                    "chapter {expected} approval receipt is unreadable: {error}"
+                ));
+                break;
             }
+        };
+        if receipt.legacy {
+            progress.next_chapter = expected;
+            progress.first_unapproved_chapter = Some(expected);
+            progress.blockers.push(format!(
+                "chapter {expected} has a legacy approval receipt and cannot establish trusted progress"
+            ));
+            break;
         }
+        let body_matches =
+            receipt.body_fingerprint == super::chapter_quality::chapter_body_fingerprint(&body);
+        if !body_matches {
+            progress.next_chapter = expected;
+            progress.first_unapproved_chapter = Some(expected);
+            progress.blockers.push(format!(
+                "chapter {expected} approval receipt does not match its final body on disk"
+            ));
+            break;
+        }
+
+        progress.latest_receipt_present = true;
+        progress.latest_receipt_matches_body = true;
+        progress.latest_receipt_matches_truth = !receipt.truth_fingerprint.is_empty()
+            && receipt.truth_fingerprint
+                == super::approval_transaction::approval_truth_fingerprint(manifest);
+        progress.latest_receipt_legacy = false;
 
         progress.approved_prefix_chapters = expected;
         progress.approved_prefix_units = progress.approved_prefix_units.saturating_add(units);

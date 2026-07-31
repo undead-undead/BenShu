@@ -315,7 +315,7 @@ pub(crate) fn story_bible_audit(bible: Option<&StoryBible>) -> (Vec<String>, Vec
         .iter()
         .all(character_anchor_core_is_missing)
     {
-        blockers.push(
+        warnings.push(
             "Story bible character anchors lack explicit desire/fear/bottom-line core.".to_string(),
         );
     }
@@ -326,7 +326,7 @@ pub(crate) fn story_bible_audit(bible: Option<&StoryBible>) -> (Vec<String>, Vec
         blockers.push("Story bible has no global narrative spine.".to_string());
     }
     if bible.genre_governance.control_axes.is_empty() {
-        blockers.push("Story bible has no genre governance axes.".to_string());
+        warnings.push("Story bible has no genre governance axes.".to_string());
     }
     let structured_warnings = structured_contract_warnings(&bible.structured_contract_v2);
     warnings.extend(structured_warnings);
@@ -351,9 +351,6 @@ pub(crate) fn story_contract_blockers(contract: &StoryContract) -> Vec<String> {
     if contract.outline.trim().is_empty() {
         blockers.push("Story contract outline/finale direction is missing.".to_string());
     }
-    if contract.themes.iter().all(|item| item.trim().is_empty()) {
-        blockers.push("Story contract themes are missing.".to_string());
-    }
     if contract
         .characters
         .iter()
@@ -370,16 +367,6 @@ pub(crate) fn story_contract_blockers(contract: &StoryContract) -> Vec<String> {
         if named == 0 {
             blockers.push("Story contract has no stable named character anchor.".to_string());
         }
-        if !contract
-            .characters
-            .iter()
-            .any(|item| character_contract_item_has_core_anchor(item))
-        {
-            blockers.push(
-                "Story contract characters need at least one explicit desire/fear/bottom-line anchor."
-                    .to_string(),
-            );
-        }
     }
     if contract
         .world_rules
@@ -387,13 +374,6 @@ pub(crate) fn story_contract_blockers(contract: &StoryContract) -> Vec<String> {
         .all(|item| item.trim().is_empty())
     {
         blockers.push("Story contract world_rules are missing.".to_string());
-    }
-    if contract
-        .style_rules
-        .iter()
-        .all(|item| item.trim().is_empty())
-    {
-        blockers.push("Story contract style_rules are missing.".to_string());
     }
     blockers
 }

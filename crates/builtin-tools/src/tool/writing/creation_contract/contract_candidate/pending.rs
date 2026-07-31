@@ -5,7 +5,7 @@ struct ContractCandidateRank {
     user_authority_preserved: i64,
     confirmed_fields_preserved: i64,
     blocker_count: i64,
-    blocker_vector: [i64; 6],
+    blocker_vector: [i64; 5],
     cross_field_contradictions: i64,
     protected_fields_preserved: i64,
     filled_field_score: i64,
@@ -86,15 +86,14 @@ fn draft_contract_validation_rank(
         .validate_for_scope(ContractReadinessScope::LockedAuthorityContract)
         .issues;
     let issue_messages = issues.messages();
-    let mut blocker_vector = [0_i64; 6];
+    let mut blocker_vector = [0_i64; 5];
     for issue in issues.iter() {
         let index = match issue.kind {
             super::issue::ContractIssueKind::Skeleton => 0,
             super::issue::ContractIssueKind::Characters => 1,
             super::issue::ContractIssueKind::Plot => 2,
             super::issue::ContractIssueKind::Governance => 3,
-            super::issue::ContractIssueKind::Diagnostic => 4,
-            super::issue::ContractIssueKind::Other => 5,
+            super::issue::ContractIssueKind::Other => 4,
         };
         blocker_vector[index] -= 1;
     }
@@ -269,11 +268,16 @@ pub(crate) fn pending_normalized_contract(
     NovelCreationContract::parse_json_boundary(&text)
 }
 
-pub(crate) fn contract_boundary_quality_issues(
+pub(crate) fn contract_boundary_quality_findings(
     draft: &SessionCreationDraftState,
     contract_text: &str,
-) -> Vec<String> {
-    let mut issues = Vec::new();
+) -> super::issue::ContractIssueList {
+    let mut issues = super::issue::ContractIssueList::new(
+        "contract.boundary_pollution",
+        super::issue::ContractIssueKind::Other,
+        "contract_text",
+    );
+    issues.set_disposition(super::issue::ContractIssueDisposition::HardBlock);
     let language = draft.language.to_ascii_lowercase();
     let expects_chinese = language.starts_with("zh") || draft.language.contains("中文");
     if expects_chinese {
@@ -297,7 +301,9 @@ pub(crate) fn contract_boundary_quality_issues(
         issues.push("创作蓝图输出混入法律合同/委托协议字段，不能作为小说设定草案".to_string());
     }
     if let Some(fragment) = malformed_numeric_fragment(contract_text) {
+        issues.set_disposition(super::issue::ContractIssueDisposition::Repairable);
         issues.push(format!("合同数字格式异常：{fragment}"));
+        issues.set_disposition(super::issue::ContractIssueDisposition::HardBlock);
     }
     if let Some(fragment) = malformed_contract_name_fragment(contract_text) {
         issues.push(format!("合同命名字段异常：{fragment}"));
@@ -305,9 +311,16 @@ pub(crate) fn contract_boundary_quality_issues(
     if let Some(fragment) = assistant_surface_noise_fragment(contract_text) {
         issues.push(format!("合同混入面板说明或上一轮草案提示：{fragment}"));
     }
-    issues.sort();
-    issues.dedup();
+    issues.sort_dedup();
     issues
+}
+
+#[cfg(test)]
+pub(crate) fn contract_boundary_quality_issues(
+    draft: &SessionCreationDraftState,
+    contract_text: &str,
+) -> Vec<String> {
+    contract_boundary_quality_findings(draft, contract_text).messages()
 }
 
 pub(crate) fn record_pending_contract_candidate(

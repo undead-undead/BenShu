@@ -3,6 +3,13 @@ use super::*;
 pub(super) const MAX_METADATA_REPAIR_ATTEMPTS: usize = 5;
 
 pub(super) fn metadata_gate_needs_repair(write_result: &Value) -> bool {
+    if write_result
+        .get("metadata_fallback_applied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
     metadata_gate_blocks(write_result)
         || !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
         || !json_array_is_empty(write_result.pointer("/truth_validation/issues"))
@@ -13,6 +20,13 @@ pub(super) fn metadata_gate_blocks(write_result: &Value) -> bool {
 }
 
 pub(super) fn metadata_gate_has_repairable(write_result: &Value) -> bool {
+    if write_result
+        .get("metadata_fallback_applied")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return false;
+    }
     !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
 }
 
@@ -43,17 +57,6 @@ pub(super) fn metadata_repair_allowed_with_audit(write_result: &Value, audit: &V
         && audit_passed(audit)
         && !value_has_hard_findings(write_result)
         && !value_has_hard_findings(audit)
-}
-
-pub(super) fn format_metadata_blocker_result(
-    project_path: &str,
-    chapter_number: usize,
-    write_result: &Value,
-) -> String {
-    format!(
-        "status: blocked\nworker: writer\nexecuted_tool: novel_studio\noperation: repair_chapter_metadata\nproject_path: {project_path}\nchapter_number: {chapter_number}\nruntime_effect: artifact.metadata_needs_repair\ndraft_status: preserved_needs_revision\nblockers: chapter body is preserved, but metadata repair did not converge\nmetadata_issues:\n{}",
-        metadata_issue_summary(write_result)
-    )
 }
 
 pub(super) fn metadata_repair_generation_limits(language: &str) -> TextGenerationLimits {

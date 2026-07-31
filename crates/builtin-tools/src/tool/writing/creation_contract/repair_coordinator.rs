@@ -1,5 +1,6 @@
 use super::issue::{
-    ContractIssue, ContractIssueEvidence, ContractIssueKind, ContractIssueList, ContractIssueSet,
+    ContractIssue, ContractIssueDisposition, ContractIssueEvidence, ContractIssueKind,
+    ContractIssueList, ContractIssueSet,
 };
 use super::staged_prompts::{
     contract_completion_stage_output_budget_for_issues,
@@ -304,6 +305,7 @@ fn semantic_authority_conflict_issue(
         ContractIssue::new(
             code,
             kind,
+            ContractIssueDisposition::HardBlock,
             ContractIssueEvidence::new(
                 evidence.candidate_field.trim(),
                 format!(
@@ -1066,9 +1068,10 @@ where
                     current_outcome = repaired;
                     current_issues.set_scope(
                         "contract.patch_output",
-                        ContractIssueKind::Diagnostic,
+                        ContractIssueKind::Other,
                         "model_output",
                     );
+                    current_issues.set_disposition(ContractIssueDisposition::Diagnostic);
                     current_issues.push("合同修复输出没有形成可审查合同候选");
                     current_issues.sort_dedup();
                     model_patch_budget.record();
@@ -1268,7 +1271,8 @@ fn next_creation_contract_repair_issues(
         if creation_contract_issue_is_patch_scope_noise(&issue) {
             recomputed.push_issue(ContractIssue::new(
                 "contract.patch_scope",
-                ContractIssueKind::Diagnostic,
+                ContractIssueKind::Other,
+                ContractIssueDisposition::Diagnostic,
                 ContractIssueEvidence::new("typed_patch", issue.clone()),
                 issue,
             ));
@@ -1276,13 +1280,18 @@ fn next_creation_contract_repair_issues(
             recomputed.push_issue(ContractIssue::new(
                 "contract.candidate_boundary",
                 ContractIssueKind::Other,
+                ContractIssueDisposition::Repairable,
                 ContractIssueEvidence::new("candidate", issue.clone()),
                 issue,
             ));
         }
     }
     recomputed.sort_dedup();
-    if submission.is_ready() || recomputed.iter().any(|issue| !issue.kind.is_diagnostic()) {
+    if submission.is_ready()
+        || recomputed
+            .iter()
+            .any(|issue| issue.disposition.is_actionable())
+    {
         recomputed
     } else {
         ContractIssueList::single(
@@ -1363,7 +1372,8 @@ fn append_contract_patch_feedback(
     {
         issues.push_issue(ContractIssue::new(
             feedback_code.clone(),
-            ContractIssueKind::Diagnostic,
+            ContractIssueKind::Other,
+            ContractIssueDisposition::Diagnostic,
             ContractIssueEvidence::new(
                 format!("previous_model_patch:{stage_key}"),
                 diagnostic.clone(),
@@ -1806,7 +1816,13 @@ mod tests {
     use super::*;
 
     fn test_issue(code: &str, kind: ContractIssueKind, text: &str) -> ContractIssue {
-        ContractIssue::new(code, kind, ContractIssueEvidence::new("test", text), text)
+        ContractIssue::new(
+            code,
+            kind,
+            ContractIssueDisposition::Repairable,
+            ContractIssueEvidence::new("test", text),
+            text,
+        )
     }
 
     fn repair_test_draft() -> SessionCreationDraftState {

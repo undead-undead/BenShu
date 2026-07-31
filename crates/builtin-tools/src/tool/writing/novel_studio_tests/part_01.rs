@@ -1566,7 +1566,7 @@ fn settlement_display_script_residue_is_advisory() {
 }
 
 #[test]
-fn nonempty_final_body_rejects_empty_state_settlement() {
+fn nonempty_final_body_degrades_empty_display_state_without_polluting_truth() {
     let settlement = SettlementOutput {
         chapter_fingerprint: String::new(),
         body_fingerprint: String::new(),
@@ -1582,7 +1582,11 @@ fn nonempty_final_body_rejects_empty_state_settlement() {
 
     let validation = deterministic_state_validation("沈砚离开旧城。", &settlement);
 
-    assert!(!validation.passed);
+    assert!(validation.passed);
+    assert_eq!(
+        validation.disposition,
+        StateSettlementDisposition::DisplayMetadataDegraded
+    );
     assert!(validation
         .warnings
         .iter()
@@ -2419,7 +2423,8 @@ fn chapter_metadata_gate_rejects_fully_reused_prior_truth_items() {
 
 #[test]
 fn title_without_story_evidence_requires_metadata_repair() {
-    let manifest = test_manifest_with_primary_character();
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.chapter_unit_target = None;
     let chapter = ChapterRecord {
         number: 1,
         title: "弦音初颤".to_string(),
@@ -4352,6 +4357,7 @@ fn manifest_character_anchors_keep_primary_character_first() {
 fn chapter_quality_advises_on_supporting_character_dominance_without_hard_evidence() {
     let mut manifest = test_manifest_with_primary_character();
     manifest.language = "zh-CN".to_string();
+    manifest.chapter_unit_target = None;
     if let Some(contract) = manifest.contract.as_mut() {
         contract.characters = vec![
             "name: 谢栖遥; role: 主角; desire: 摆脱底层命运".to_string(),

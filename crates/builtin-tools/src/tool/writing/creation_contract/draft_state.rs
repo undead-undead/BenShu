@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 pub enum ContractReadinessScope {
     DisplayContract,
     LockedAuthorityContract,
-    #[allow(dead_code)]
+    #[cfg(test)]
     FullLongformContract,
 }
 

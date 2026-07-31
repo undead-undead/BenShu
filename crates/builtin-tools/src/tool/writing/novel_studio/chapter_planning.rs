@@ -255,9 +255,9 @@ impl NovelStudioTool {
                     hard_blockers: hard_findings.len(),
                     authority_conflicts,
                     state_conflicts,
-                    incomplete_body: hard_findings.iter().any(|finding| {
-                        finding.code == "body_truncated" || finding.code == "body_missing"
-                    }),
+                    incomplete_body: hard_findings
+                        .iter()
+                        .any(|finding| finding.code == "body_truncated"),
                     contaminated_body: hard_findings
                         .iter()
                         .any(|finding| finding.code == "body_surface_contamination"),

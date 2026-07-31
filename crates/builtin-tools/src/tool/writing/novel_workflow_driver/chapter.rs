@@ -20,7 +20,7 @@ enum MetadataRepairFlow {
     NotNeeded,
     Retry,
     Repaired,
-    Blocked(String),
+    FallbackApplied,
 }
 
 async fn record_runner_parse_provenance(
@@ -992,7 +992,7 @@ impl NovelChapterRunner {
                         )
                         .await?
                     {
-                        MetadataRepairFlow::Blocked(result) => return Ok(result),
+                        MetadataRepairFlow::FallbackApplied => break,
                         MetadataRepairFlow::Retry => {
                             revision_cycle.state.budget.metadata_repair_attempts =
                                 metadata_repair_attempts;
@@ -1359,13 +1359,6 @@ impl NovelChapterRunner {
                 &audit,
             ));
         }
-        if metadata_gate_blocks(&write_result) {
-            return Ok(format_metadata_blocker_result(
-                &self.project_path,
-                chapter_number,
-                &write_result,
-            ));
-        }
         let settlement = self
             .settle_observed_final_chapter_state(
                 chapter_number,
@@ -1409,13 +1402,6 @@ impl NovelChapterRunner {
                 )
                 .await?;
             if !approval_result_is_approved(&approval) {
-                if approval_result_requires_metadata_repair(&approval) {
-                    return Ok(format_metadata_blocker_result(
-                        &self.project_path,
-                        chapter_number,
-                        &write_result,
-                    ));
-                }
                 return Ok(format_revision_blocker_result(
                     &self.project_path,
                     chapter_number,
@@ -1718,12 +1704,13 @@ impl NovelChapterRunner {
         if !metadata_repair_allowed_with_audit(write_result, audit) {
             return Ok(MetadataRepairFlow::NotNeeded);
         }
-        if !quality_gate_body_passed(write_result) || *attempts >= max_attempts {
-            return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
-                &self.project_path,
-                chapter_number,
-                write_result,
-            )));
+        if !quality_gate_body_passed(write_result) {
+            return Ok(MetadataRepairFlow::NotNeeded);
+        }
+        if *attempts >= max_attempts {
+            self.apply_local_metadata_fallback(chapter_number, draft, write_result)
+                .await?;
+            return Ok(MetadataRepairFlow::FallbackApplied);
         }
         *attempts += 1;
         let current_title = draft.title.trim();
@@ -1746,15 +1733,34 @@ impl NovelChapterRunner {
             if *attempts < max_attempts {
                 return Ok(MetadataRepairFlow::Retry);
             }
-            return Ok(MetadataRepairFlow::Blocked(format_metadata_blocker_result(
-                &self.project_path,
-                chapter_number,
-                write_result,
-            )));
+            self.apply_local_metadata_fallback(chapter_number, draft, write_result)
+                .await?;
+            return Ok(MetadataRepairFlow::FallbackApplied);
         };
         *draft = repaired_draft;
         *write_result = repaired_write_result;
         Ok(MetadataRepairFlow::Repaired)
+    }
+
+    async fn apply_local_metadata_fallback(
+        &self,
+        chapter_number: usize,
+        draft: &mut novel_runner::DraftOutput,
+        write_result: &mut Value,
+    ) -> anyhow::Result<()> {
+        let mut repaired = call_novel_studio_json(
+            &self.tool,
+            json!({
+                "action": "repair_chapter_metadata",
+                "project_path": self.project_path,
+                "chapter_number": chapter_number
+            }),
+        )
+        .await?;
+        align_draft_with_studio_result(draft, &repaired);
+        repaired["metadata_fallback_applied"] = json!(true);
+        *write_result = repaired;
+        Ok(())
     }
 
     async fn approve_chapter_after_validation(
@@ -2188,23 +2194,6 @@ fn approval_result_is_approved(value: &Value) -> bool {
             .is_some_and(chapter_lifecycle::status_is_approved)
 }
 
-fn approval_result_requires_metadata_repair(value: &Value) -> bool {
-    value
-        .get("error_kind")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| kind == "approval_requires_metadata_repair")
-        || value
-            .get("next_actions")
-            .and_then(Value::as_array)
-            .is_some_and(|items| {
-                items.iter().any(|item| {
-                    item.get("action")
-                        .and_then(Value::as_str)
-                        .is_some_and(|action| action == "repair_chapter_metadata")
-                })
-            })
-}
-
 fn draft_output_fallback_body_is_usable(
     draft: &novel_runner::DraftOutput,
     chapter_unit_target: Option<usize>,
@@ -2227,7 +2216,7 @@ fn draft_output_fallback_body_is_usable(
     let Some(required) = chapter_unit_target.map(required_chapter_units) else {
         return units >= 400;
     };
-    let minimum = required.saturating_mul(4).saturating_div(5).max(400);
+    let minimum = minimum_chapter_units(required).max(400);
     units >= minimum
 }
 

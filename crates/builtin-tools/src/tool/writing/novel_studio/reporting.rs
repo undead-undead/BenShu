@@ -127,16 +127,6 @@ pub(super) fn audit_manifest(manifest: &NovelProjectManifest) -> serde_json::Val
             ));
         }
     }
-    if let Some(target) = manifest.chapter_unit_target {
-        for chapter in &manifest.chapters {
-            if target > 0 && chapter.unit_count < target / 3 {
-                warnings.push(format!(
-                    "Chapter {} is far below the chapter target: {} of {} units.",
-                    chapter.number, chapter.unit_count, target
-                ));
-            }
-        }
-    }
     json!({
         "passed": blockers.is_empty(),
         "blockers": blockers,

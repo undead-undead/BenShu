@@ -533,9 +533,10 @@
             .await
             .expect("settle");
         let settlement: serde_json::Value = serde_json::from_str(&settlement).expect("settle json");
-        assert_eq!(settlement["validation"]["passed"], false);
+        assert_eq!(settlement["validation"]["passed"], true);
         assert_eq!(settlement["settlement_source"], "observer_degraded");
-        assert_eq!(settlement["chapter_status"], "state_repair_required");
+        assert_eq!(settlement["chapter_status"], "state_ready");
+        assert_eq!(settlement["next_action"], "approve_chapter");
     }
 
     #[tokio::test]
@@ -1028,7 +1029,7 @@
     }
 
     #[test]
-    fn chapter_unit_target_blocks_one_unit_shortfall() {
+    fn chapter_unit_target_marks_one_unit_shortfall_for_bounded_repair() {
         let now = Utc::now().to_rfc3339();
         let manifest = NovelProjectManifest {
             schema_version: "1".to_string(),
@@ -1073,7 +1074,7 @@
             volume_title: String::new(),
             path: "chapters/0001.md".to_string(),
             summary: "主角出场。".to_string(),
-            unit_count: 2_499,
+            unit_count: 0,
             status: "draft".to_string(),
             key_facts: vec!["主角出场。".to_string()],
             continuity_updates: vec!["主角开始行动。".to_string()],
@@ -1081,12 +1082,13 @@
             updated_at: now,
         };
 
-        let issues = mechanical_chapter_issues(&manifest, &chapter, "主角出场并开始行动。");
+        let content = "章".repeat(2_499);
+        let issues = mechanical_chapter_issues(&manifest, &chapter, &content);
 
         assert!(
             issues
                 .iter()
-                .any(|issue| issue.contains("chapter length is below minimum target: 2499 of 2500")),
+                .any(|issue| issue.contains("chapter length is below the soft target: 2499 of 2500")),
             "{issues:?}"
         );
     }
@@ -1130,7 +1132,7 @@
             story_bible: None,
             structured_contract_v2: NovelContractV2::default(),
         };
-        let mut chapter = ChapterRecord {
+        let chapter = ChapterRecord {
             number: 1,
             title: "第一章".to_string(),
             volume_id: String::new(),
@@ -1144,26 +1146,26 @@
             created_at: now.clone(),
             updated_at: now,
         };
-        let content = "主角出场并开始行动。";
+        let content = "章".repeat(5_000);
 
-        let at_2500_cap = mechanical_chapter_issues(&manifest, &chapter, content);
+        let at_2500_cap = mechanical_chapter_issues(&manifest, &chapter, &content);
         assert!(at_2500_cap
             .iter()
             .all(|issue| !issue.contains("exceeds maximum")));
-        chapter.unit_count = 5_001;
-        let above_2500_cap = mechanical_chapter_issues(&manifest, &chapter, content);
+        let content = "章".repeat(5_001);
+        let above_2500_cap = mechanical_chapter_issues(&manifest, &chapter, &content);
         assert!(above_2500_cap
             .iter()
             .any(|issue| issue.contains("2500-unit chapters may not exceed 5000 units")));
 
         manifest.chapter_unit_target = Some(5_000);
-        chapter.unit_count = 10_000;
-        let at_5000_cap = mechanical_chapter_issues(&manifest, &chapter, content);
+        let content = "章".repeat(10_000);
+        let at_5000_cap = mechanical_chapter_issues(&manifest, &chapter, &content);
         assert!(at_5000_cap
             .iter()
             .all(|issue| !issue.contains("exceeds maximum")));
-        chapter.unit_count = 10_001;
-        let above_5000_cap = mechanical_chapter_issues(&manifest, &chapter, content);
+        let content = "章".repeat(10_001);
+        let above_5000_cap = mechanical_chapter_issues(&manifest, &chapter, &content);
         assert!(above_5000_cap
             .iter()
             .any(|issue| issue.contains("5000-unit chapters may not exceed 10000 units")));

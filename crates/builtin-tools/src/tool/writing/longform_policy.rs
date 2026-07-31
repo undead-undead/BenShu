@@ -16,6 +16,13 @@ pub(crate) fn chapter_tier_max_units(target: usize) -> usize {
     target.max(1).saturating_mul(2)
 }
 
+/// One authority for the minimum complete body eligible for bounded top-up or
+/// best-candidate acceptance. Falling below this floor remains a body-integrity
+/// blocker; reaching it does not waive any other contract or continuity gate.
+pub(crate) fn minimum_usable_chapter_units(target: usize) -> usize {
+    target.saturating_mul(4).div_ceil(5).max(1)
+}
+
 /// Returns the number of chapters needed to cover a positive total-unit target
 /// at a positive per-chapter target. Callers retain responsibility for choosing
 /// fallback inputs; the rounding rule lives here so contracts, prompts,

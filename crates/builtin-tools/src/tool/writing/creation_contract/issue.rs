@@ -6,13 +6,20 @@ pub(crate) enum ContractIssueKind {
     Characters,
     Plot,
     Governance,
-    Diagnostic,
     Other,
 }
 
-impl ContractIssueKind {
-    pub(crate) fn is_diagnostic(self) -> bool {
-        matches!(self, Self::Diagnostic)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum ContractIssueDisposition {
+    HardBlock,
+    Repairable,
+    Advisory,
+    Diagnostic,
+}
+
+impl ContractIssueDisposition {
+    pub(crate) fn is_actionable(self) -> bool {
+        matches!(self, Self::HardBlock | Self::Repairable)
     }
 }
 
@@ -82,6 +89,7 @@ impl ContractIssueEvidence {
 pub(crate) struct ContractIssue {
     pub(crate) code: String,
     pub(crate) kind: ContractIssueKind,
+    pub(crate) disposition: ContractIssueDisposition,
     pub(crate) evidence: ContractIssueEvidence,
     pub(crate) text: String,
 }
@@ -92,12 +100,14 @@ impl ContractIssue {
     pub(crate) fn new(
         code: impl Into<String>,
         kind: ContractIssueKind,
+        disposition: ContractIssueDisposition,
         evidence: ContractIssueEvidence,
         text: impl Into<String>,
     ) -> Self {
         Self {
             code: code.into(),
             kind,
+            disposition,
             evidence,
             text: text.into(),
         }
@@ -117,6 +127,7 @@ pub(crate) struct ContractIssueList {
     items: Vec<ContractIssue>,
     default_code: String,
     default_kind: ContractIssueKind,
+    default_disposition: ContractIssueDisposition,
     default_evidence_field: String,
 }
 
@@ -136,6 +147,7 @@ impl ContractIssueList {
             items: Vec::new(),
             default_code: code.into(),
             default_kind: kind,
+            default_disposition: ContractIssueDisposition::Repairable,
             default_evidence_field: evidence_field.into(),
         }
     }
@@ -168,6 +180,7 @@ impl ContractIssueList {
 
     pub(crate) fn from_issue(issue: ContractIssue) -> Self {
         let mut issues = Self::new(issue.code.clone(), issue.kind, issue.evidence.field.clone());
+        issues.default_disposition = issue.disposition;
         issues.push_issue(issue);
         issues
     }
@@ -183,11 +196,16 @@ impl ContractIssueList {
         self.default_evidence_field = evidence_field.into();
     }
 
+    pub(crate) fn set_disposition(&mut self, disposition: ContractIssueDisposition) {
+        self.default_disposition = disposition;
+    }
+
     pub(crate) fn push(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.items.push(ContractIssue::new(
             self.default_code.clone(),
             self.default_kind,
+            self.default_disposition,
             ContractIssueEvidence::new(self.default_evidence_field.clone(), text.clone()),
             text,
         ));
@@ -274,7 +292,8 @@ impl<'a> ContractIssueSet<'a> {
     }
 
     pub(crate) fn actionable(&self) -> impl Iterator<Item = &'a ContractIssue> + '_ {
-        self.iter().filter(|issue| !issue.kind.is_diagnostic())
+        self.iter()
+            .filter(|issue| issue.disposition.is_actionable())
     }
 
     pub(crate) fn has_actionable(&self, kind: ContractIssueKind) -> bool {
@@ -386,17 +405,20 @@ mod tests {
         let first = ContractIssue::new(
             "outline.character_role_conflict",
             ContractIssueKind::Plot,
+            ContractIssueDisposition::HardBlock,
             ContractIssueEvidence::new("outline.near_chapters", "主角被标成对手"),
             "近期章节把主角标成对手",
         );
         let reworded = ContractIssue::new(
             "outline.character_role_conflict",
             ContractIssueKind::Plot,
+            ContractIssueDisposition::HardBlock,
             ContractIssueEvidence::new("outline.near_chapters", "主角被标成对手"),
             "The near chapter assigns the protagonist an antagonist role",
         );
         assert_eq!(first.code, reworded.code);
         assert_eq!(first.kind, reworded.kind);
+        assert_eq!(first.disposition, reworded.disposition);
     }
 
     #[test]

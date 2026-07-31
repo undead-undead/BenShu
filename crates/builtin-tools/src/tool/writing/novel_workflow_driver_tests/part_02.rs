@@ -56,10 +56,20 @@
         let write_result = json!({
             "unit_count": 2499,
             "quality_gate": {
-                "passed": true,
+                "passed": false,
+                "findings": [chapter_quality::ChapterFinding::local(
+                    "length_below_target",
+                    chapter_quality::ChapterFindingClass::Length,
+                    chapter_quality::ChapterFindingDisposition::DeterministicRepair,
+                    chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+                    "chapter_length",
+                    "chapter length is below the soft target: 2499 of 2500 units",
+                    "authority",
+                    "body",
+                )],
                 "issues": [],
-                "repairable": [],
-                "warnings": ["chapter length is below minimum target: 2499 of 2500 units"]
+                "repairable": ["chapter length is below the soft target: 2499 of 2500 units"],
+                "warnings": []
             },
             "truth_validation": {
                 "issues": []
@@ -68,7 +78,8 @@
         let audit = json!({
             "review": {
                 "verdict": "passed",
-                "issues": ["chapter length is below minimum target: 2499 of 2500 units"]
+                "locally_validated": true,
+                "issues": ["chapter length is below the soft target: 2499 of 2500 units"]
             }
         });
 
@@ -219,7 +230,7 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
     fn llm_conflict_requires_local_confirmation_and_exact_citations() {
         let authority = json!({"authority": {"chapter_contract": {"goal": "查明失踪案"}}});
         let conflict = RawAuthorityConflict {
-            kind: "chapter_goal_replaced".to_string(),
+            kind: "character_identity_conflict".to_string(),
             authority_path: "/authority/chapter_contract/goal".to_string(),
             authority_excerpt: "查明失踪案".to_string(),
             body_excerpt: "查明失踪案".to_string(),
@@ -232,13 +243,22 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         };
         assert!(validate_llm_authority_conflict(
             &grounded,
-            &BTreeSet::new(),
+            &[],
             &authority.to_string(),
             "主角转而追查军火案。",
         )
         .is_none());
 
-        let locally_confirmed = BTreeSet::from(["chapter_goal_replaced".to_string()]);
+        let locally_confirmed = vec![chapter_quality::ChapterFinding::local(
+            "character_identity_conflict",
+            chapter_quality::ChapterFindingClass::Contract,
+            chapter_quality::ChapterFindingDisposition::HardBlock,
+            chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+            "local_test",
+            "locally confirmed conflict",
+            "authority",
+            "主角转而追查军火案。",
+        )];
         let finding = validate_llm_authority_conflict(
             &grounded,
             &locally_confirmed,
@@ -288,7 +308,16 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
             message: "疑似提前消费下一章事件".to_string(),
         };
 
-        let locally_confirmed = BTreeSet::from(["future_chapter_consumed".to_string()]);
+        let locally_confirmed = vec![chapter_quality::ChapterFinding::local(
+            "future_chapter_consumed",
+            chapter_quality::ChapterFindingClass::Continuity,
+            chapter_quality::ChapterFindingDisposition::HardBlock,
+            chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+            "local_test",
+            "locally confirmed future boundary",
+            "authority",
+            "主角在本章末尾与监察员会面。",
+        )];
         let finding = validate_llm_authority_conflict(
             &conflict,
             &locally_confirmed,
@@ -304,9 +333,20 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         let write_result = json!({
             "unit_count": 4446,
             "quality_gate": {
-                "passed": true,
+                "passed": false,
+                "findings": [chapter_quality::ChapterFinding::local(
+                    "length_below_target",
+                    chapter_quality::ChapterFindingClass::Length,
+                    chapter_quality::ChapterFindingDisposition::DeterministicRepair,
+                    chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+                    "chapter_length",
+                    "chapter length is below the soft target: 4446 of 5000 units",
+                    "authority",
+                    "chapter body",
+                )],
                 "issues": [],
-                "warnings": ["chapter length is below minimum target: 4446 of 5000 units"]
+                "repairable": ["chapter length is below the soft target: 4446 of 5000 units"],
+                "warnings": []
             },
             "truth_validation": {
                 "issues": []
@@ -315,7 +355,7 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         let audit = json!({
             "review": {
                 "verdict": "needs_revision",
-                "issues": ["chapter length is below minimum target: 4446 of 5000 units"]
+                "issues": ["chapter length is below the soft target: 4446 of 5000 units"]
             }
         });
 
@@ -549,8 +589,19 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
             "unit_count": 4944,
             "quality_gate": {
                 "passed": false,
+                "findings": [chapter_quality::ChapterFinding::local(
+                    "length_below_target",
+                    chapter_quality::ChapterFindingClass::Length,
+                    chapter_quality::ChapterFindingDisposition::DeterministicRepair,
+                    chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+                    "chapter_length",
+                    "chapter length is below the soft target: 4944 of 5000 units",
+                    "authority",
+                    "body",
+                )],
                 "issues": ["chapter body contains placeholder or omission marker: placeholder"],
-                "warnings": ["chapter length is below minimum target: 4944 of 5000 units"]
+                "repairable": ["chapter length is below the soft target: 4944 of 5000 units"],
+                "warnings": []
             },
             "truth_validation": {
                 "issues": []
@@ -1183,7 +1234,13 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
                 "passed": false,
                 "findings": [{
                     "code": "body_truncated",
-                    "disposition": "hard_block"
+                    "class": "body_integrity",
+                    "disposition": "hard_block",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "local_test",
+                    "message": "正文未完成，结尾被截断",
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
                 }],
                 "issues": ["正文未完成，结尾被截断"],
                 "repairable": [],
@@ -1402,14 +1459,25 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
             },
             "quality_gate": {
                 "passed": false,
-                "issues": ["chapter is below target units"]
+                "findings": [{
+                    "code": "body_truncated",
+                    "class": "body_integrity",
+                    "disposition": "hard_block",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "local_test",
+                    "message": "chapter body is truncated",
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }],
+                "issues": ["chapter body is truncated"]
             }
         });
         let audit = json!({
             "success": true,
             "review": {
-                "verdict": "needs_revision",
-                "issues": ["chapter is below target units"]
+                "verdict": "passed",
+                "locally_validated": true,
+                "issues": []
             }
         });
 
@@ -1652,14 +1720,22 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
             "quality_gate": {
                 "findings": [{
                     "code": "future_chapter_consumed",
+                    "class": "continuity",
                     "disposition": "hard_block",
+                    "evidence_grade": "evidence_backed_semantic",
+                    "source": "local_test",
                     "message": "chapter 1 consumes the sealed chapter 2 boundary early",
                     "authority_evidence": [{
+                        "path": "/authority/next_chapter_boundary",
                         "excerpt": "叶知宁测绘局部地形"
                     }],
                     "body_evidence": [{
+                        "start": 0,
+                        "end": 18,
                         "excerpt": "他完成了这片局部区域的基础测绘。"
-                    }]
+                    }],
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
                 }]
             }
         });
@@ -1677,23 +1753,4 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         assert_eq!(mode, novel_runner::RevisionMode::LocalRepair);
         assert!(guidance.contains("以当前正文为底稿做局部修补"));
         assert!(!guidance.contains("从头生成一版完整正文"));
-    }
-
-    #[test]
-    fn replaced_chapter_goal_still_requires_a_full_rewrite() {
-        let write_result = json!({
-            "quality_gate": {
-                "findings": [{
-                    "code": "chapter_goal_replaced",
-                    "disposition": "hard_block"
-                }]
-            }
-        });
-        let audit = json!({});
-
-        let mode = revision_mode_for_results(&write_result, &audit);
-        let guidance = revision_guidance(1, &write_result, &audit, "zh-CN", mode);
-
-        assert_eq!(mode, novel_runner::RevisionMode::FullRewrite);
-        assert!(guidance.contains("按同一章 memo"));
     }

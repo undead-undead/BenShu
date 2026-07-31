@@ -1,6 +1,8 @@
-use super::issue::{ContractIssueKind, ContractIssueList};
+use super::issue::{
+    ContractIssueDisposition, ContractIssueKind, ContractIssueList, ContractIssueSet,
+};
 use super::ContractReadinessScope;
-use super::{creation_draft_visible_approval_readiness_issues, SessionCreationDraftState};
+use super::SessionCreationDraftState;
 
 #[cfg(test)]
 pub fn creation_draft_contract_blocking_issues(draft: &SessionCreationDraftState) -> Vec<String> {
@@ -14,7 +16,11 @@ pub fn creation_draft_contract_blocking_issues_for_scope(
     draft: &SessionCreationDraftState,
     scope: ContractReadinessScope,
 ) -> Vec<String> {
-    creation_draft_contract_blocking_findings_for_scope(draft, scope).messages()
+    let findings = creation_draft_contract_blocking_findings_for_scope(draft, scope);
+    ContractIssueSet::new(&findings)
+        .actionable()
+        .map(|issue| issue.text.clone())
+        .collect()
 }
 
 pub(crate) fn creation_draft_contract_blocking_findings_for_scope(
@@ -27,7 +33,6 @@ pub(crate) fn creation_draft_contract_blocking_findings_for_scope(
         ContractIssueKind::Other,
         "creation_draft",
     );
-    issues.extend_messages(creation_draft_visible_approval_readiness_issues(&effective));
     if draft.artifact_kind != "fiction" {
         return issues;
     }
@@ -40,7 +45,9 @@ pub(crate) fn creation_draft_contract_blocking_findings_for_scope(
             ContractIssueKind::Plot,
             "outline",
         );
+        issues.set_disposition(ContractIssueDisposition::HardBlock);
         issues.push("ContractBlocker: 小说合同大纲含有结构污染、工作流说明或控制面文本");
+        issues.set_disposition(ContractIssueDisposition::Repairable);
     }
 
     let typed_contract = super::strong_novel_contract_from_creation_draft(&effective);

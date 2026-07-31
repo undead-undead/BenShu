@@ -287,7 +287,18 @@ impl ChapterQualityGate {
 
     pub(crate) fn hard_blocking(&self) -> bool {
         self.findings.iter().any(ChapterFinding::hard_blocking)
-            || (self.findings.is_empty() && !self.issues.is_empty())
+    }
+
+    /// Final approval runs only after the bounded revision/top-up controller has
+    /// selected and durably bound its best candidate. At that boundary a small
+    /// length shortfall is advisory; every other unresolved deterministic body
+    /// repair and every evidence-backed hard finding still blocks approval.
+    pub(crate) fn blocks_approval_after_bounded_recovery(&self) -> bool {
+        self.findings.iter().any(|finding| {
+            finding.hard_blocking()
+                || (finding.disposition == ChapterFindingDisposition::DeterministicRepair
+                    && finding.code != "length_below_target")
+        })
     }
 
     pub(crate) fn extend_findings(&mut self, findings: Vec<ChapterFinding>) {
@@ -465,5 +476,32 @@ mod tests {
 
         assert!(finding.hard_blocking());
         assert!(!ChapterQualityGate::from_findings(vec![finding]).passed);
+    }
+
+    #[test]
+    fn bounded_recovery_may_approve_only_the_soft_length_repair() {
+        let mut length = finding(
+            ChapterFindingClass::Length,
+            ChapterFindingDisposition::DeterministicRepair,
+            "small length shortfall",
+        );
+        length.code = "length_below_target".to_string();
+        let gate = ChapterQualityGate::from_findings(vec![length]);
+
+        assert!(!gate.passed);
+        assert!(!gate.blocks_approval_after_bounded_recovery());
+    }
+
+    #[test]
+    fn bounded_recovery_does_not_approve_other_unresolved_body_repairs() {
+        let mut surface = finding(
+            ChapterFindingClass::BodyIntegrity,
+            ChapterFindingDisposition::DeterministicRepair,
+            "body still needs deterministic cleanup",
+        );
+        surface.code = "body_surface_contamination".to_string();
+        let gate = ChapterQualityGate::from_findings(vec![surface]);
+
+        assert!(gate.blocks_approval_after_bounded_recovery());
     }
 }

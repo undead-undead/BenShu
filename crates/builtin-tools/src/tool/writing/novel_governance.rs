@@ -599,7 +599,6 @@ pub(crate) struct RevisionQualityVector {
     pub hard_blockers: usize,
     pub authority_conflicts: usize,
     pub state_conflicts: usize,
-    pub required_outcomes_missing: usize,
     pub protected_facts_lost: usize,
     pub new_high_priority_blockers: usize,
     pub material_deletion_ratio: u16,

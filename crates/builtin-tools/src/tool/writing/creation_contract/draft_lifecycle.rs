@@ -388,6 +388,7 @@ pub(crate) fn pending_explicit_contract_revision_findings(
         findings.push_issue(super::issue::ContractIssue::new(
             "contract.explicit_revision",
             kind,
+            super::issue::ContractIssueDisposition::Repairable,
             super::issue::ContractIssueEvidence::new(field, revision),
             format!(
                 "ContractBlocker[contract.explicit_revision]: 用户明确合同修订尚未经过对应 typed patch 实际写入：{revision}"

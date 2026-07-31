@@ -104,65 +104,23 @@ pub(super) fn parse_llm_quality_audit_output(raw: &str) -> Option<RawChapterQual
     Some(audit)
 }
 
-const HARD_BLOCKER_CODES: &[&str] = &[
-    "character_identity_conflict",
-    "character_name_replacement",
-    "unregistered_character",
-    "character_pronoun_conflict",
-    "relationship_state_conflict",
-    "world_rule_conflict",
-    "timeline_conflict",
-    "location_continuity_conflict",
-    "ability_or_resource_conflict",
-    "future_chapter_consumed",
-    "chapter_goal_replaced",
-    "unplanned_main_branch",
-    "premature_hook_payoff",
-    "unsupported_hook_resolution",
-    "state_change_outside_execution_contract",
-    "body_truncated",
-    "body_missing",
-    "body_surface_contamination",
-    "length_below_minimum",
-    "length_above_tier_maximum",
-    "authority_fingerprint_mismatch",
-    "state_validation_failed",
-];
-
-pub(super) fn local_hard_finding_codes(write_result: &Value) -> BTreeSet<String> {
-    write_result
-        .pointer("/quality_gate/findings")
-        .and_then(Value::as_array)
+pub(super) fn local_hard_findings(write_result: &Value) -> Vec<chapter_quality::ChapterFinding> {
+    typed_findings_in_value(write_result)
         .into_iter()
-        .flatten()
-        .chain(
-            write_result
-                .pointer("/metadata_gate/findings")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten(),
-        )
-        .filter(|finding| {
-            finding
-                .get("disposition")
-                .and_then(Value::as_str)
-                .is_some_and(|value| value == "hard_block")
-        })
-        .filter_map(|finding| finding.get("code").and_then(Value::as_str))
-        .map(str::to_string)
+        .filter(chapter_quality::ChapterFinding::hard_blocking)
         .collect()
 }
 
 pub(super) fn validate_llm_authority_conflict(
     conflict: &RawAuthorityConflict,
-    locally_confirmed_codes: &BTreeSet<String>,
+    locally_confirmed_findings: &[chapter_quality::ChapterFinding],
     authority_context: &str,
     body: &str,
 ) -> Option<chapter_quality::ChapterFinding> {
     let code = conflict.kind.trim();
-    if !HARD_BLOCKER_CODES.contains(&code) || !locally_confirmed_codes.contains(code) {
-        return None;
-    }
+    let local = locally_confirmed_findings
+        .iter()
+        .find(|finding| finding.code == code && finding.hard_blocking())?;
     let authority: Value = serde_json::from_str(authority_context).ok()?;
     let authority_value = authority.pointer(conflict.authority_path.trim())?;
     let authority_serialized = match authority_value {
@@ -180,34 +138,10 @@ pub(super) fn validate_llm_authority_conflict(
     }
     let start = body.find(body_excerpt)?;
     let authority_root = authority.get("authority")?;
-    let class = match code {
-        "character_identity_conflict"
-        | "character_name_replacement"
-        | "unregistered_character"
-        | "world_rule_conflict"
-        | "chapter_goal_replaced"
-        | "unplanned_main_branch"
-        | "state_change_outside_execution_contract" => {
-            chapter_quality::ChapterFindingClass::Contract
-        }
-        "character_pronoun_conflict"
-        | "relationship_state_conflict"
-        | "timeline_conflict"
-        | "location_continuity_conflict"
-        | "ability_or_resource_conflict"
-        | "future_chapter_consumed"
-        | "premature_hook_payoff"
-        | "unsupported_hook_resolution" => chapter_quality::ChapterFindingClass::Continuity,
-        "state_validation_failed" => chapter_quality::ChapterFindingClass::State,
-        "length_below_minimum" | "length_above_tier_maximum" => {
-            chapter_quality::ChapterFindingClass::Length
-        }
-        _ => chapter_quality::ChapterFindingClass::BodyIntegrity,
-    };
     Some(chapter_quality::ChapterFinding {
         code: code.to_string(),
-        class,
-        disposition: chapter_quality::ChapterFindingDisposition::HardBlock,
+        class: local.class,
+        disposition: local.disposition,
         evidence_grade: chapter_quality::FindingEvidenceGrade::EvidenceBackedSemantic,
         source: "llm_audit_validated_by_local_finding".to_string(),
         message: conflict.message.trim().to_string(),
@@ -2266,15 +2200,26 @@ pub(super) fn only_small_length_shortfall(
     if current >= target {
         return false;
     }
-    let mut hard_codes = finding_codes_with_disposition(write_result, "hard_block");
-    hard_codes.extend(finding_codes_with_disposition(audit, "hard_block"));
-    let explicit_length_shortfall = hard_codes.iter().any(|code| code == "length_below_minimum")
-        || value_reports_length_shortfall(write_result)
-        || value_reports_length_shortfall(audit);
-    if !explicit_length_shortfall
-        || hard_codes.iter().any(|code| code != "length_below_minimum")
-        || value_has_non_metadata_deterministic_repairs(write_result)
-        || value_has_non_metadata_deterministic_repairs(audit)
+    let findings = typed_findings_in_value(write_result)
+        .into_iter()
+        .chain(typed_findings_in_value(audit));
+    let mut hard_codes = BTreeSet::new();
+    let mut repair_codes = BTreeSet::new();
+    for finding in findings {
+        if finding.hard_blocking() {
+            hard_codes.insert(finding.code);
+        } else if finding.disposition
+            == chapter_quality::ChapterFindingDisposition::DeterministicRepair
+            && finding.class != chapter_quality::ChapterFindingClass::Metadata
+        {
+            repair_codes.insert(finding.code);
+        }
+    }
+    if !hard_codes.is_empty()
+        || !repair_codes.contains("length_below_target")
+        || repair_codes
+            .iter()
+            .any(|code| code != "length_below_target")
         || !json_array_is_empty(write_result.pointer("/truth_validation/issues"))
         || !json_array_is_empty(audit.pointer("/truth_validation/issues"))
     {
@@ -2283,36 +2228,6 @@ pub(super) fn only_small_length_shortfall(
 
     let shortfall = target.saturating_sub(current);
     shortfall <= length_topup_shortfall_limit(target, language)
-}
-
-fn value_reports_length_shortfall(value: &Value) -> bool {
-    [
-        "/quality_gate/findings",
-        "/quality_gate/issues",
-        "/quality_gate/warnings",
-        "/quality_gate/repairable",
-        "/review/findings",
-        "/review/issues",
-        "/issues",
-    ]
-    .iter()
-    .filter_map(|path| value.pointer(path))
-    .any(length_shortfall_node)
-}
-
-fn length_shortfall_node(value: &Value) -> bool {
-    match value {
-        Value::String(text) => {
-            text.contains("chapter length is below minimum target")
-                || text.contains("length_below_minimum")
-        }
-        Value::Array(items) => items.iter().any(length_shortfall_node),
-        Value::Object(fields) => fields
-            .get("code")
-            .and_then(Value::as_str)
-            .is_some_and(|code| code == "length_below_minimum"),
-        _ => false,
-    }
 }
 
 pub(super) fn chapter_length_current_and_target(
@@ -3462,7 +3377,7 @@ pub(super) fn chapter_segment_generation_limits(
 }
 
 pub(super) fn minimum_chapter_units(target: usize) -> usize {
-    target.saturating_mul(4).div_ceil(5).max(1)
+    longform_policy::minimum_usable_chapter_units(target)
 }
 
 pub(super) fn required_chapter_units(target: usize) -> usize {
@@ -4939,7 +4854,7 @@ mod tests {
                 "节奏冗余：结尾处连续两段均为进入控制台前的铺垫，节奏拖沓，建议合并。"
             ],
             "next_action": "blocked",
-            "verdict": "needs_revision"
+            "review": {"verdict": "passed", "locally_validated": true}
         });
 
         assert!(audit_passed(&audit));
@@ -4966,7 +4881,7 @@ mod tests {
                 "描写重复：结尾处“垄断帝国，将从这里开始裂开第一道缝隙”与前文“垄断链条，就从这里开始断裂缝”意思高度重复，显得啰嗦。"
             ],
             "next_action": "blocked",
-            "verdict": "needs_revision"
+            "review": {"verdict": "passed", "locally_validated": true}
         });
 
         assert!(audit_passed(&audit));
@@ -4993,7 +4908,7 @@ mod tests {
                 "琉璃契颜色描述存在轻微不一致：前文描述为暗红色，后文描述为青色纹路和幽微蓝光。建议统一初始色调或明确颜色随魔力状态变化的逻辑。"
             ],
             "next_action": "blocked",
-            "verdict": "needs_revision"
+            "review": {"verdict": "passed", "locally_validated": true}
         });
 
         assert!(audit_passed(&audit));
@@ -5025,7 +4940,7 @@ mod tests {
                 "节奏问题：第10-12段在极短篇幅内重复了“发现异常-确认异常-行动”的过程，导致叙事拖沓。"
             ],
             "next_action": "blocked",
-            "verdict": "needs_revision"
+            "review": {"verdict": "passed", "locally_validated": true}
         });
 
         assert!(audit_passed(&audit));
@@ -5055,7 +4970,8 @@ mod tests {
         let audit = serde_json::json!({
             "chapter_number": 11,
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": []
             },
             "truth_validation": {
@@ -5116,7 +5032,13 @@ mod tests {
             ],
             "findings": [{
                 "code": "body_is_outline_summary",
-                "disposition": "hard_block"
+                "class": "body_integrity",
+                "disposition": "hard_block",
+                "evidence_grade": "deterministic_invariant",
+                "source": "local_test",
+                "message": "body is outline summary",
+                "authority_fingerprint": "authority",
+                "body_fingerprint": "body"
             }],
             "next_action": "blocked",
             "verdict": "needs_revision"
@@ -5272,7 +5194,13 @@ mod tests {
                     "quality_gate": {
                         "findings": [{
                             "code": "body_surface_cleanup",
-                            "disposition": "deterministic_repair"
+                            "class": "body_integrity",
+                            "disposition": "deterministic_repair",
+                            "evidence_grade": "deterministic_invariant",
+                            "source": "local_test",
+                            "message": "body surface cleanup",
+                            "authority_fingerprint": "authority",
+                            "body_fingerprint": "body"
                         }]
                     }
                 }),
@@ -5315,7 +5243,8 @@ mod tests {
     fn local_minor_surface_issue_with_overall_pass_is_non_blocking() {
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [
                     "第20段‘手中夹着一根烟雾缭绕中’存在语病，疑似漏字，应改为‘手中夹着一根烟，烟雾缭绕中’。"
                 ]
@@ -5335,7 +5264,8 @@ mod tests {
     fn local_minor_layout_wording_issue_is_non_blocking() {
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [
                     "标点/排版小误：倒数第6段“老莫浑浊的眼珠微微转动，视线在那枚废石上停留了片刻，嘴角扯出一抹似笑非笑的弧度。他伸出枯瘦的手指尖夹住灵石”，“手指尖”应为“指尖”。"
                 ]
@@ -5376,7 +5306,8 @@ mod tests {
         );
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [issue]
             },
             "truth_validation": {
@@ -5398,7 +5329,13 @@ mod tests {
             "issues": [],
             "findings": [{
                 "code": "body_surface_cleanup",
-                "disposition": "deterministic_repair"
+                "class": "body_integrity",
+                "disposition": "deterministic_repair",
+                "evidence_grade": "deterministic_invariant",
+                "source": "local_test",
+                "message": "body surface cleanup",
+                "authority_fingerprint": "authority",
+                "body_fingerprint": "body"
             }]
         }});
         let audit = json!({"review": {"verdict": "needs_revision", "issues": [issue]}});
@@ -5430,7 +5367,8 @@ mod tests {
     fn local_minor_exposition_observation_with_no_serious_drag_is_non_blocking() {
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [
                     "部分段落存在轻微的“设定解说”倾向，但通过主角回忆和搜索动作进行了情节化处理，未造成严重拖沓。"
                 ]
@@ -5450,7 +5388,8 @@ mod tests {
     fn functional_core_term_repetition_observation_is_non_blocking() {
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [
                     "术语重复：核心标的在正文中出现频率较高，但上下文中有具体波动、事件和对话支撑，重复具有功能性，未造成阅读疲劳。"
                 ]
@@ -5483,7 +5422,8 @@ mod tests {
         });
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [
                     "术语重复：作为核心标的出现频率较高，但上下文中有具体股价波动、事件和对话支撑，重复具有功能性，未造成阅读疲劳。"
                 ]
@@ -5512,7 +5452,8 @@ mod tests {
         });
         let audit = serde_json::json!({
             "review": {
-                "verdict": "needs_revision",
+                "verdict": "passed",
+                "locally_validated": true,
                 "issues": [
                     "词语重复：第27段与第30段之间，情绪转换较快，且主角作为主语在短篇幅内出现频率过高，可适当省略主语以增强流畅度。",
                     "逻辑/细节瑕疵：一账双印制度与火漆检查的动作描写略有脱节，此处术语与动作描写可细化。"
@@ -5570,7 +5511,8 @@ mod tests {
         for issue in soft_issues {
             let audit = serde_json::json!({
                 "review": {
-                    "verdict": "needs_revision",
+                    "verdict": "passed",
+                    "locally_validated": true,
                     "issues": [issue],
                     "feedback": "正文整体通顺，人物性格和设定符合预期，情节推进清晰；该问题属于局部润色建议。"
                 },

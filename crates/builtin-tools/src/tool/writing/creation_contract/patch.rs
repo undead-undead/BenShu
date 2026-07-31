@@ -56,6 +56,7 @@ impl PatchFieldStrength {
             ContractReadinessScope::LockedAuthorityContract => {
                 matches!(self, Self::Required) && !field_is_rolling_longform_enrichment(field_key)
             }
+            #[cfg(test)]
             ContractReadinessScope::FullLongformContract => {
                 matches!(self, Self::Required | Self::Strong)
             }

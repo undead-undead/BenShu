@@ -358,16 +358,16 @@ impl NovelStudioTool {
                 &settlement,
                 &body,
             );
-        if metadata_gate.needs_repair() {
+        if metadata_gate.blocking() {
             return Ok(json!({
                 "success": false,
-                "recoverable": true,
-                "error_kind": "approval_requires_metadata_repair",
-                "error": "display metadata derived from the validated settlement did not pass the metadata gate",
+                "recoverable": false,
+                "error_kind": "approval_metadata_blocked",
+                "error": "display metadata would violate a deterministic storage or control-surface invariant",
                 "project_path": project_dir.to_string_lossy(),
                 "chapter_number": number,
                 "metadata_gate": metadata_gate,
-                "next_action": "repair_chapter_metadata"
+                "next_action": "inspect_project"
             }));
         }
         let truth_issues = latest_truth_validation_issues(&manifest, number);
@@ -376,7 +376,7 @@ impl NovelStudioTool {
         let duplicate_issues =
             cross_chapter_duplicate_issues(&project_dir, &manifest, &final_chapter, &body).await;
         route_cross_chapter_duplicate_issues(&mut quality_gate, duplicate_issues);
-        if !quality_gate.passed {
+        if quality_gate.blocks_approval_after_bounded_recovery() {
             return Ok(json!({
                 "success": false,
                 "recoverable": true,

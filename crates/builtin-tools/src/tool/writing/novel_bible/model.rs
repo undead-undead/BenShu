@@ -4,7 +4,7 @@ use crate::tool::writing::creation_contract_model::NovelCreationContract;
 use crate::tool::writing::longform_policy::GenreGovernanceProfile;
 use crate::tool::writing::novel_contract_v2::{ChapterCharacterRegistration, NovelContractV2};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum ChapterStateEventType {
     Character,
@@ -67,18 +67,6 @@ pub(crate) struct ChapterStateChange {
     pub allowance: StateChangeAllowance,
     #[serde(default)]
     pub defer_until_chapter: Option<usize>,
-    #[serde(default)]
-    pub changes_identity: bool,
-    #[serde(default)]
-    pub changes_core_ability: bool,
-    #[serde(default)]
-    pub changes_bottom_line: bool,
-    #[serde(default)]
-    pub changes_world_hard_rule: bool,
-    #[serde(default)]
-    pub pays_future_hook_early: bool,
-    #[serde(default)]
-    pub opens_new_mainline: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

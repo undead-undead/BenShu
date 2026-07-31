@@ -48,26 +48,8 @@ pub(super) fn findings_from_results(
     write_result: &Value,
     audit: &Value,
 ) -> Vec<chapter_quality::ChapterFinding> {
-    let mut findings = ["/quality_gate/findings", "/metadata_gate/findings"]
-        .into_iter()
-        .flat_map(|pointer| {
-            write_result
-                .pointer(pointer)
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-        })
-        .chain(
-            audit
-                .pointer("/review/findings")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten(),
-        )
-        .filter_map(|finding| {
-            serde_json::from_value::<chapter_quality::ChapterFinding>(finding.clone()).ok()
-        })
-        .collect::<Vec<_>>();
+    let mut findings = typed_findings_in_value(write_result);
+    findings.extend(typed_findings_in_value(audit));
     findings.sort_by(|left, right| {
         (
             left.code.as_str(),
@@ -117,29 +99,14 @@ pub(super) fn revision_quality_vector(
             ) && !parent_hard_codes.contains(finding.code.as_str())
         })
         .count();
-    let required_outcomes_missing = hard
-        .iter()
-        .filter(|finding| {
-            matches!(
-                finding.code.as_str(),
-                "chapter_goal_replaced"
-                    | "required_outcome_missing"
-                    | "required_reveal_missing"
-                    | "required_hook_progress_missing"
-            )
-        })
-        .count();
     let typed_conflicts = hard
         .iter()
         .filter(|finding| {
             matches!(
-                finding.code.as_str(),
-                "character_identity_conflict"
-                    | "character_name_replacement"
-                    | "relationship_state_conflict"
-                    | "world_rule_conflict"
-                    | "timeline_conflict"
-                    | "ability_or_resource_conflict"
+                finding.class,
+                ChapterFindingClass::Contract
+                    | ChapterFindingClass::Continuity
+                    | ChapterFindingClass::State
             )
         })
         .count();
@@ -193,7 +160,6 @@ pub(super) fn revision_quality_vector(
             .iter()
             .filter(|finding| finding.class == ChapterFindingClass::State)
             .count(),
-        required_outcomes_missing,
         protected_facts_lost,
         new_high_priority_blockers,
         material_deletion_ratio,
@@ -204,7 +170,7 @@ pub(super) fn revision_quality_vector(
         length_shortfall,
         length_blockers: hard
             .iter()
-            .filter(|finding| finding.code == "length_below_minimum")
+            .filter(|finding| finding.code == "length_below_usable_floor")
             .count(),
         length_topup_eligible,
         deterministic_repairs: findings
@@ -295,7 +261,6 @@ pub(super) fn candidate_is_strict_improvement(
     provenance: CandidateProvenance,
 ) -> bool {
     if candidate.new_high_priority_blockers > 0
-        || candidate.required_outcomes_missing > current.required_outcomes_missing
         || candidate.protected_facts_lost > current.protected_facts_lost
         || candidate.material_deletion_ratio > 350
         || candidate.incomplete_body
@@ -317,12 +282,6 @@ pub(super) fn candidate_is_strict_improvement(
         // A bounded, recoverable length blocker is therefore a strict net
         // improvement when it replaces one of those conflicts; the existing
         // length-top-up route can then repair the remaining shortfall.
-        return true;
-    }
-    if candidate.hard_blockers == current.hard_blockers
-        && candidate.required_outcomes_missing < current.required_outcomes_missing
-        && (candidate.length_blockers == 0 || candidate.length_topup_eligible)
-    {
         return true;
     }
     if current.hard_blockers > 0
@@ -397,7 +356,12 @@ pub(super) fn align_draft_with_studio_result(
     {
         draft.content = content.to_string();
     }
-    let Some(chapter) = result.get("chapter") else {
+    let Some(chapter) = result.get("chapter").or_else(|| {
+        result
+            .get("repaired_chapters")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+    }) else {
         return;
     };
     if let Some(title) = chapter
@@ -931,13 +895,23 @@ mod tests {
                 "findings": [
                     {
                         "class": "length",
-                        "code": "length_below_minimum",
-                        "disposition": "hard_block"
+                        "code": "length_below_target",
+                        "disposition": "deterministic_repair",
+                        "evidence_grade": "deterministic_invariant",
+                        "source": "chapter_length",
+                        "message": "small length shortfall",
+                        "authority_fingerprint": "authority",
+                        "body_fingerprint": "body"
                     },
                     {
                         "class": "metadata",
                         "code": "metadata_invalid",
-                        "disposition": "deterministic_repair"
+                        "disposition": "deterministic_repair",
+                        "evidence_grade": "deterministic_invariant",
+                        "source": "metadata",
+                        "message": "metadata invalid",
+                        "authority_fingerprint": "authority",
+                        "body_fingerprint": "body"
                     }
                 ]
             },
@@ -981,8 +955,13 @@ mod tests {
                 "passed": false,
                 "findings": [{
                     "class": "length",
-                    "code": "length_below_minimum",
-                    "disposition": "hard_block"
+                    "code": "length_below_target",
+                    "disposition": "deterministic_repair",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_length",
+                    "message": "length shortfall",
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
                 }]
             },
             "metadata_gate": {"blocking": [], "repairable": []},

@@ -1,5 +1,6 @@
 use super::issue::{
-    ClassifiedContractIssue, ContractIssueKind, ContractIssueList, ContractIssueSet,
+    ClassifiedContractIssue, ContractIssueDisposition, ContractIssueKind, ContractIssueList,
+    ContractIssueSet,
 };
 #[cfg(test)]
 use super::issue::{ContractIssue, ContractIssueEvidence};
@@ -586,9 +587,8 @@ pub(super) fn stage_relevant_contract_issues(
         filtered = issue_set
             .iter()
             .filter(|issue| {
-                (issue.kind.is_diagnostic()
-                    && contract_issue_matches_completion_stage(stage, issue))
-                    || matches!(issue.kind, ContractIssueKind::Other)
+                issue.disposition == ContractIssueDisposition::Diagnostic
+                    && contract_issue_matches_completion_stage(stage, issue)
             })
             .map(|issue| issue.text.clone())
             .collect();
@@ -605,7 +605,7 @@ fn contract_issue_matches_completion_stage(
     if let Some(feedback_stage) = issue.code.strip_prefix("contract.patch_feedback.") {
         return feedback_stage == contract_completion_stage_key(stage);
     }
-    if issue.kind.is_diagnostic() {
+    if issue.disposition == ContractIssueDisposition::Diagnostic {
         return true;
     }
     if issue.code == "semantic.user_story_authority" {
@@ -1210,12 +1210,14 @@ mod tests {
         issues.push_issue(ContractIssue::new(
             "contract.title",
             ContractIssueKind::Skeleton,
+            ContractIssueDisposition::Repairable,
             ContractIssueEvidence::new("title", "missing"),
             "ContractBlocker: 小说合同缺少可锁定书名",
         ));
         issues.push_issue(ContractIssue::new(
             "contract.character_authority",
             ContractIssueKind::Characters,
+            ContractIssueDisposition::Repairable,
             ContractIssueEvidence::new("characters", "bottom_line missing"),
             "ContractBlocker: 角色 `阮泊白`（主角）的底线锚点缺少明确边界、禁令或必须守住的行动",
         ));

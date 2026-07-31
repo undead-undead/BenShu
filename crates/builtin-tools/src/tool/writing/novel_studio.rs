@@ -98,8 +98,9 @@ use model::{
     ApprovalJournal, ApprovalJournalState, ApprovalReceipt, ChapterPlanRecord,
     CharacterAuthorityRecord, ContextPackageRecord, HookDebtReportRecord, LongformArchiveRecord,
     NovelCreationDraft, NovelProjectManifest, NovelStudioArgs, ReviewCycleRecord, ReviewReceipt,
-    SettlementOutput, SnapshotRecord, SourceRecord, StateValidationOutput, StyleProfileRecord,
-    TitleState, TruthFileRecord, TruthValidationRecord, VolumeRecord, VolumeSummaryRecord,
+    SettlementOutput, SnapshotRecord, SourceRecord, StateSettlementDisposition,
+    StateValidationOutput, StyleProfileRecord, TitleState, TruthFileRecord, TruthValidationRecord,
+    VolumeRecord, VolumeSummaryRecord,
 };
 pub(crate) use model::{ChapterArchitectureRecord, ChapterContractRecord, ChapterRecord};
 pub(crate) use novel_bible::StoryContract;

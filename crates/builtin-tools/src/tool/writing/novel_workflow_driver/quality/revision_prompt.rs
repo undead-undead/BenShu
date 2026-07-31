@@ -8,27 +8,24 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_guidance(
     mode: novel_runner::RevisionMode,
 ) -> String {
     let issues = revision_issue_summary(write_result, audit);
-    let mut hard_codes = finding_codes_with_disposition(write_result, "hard_block");
-    hard_codes.extend(finding_codes_with_disposition(audit, "hard_block"));
+    let mut hard_codes = finding_codes_with_disposition(
+        write_result,
+        chapter_quality::ChapterFindingDisposition::HardBlock,
+    );
+    hard_codes.extend(finding_codes_with_disposition(
+        audit,
+        chapter_quality::ChapterFindingDisposition::HardBlock,
+    ));
     let same_chapter_rewrite = mode == novel_runner::RevisionMode::FullRewrite;
     let primary_anchor_issue = hard_codes.iter().any(|code| {
         matches!(
             code.as_str(),
-            "character_identity_conflict"
-                | "character_name_replacement"
-                | "unregistered_character"
-                | "character_pronoun_conflict"
+            "character_identity_conflict" | "unregistered_character" | "character_pronoun_conflict"
         )
     });
-    let future_scope_issue = hard_codes.iter().any(|code| {
-        matches!(
-            code.as_str(),
-            "future_chapter_consumed"
-                | "unplanned_main_branch"
-                | "premature_hook_payoff"
-                | "unsupported_hook_resolution"
-        )
-    });
+    let future_scope_issue = hard_codes
+        .iter()
+        .any(|code| matches!(code.as_str(), "future_chapter_consumed"));
     if language_looks_cjk(language) {
         let primary_anchor_guidance = if primary_anchor_issue {
             "\n             - 这次修订的最高优先级是恢复项目合同里的主角权威：正文叙事中心、关键行动、章尾变化必须回到合同主角；非主角只能承担合同中的辅助/对手功能，不能替代主角完成主线。"
@@ -133,19 +130,18 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_mode_for_results
     write_result: &Value,
     audit: &Value,
 ) -> novel_runner::RevisionMode {
-    let mut hard_codes = finding_codes_with_disposition(write_result, "hard_block");
-    hard_codes.extend(finding_codes_with_disposition(audit, "hard_block"));
+    let mut hard_codes = finding_codes_with_disposition(
+        write_result,
+        chapter_quality::ChapterFindingDisposition::HardBlock,
+    );
+    hard_codes.extend(finding_codes_with_disposition(
+        audit,
+        chapter_quality::ChapterFindingDisposition::HardBlock,
+    ));
     let requires_structural_rewrite = hard_codes.iter().any(|code| {
         matches!(
             code.as_str(),
-            "body_missing"
-                | "body_surface_contamination"
-                | "chapter_goal_replaced"
-                | "unplanned_main_branch"
-                | "character_identity_conflict"
-                | "character_name_replacement"
-                | "unregistered_character"
-                | "authority_fingerprint_mismatch"
+            "body_surface_contamination" | "character_identity_conflict" | "unregistered_character"
         )
     });
     if requires_structural_rewrite {
@@ -182,14 +178,8 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_issues(
     audit: &Value,
 ) -> Vec<String> {
     let mut issues = Vec::new();
-    collect_string_array(write_result.pointer("/quality_gate/issues"), &mut issues);
-    collect_string_array(
-        write_result.pointer("/quality_gate/repairable"),
-        &mut issues,
-    );
-    collect_string_array(write_result.pointer("/issues"), &mut issues);
-    collect_string_array(audit.pointer("/review/issues"), &mut issues);
-    collect_string_array(audit.pointer("/issues"), &mut issues);
+    // Legacy issue arrays are transport/read-only compatibility fields. Only
+    // validated typed findings may drive a new prose revision.
     collect_string_array(audit.pointer("/truth_validation/issues"), &mut issues);
     collect_typed_finding_revision_issues(write_result, &mut issues);
     collect_typed_finding_revision_issues(audit, &mut issues);
@@ -199,41 +189,20 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_issues(
 }
 
 fn collect_typed_finding_revision_issues(value: &Value, issues: &mut Vec<String>) {
-    for finding in ["/quality_gate/findings", "/review/findings", "/findings"]
+    for finding in typed_findings_in_value(value)
         .into_iter()
-        .filter_map(|pointer| value.pointer(pointer))
-        .filter_map(Value::as_array)
-        .flatten()
-        .filter(|finding| {
-            finding
-                .get("disposition")
-                .and_then(Value::as_str)
-                .is_some_and(|disposition| disposition == "hard_block")
-        })
+        .filter(chapter_quality::ChapterFinding::hard_blocking)
     {
         let mut parts = Vec::new();
-        if let Some(message) = finding
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|message| !message.is_empty())
-        {
-            parts.push(message.to_string());
-        } else if let Some(code) = finding
-            .get("code")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|code| !code.is_empty())
-        {
-            parts.push(code.to_string());
+        if !finding.message.trim().is_empty() {
+            parts.push(finding.message.trim().to_string());
+        } else if !finding.code.trim().is_empty() {
+            parts.push(finding.code.trim().to_string());
         }
         let authority_evidence = finding
-            .get("authority_evidence")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|evidence| evidence.get("excerpt").and_then(Value::as_str))
-            .map(str::trim)
+            .authority_evidence
+            .iter()
+            .map(|evidence| evidence.excerpt.trim())
             .filter(|excerpt| !excerpt.is_empty())
             .map(|excerpt| preview_text(excerpt, 480))
             .collect::<Vec<_>>();
@@ -244,12 +213,9 @@ fn collect_typed_finding_revision_issues(value: &Value, issues: &mut Vec<String>
             ));
         }
         let body_evidence = finding
-            .get("body_evidence")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|evidence| evidence.get("excerpt").and_then(Value::as_str))
-            .map(str::trim)
+            .body_evidence
+            .iter()
+            .map(|evidence| evidence.excerpt.trim())
             .filter(|excerpt| !excerpt.is_empty())
             .map(|excerpt| preview_text(excerpt, 480))
             .collect::<Vec<_>>();
@@ -269,8 +235,16 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_issues_include_t
     write_result: &Value,
     audit: &Value,
 ) -> bool {
-    finding_codes_with_disposition(write_result, "hard_block").contains("body_truncated")
-        || finding_codes_with_disposition(audit, "hard_block").contains("body_truncated")
+    finding_codes_with_disposition(
+        write_result,
+        chapter_quality::ChapterFindingDisposition::HardBlock,
+    )
+    .contains("body_truncated")
+        || finding_codes_with_disposition(
+            audit,
+            chapter_quality::ChapterFindingDisposition::HardBlock,
+        )
+        .contains("body_truncated")
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn text_fingerprint(value: &str) -> u64 {
@@ -293,8 +267,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn quality_gate_body_passed(
             .and_then(Value::as_bool)
             .unwrap_or(false);
     }
-    !value_has_hard_findings(write_result)
-        && !value_has_non_metadata_deterministic_repairs(write_result)
+    !value_has_hard_findings(write_result) && !value_has_local_cleanup_repairs(write_result)
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn body_revision_required_after_audit(
@@ -337,8 +310,7 @@ pub(in crate::tool::writing::novel_workflow_driver) fn only_local_cleanup_issues
     write_result: &Value,
     audit: &Value,
 ) -> bool {
-    (value_has_non_metadata_deterministic_repairs(write_result)
-        || value_has_non_metadata_deterministic_repairs(audit))
+    (value_has_local_cleanup_repairs(write_result) || value_has_local_cleanup_repairs(audit))
         && !value_has_hard_findings(write_result)
         && !value_has_hard_findings(audit)
 }

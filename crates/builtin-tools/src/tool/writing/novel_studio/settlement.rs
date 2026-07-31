@@ -16,7 +16,7 @@ impl SettlementSource {
     }
 }
 
-pub(super) fn legacy_zero_change_degraded_settlement(
+pub(super) fn zero_change_degraded_settlement(
     chapter: &ChapterRecord,
     body: &str,
     authority_fingerprint: &str,
@@ -92,7 +92,7 @@ fn validated_settlement_from_final_body_with_recovery(
     let (mut settlement, source, parse_error) = match parsed {
         Ok(settlement) => (settlement, SettlementSource::FinalBodyObserver, None),
         Err(error) => (
-            legacy_zero_change_degraded_settlement(
+            zero_change_degraded_settlement(
                 chapter,
                 body,
                 &authority.authority_root_fingerprint,
@@ -175,7 +175,12 @@ pub(super) fn deterministic_state_validation(
     warnings.sort();
     warnings.dedup();
     StateValidationOutput {
-        passed: warnings.is_empty(),
+        passed: true,
+        disposition: if warnings.is_empty() {
+            StateSettlementDisposition::Ready
+        } else {
+            StateSettlementDisposition::DisplayMetadataDegraded
+        },
         warnings,
         advisories,
     }
@@ -198,28 +203,46 @@ fn validate_and_bind_settlement(
     settlement: &mut SettlementOutput,
     recover_required_character_state: bool,
 ) -> StateValidationOutput {
+    let display_metadata_degraded = apply_settlement_display_fallback(chapter, content, settlement);
     let mut validation = deterministic_state_validation(content, settlement);
+    if display_metadata_degraded {
+        validation.disposition = validation
+            .disposition
+            .merge(StateSettlementDisposition::DisplayMetadataDegraded);
+    }
     if !settlement.degraded_reason.trim().is_empty() {
-        validation.warnings.push(format!(
+        validation.advisories.push(format!(
             "state observer degraded: {}",
             settlement.degraded_reason.trim()
         ));
+        validation.disposition = validation
+            .disposition
+            .merge(StateSettlementDisposition::ObserverFormatDegraded);
     }
     let expected_body = chapter_quality::chapter_body_fingerprint(content);
     if settlement.body_fingerprint != expected_body {
         validation
             .warnings
             .push("settlement belongs to a different final body".to_string());
+        validation.disposition = validation
+            .disposition
+            .merge(StateSettlementDisposition::DependencyMismatch);
     }
     if settlement.authority_fingerprint != authority.authority_root_fingerprint {
         validation
             .warnings
             .push("settlement belongs to a different sealed chapter authority".to_string());
+        validation.disposition = validation
+            .disposition
+            .merge(StateSettlementDisposition::DependencyMismatch);
     }
     if authority.chapter_number != chapter.number {
         validation
             .warnings
             .push("sealed authority belongs to a different chapter".to_string());
+        validation.disposition = validation
+            .disposition
+            .merge(StateSettlementDisposition::DependencyMismatch);
     }
 
     let proposed_changes = std::mem::take(&mut settlement.state_changes);
@@ -227,14 +250,6 @@ fn validate_and_bind_settlement(
     for (index, mut change) in proposed_changes.into_iter().enumerate() {
         change.change_id = format!("chapter-{:04}-change-{:04}", chapter.number, index + 1);
         bind_contract_authority(authority, &mut change);
-        if state_change_claims_forbidden_transition(&change) {
-            change.allowance = novel_bible::StateChangeAllowance::Rejected;
-            validation.warnings.push(format!(
-                "state change {} claims a high-risk transition outside deterministic approval",
-                change.change_id.trim()
-            ));
-            continue;
-        }
         let entity = authority_entity_resolution(authority, &change.entity_id);
         if let Err(error) = validate_final_body_evidence(content, &entity, &mut change) {
             change.allowance = novel_bible::StateChangeAllowance::Rejected;
@@ -247,9 +262,12 @@ fn validate_and_bind_settlement(
             Ok(allowance) => allowance,
             Err(error) => {
                 change.allowance = novel_bible::StateChangeAllowance::Rejected;
-                validation
-                    .advisories
-                    .push(format!("ignored untrusted typed delta: {error}"));
+                validation.warnings.push(format!(
+                    "rejected evidence-backed unauthorized state delta: {error}"
+                ));
+                validation.disposition = validation
+                    .disposition
+                    .merge(StateSettlementDisposition::StatePollution);
                 continue;
             }
         };
@@ -259,10 +277,13 @@ fn validate_and_bind_settlement(
                 .is_some_and(|number| number > chapter.number)
         {
             change.allowance = novel_bible::StateChangeAllowance::Rejected;
-            validation.advisories.push(format!(
-                "ignored untrusted typed delta: state change {} defers a hook without a later chapter",
+            validation.warnings.push(format!(
+                "rejected evidence-backed unauthorized state delta: state change {} defers a hook without a later chapter",
                 change.change_id.trim()
             ));
+            validation.disposition = validation
+                .disposition
+                .merge(StateSettlementDisposition::StatePollution);
             continue;
         }
         accepted_changes.push(change);
@@ -273,11 +294,11 @@ fn validate_and_bind_settlement(
         })
     {
         if let Some(change) =
-            recover_explicit_required_character_state_change(chapter, content, authority)
+            recover_explicit_required_state_change(chapter, content, authority, &accepted_changes)
         {
             accepted_changes.push(change);
             validation.advisories.push(
-                "recovered an explicitly identified required character end-state delta from sealed authority and bounded final-body evidence after observer attempts were exhausted"
+                "recovered one uniquely resolved required end-state delta from sealed authority and bounded final-body evidence after observer attempts were exhausted"
                     .to_string(),
             );
         }
@@ -296,6 +317,9 @@ fn validate_and_bind_settlement(
             "final-body settlement is missing the required typed end-state change from chapter_contract.new_state_after_chapter"
                 .to_string(),
         );
+        validation.disposition = validation
+            .disposition
+            .merge(StateSettlementDisposition::RequiredStateMissing);
     }
     settlement.resolved_hooks =
         validated_resolved_hook_labels(authority, &settlement.state_changes);
@@ -304,20 +328,195 @@ fn validate_and_bind_settlement(
     validation.warnings.dedup();
     validation.advisories.sort();
     validation.advisories.dedup();
-    validation.passed = validation.warnings.is_empty();
+    validation.passed = !validation.disposition.is_blocking();
     validation
 }
 
-fn recover_explicit_required_character_state_change(
+fn apply_settlement_display_fallback(
+    chapter: &ChapterRecord,
+    content: &str,
+    settlement: &mut SettlementOutput,
+) -> bool {
+    let mut degraded = false;
+    let language = if content.chars().any(is_cjk_unified) {
+        "zh-CN"
+    } else {
+        "en"
+    };
+    let fallback = || {
+        if chapter.summary.trim().is_empty() {
+            chapter_summary_fallback(content, language)
+        } else {
+            compact_chapter_summary(&chapter.summary, language)
+        }
+    };
+    if settlement.chapter_summary.trim().is_empty() {
+        settlement.chapter_summary = fallback();
+        degraded = true;
+    }
+    if settlement.current_state.trim().is_empty() {
+        settlement.current_state = settlement.chapter_summary.clone();
+        degraded = true;
+    }
+    degraded
+}
+
+fn recover_explicit_required_state_change(
     chapter: &ChapterRecord,
     content: &str,
     authority: &governance::SealedChapterAuthority,
+    accepted_changes: &[novel_bible::ChapterStateChange],
 ) -> Option<novel_bible::ChapterStateChange> {
     const REQUIRED_PATH: &str = "chapter_contract.new_state_after_chapter";
 
     let required = authority.chapter_contract.new_state_after_chapter.trim();
     if required.is_empty() {
         return None;
+    }
+    let mut candidates = accepted_changes
+        .iter()
+        .filter(|change| required_state_event_allowed(change.event_type))
+        .filter_map(|change| {
+            let mut candidate = change.clone();
+            candidate.authority_path = REQUIRED_PATH.to_string();
+            bind_contract_authority(authority, &mut candidate);
+            let entity = authority_entity_resolution(authority, &candidate.entity_id);
+            validate_final_body_evidence(content, &entity, &mut candidate).ok()?;
+            candidate.allowance = authority_allowance(authority, &candidate).ok()?;
+            Some(candidate)
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| {
+        (
+            left.event_type,
+            left.entity_id.as_str(),
+            left.evidence.start_char,
+        )
+            .cmp(&(
+                right.event_type,
+                right.entity_id.as_str(),
+                right.evidence.start_char,
+            ))
+    });
+    candidates.dedup_by(|left, right| {
+        left.event_type == right.event_type
+            && left.entity_id == right.entity_id
+            && left.evidence.start_char == right.evidence.start_char
+            && left.evidence.end_char == right.evidence.end_char
+    });
+    if candidates.len() == 1 {
+        return candidates.pop();
+    }
+    if !candidates.is_empty() {
+        return None;
+    }
+
+    let mut event_candidates = required_state_event_candidates(authority, required);
+    if event_candidates.is_empty() {
+        event_candidates.push(novel_bible::ChapterStateEventType::Character);
+    }
+    let mut recovered = event_candidates
+        .into_iter()
+        .filter_map(|event| {
+            recover_required_state_candidate_for_event(chapter, content, authority, required, event)
+        })
+        .collect::<Vec<_>>();
+    recovered.sort_by(|left, right| {
+        (
+            left.event_type,
+            left.entity_id.as_str(),
+            left.evidence.start_char,
+        )
+            .cmp(&(
+                right.event_type,
+                right.entity_id.as_str(),
+                right.evidence.start_char,
+            ))
+    });
+    recovered.dedup_by(|left, right| {
+        left.event_type == right.event_type
+            && left.entity_id == right.entity_id
+            && left.evidence.start_char == right.evidence.start_char
+            && left.evidence.end_char == right.evidence.end_char
+    });
+    (recovered.len() == 1).then(|| recovered.remove(0))
+}
+
+fn required_state_event_allowed(event: novel_bible::ChapterStateEventType) -> bool {
+    matches!(
+        event,
+        novel_bible::ChapterStateEventType::Character
+            | novel_bible::ChapterStateEventType::Relationship
+            | novel_bible::ChapterStateEventType::World
+            | novel_bible::ChapterStateEventType::Power
+            | novel_bible::ChapterStateEventType::Resource
+            | novel_bible::ChapterStateEventType::HookAdvance
+    )
+}
+
+fn required_state_event_candidates(
+    authority: &governance::SealedChapterAuthority,
+    required: &str,
+) -> Vec<novel_bible::ChapterStateEventType> {
+    use novel_bible::ChapterStateEventType as Event;
+
+    let chapter = &authority.chapter_contract;
+    let mut candidates = [
+        (Event::Character, chapter.character_change.as_str()),
+        (Event::Relationship, chapter.relationship_delta.as_str()),
+        (Event::World, chapter.world_change.as_str()),
+        (Event::Power, chapter.power_delta.as_str()),
+        (Event::Resource, chapter.resource_delta.as_str()),
+        (Event::HookAdvance, chapter.payoff_target.as_str()),
+    ]
+    .into_iter()
+    .filter(|(_, companion)| {
+        !companion.trim().is_empty()
+            && (normalize_evidence_text(companion) == normalize_evidence_text(required)
+                || governance::contract_change_supported_by_final_evidence(
+                    required,
+                    companion,
+                    required
+                        .chars()
+                        .chain(companion.chars())
+                        .any(is_cjk_unified),
+                ))
+    })
+    .map(|(event, _)| event)
+    .collect::<Vec<_>>();
+    candidates.sort();
+    candidates.dedup();
+    candidates
+}
+
+fn recover_required_state_candidate_for_event(
+    chapter: &ChapterRecord,
+    content: &str,
+    authority: &governance::SealedChapterAuthority,
+    required: &str,
+    event_type: novel_bible::ChapterStateEventType,
+) -> Option<novel_bible::ChapterStateChange> {
+    const REQUIRED_PATH: &str = "chapter_contract.new_state_after_chapter";
+
+    if !required_state_event_allowed(event_type) {
+        return None;
+    }
+    if event_type == novel_bible::ChapterStateEventType::HookAdvance {
+        let entity_id = authority_hook_entity_id(
+            authority,
+            event_type,
+            "chapter_contract.payoff_target",
+            &authority.chapter_contract.payoff_target,
+        )?;
+        return recovered_required_change_for_entity(
+            chapter,
+            content,
+            authority,
+            required,
+            event_type,
+            &entity_id,
+            REQUIRED_PATH,
+        );
     }
     let contract =
         serde_json::from_value::<NovelCreationContract>(authority.canonical_contract.clone())
@@ -388,6 +587,26 @@ fn recover_explicit_required_character_state_change(
     if entity_id.is_empty() {
         return None;
     }
+    recovered_required_change_for_entity(
+        chapter,
+        content,
+        authority,
+        required,
+        event_type,
+        entity_id,
+        REQUIRED_PATH,
+    )
+}
+
+fn recovered_required_change_for_entity(
+    chapter: &ChapterRecord,
+    content: &str,
+    authority: &governance::SealedChapterAuthority,
+    required: &str,
+    event_type: novel_bible::ChapterStateEventType,
+    entity_id: &str,
+    required_path: &str,
+) -> Option<novel_bible::ChapterStateChange> {
     let entity = authority_entity_resolution(authority, entity_id);
     let cjk = required.chars().chain(content.chars()).any(is_cjk_unified);
     for span in runner::final_body_evidence_spans(content) {
@@ -397,14 +616,14 @@ fn recover_explicit_required_character_state_change(
         let mut change = novel_bible::ChapterStateChange {
             change_id: format!("chapter-{:04}-change-required-recovered", chapter.number),
             entity_id: entity_id.to_string(),
-            event_type: novel_bible::ChapterStateEventType::Character,
+            event_type,
             value: span.excerpt.clone(),
             evidence: novel_bible::ChapterBodyEvidence {
                 start_char: span.start_char,
                 end_char: span.end_char,
                 excerpt: span.excerpt,
             },
-            authority_path: REQUIRED_PATH.to_string(),
+            authority_path: required_path.to_string(),
             ..Default::default()
         };
         bind_contract_authority(authority, &mut change);
@@ -474,15 +693,6 @@ fn validated_resolved_hook_labels(
         }
     }
     labels
-}
-
-fn state_change_claims_forbidden_transition(change: &novel_bible::ChapterStateChange) -> bool {
-    change.changes_identity
-        || change.changes_core_ability
-        || change.changes_bottom_line
-        || change.changes_world_hard_rule
-        || change.pays_future_hook_early
-        || change.opens_new_mainline
 }
 
 fn validate_final_body_evidence(
@@ -723,13 +933,7 @@ fn authority_allowance(
     use novel_bible::{ChapterStateEventType as Event, StateChangeAllowance as Allowance};
 
     if change.event_type == Event::Incidental {
-        let forbidden = change.changes_identity
-            || change.changes_core_ability
-            || change.changes_bottom_line
-            || change.changes_world_hard_rule
-            || change.pays_future_hook_early
-            || change.opens_new_mainline;
-        if forbidden || change.authority_path != "bounded_incidental" {
+        if change.authority_path != "bounded_incidental" {
             return Err(format!(
                 "state change {} exceeds bounded incidental authority",
                 change.change_id.trim()
@@ -1588,6 +1792,65 @@ mod tests {
     }
 
     #[test]
+    fn exhausted_observer_recovers_each_non_hook_required_state_class() {
+        use novel_bible::ChapterStateEventType as Event;
+
+        for event in [
+            Event::Character,
+            Event::Relationship,
+            Event::World,
+            Event::Power,
+            Event::Resource,
+        ] {
+            let mut authority = hook_authority("", json!([]));
+            let required = "沈砚取得铜印并成为守门人".to_string();
+            authority.chapter_contract.new_state_after_chapter = required.clone();
+            match event {
+                Event::Character => authority.chapter_contract.character_change = required.clone(),
+                Event::Relationship => {
+                    authority.chapter_contract.relationship_delta = required.clone()
+                }
+                Event::World => authority.chapter_contract.world_change = required.clone(),
+                Event::Power => authority.chapter_contract.power_delta = required.clone(),
+                Event::Resource => authority.chapter_contract.resource_delta = required.clone(),
+                _ => unreachable!(),
+            }
+            authority.canonical_contract = json!({
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "沈砚",
+                    "role": "主角"
+                }]
+            });
+            let chapter = ChapterRecord {
+                number: 1,
+                title: "chapter".to_string(),
+                volume_id: String::new(),
+                volume_title: String::new(),
+                path: String::new(),
+                summary: String::new(),
+                unit_count: required.chars().count(),
+                status: "draft".to_string(),
+                key_facts: Vec::new(),
+                continuity_updates: Vec::new(),
+                created_at: String::new(),
+                updated_at: String::new(),
+            };
+
+            let recovered =
+                recover_explicit_required_state_change(&chapter, &required, &authority, &[])
+                    .unwrap_or_else(|| panic!("required {event:?} state should recover"));
+
+            assert_eq!(recovered.event_type, event);
+            assert_eq!(recovered.entity_id, "character-0001");
+            assert_eq!(
+                recovered.authority_path,
+                "chapter_contract.new_state_after_chapter"
+            );
+        }
+    }
+
+    #[test]
     fn exhausted_observer_does_not_guess_character_for_unnamed_required_outcome() {
         let mut authority = hook_authority("", json!([]));
         authority.chapter_number = 4;
@@ -1870,7 +2133,7 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_optional_typed_delta_is_discarded_without_blocking_settlement() {
+    fn evidence_backed_unauthorized_optional_delta_blocks_without_polluting_pending_state() {
         let mut authority = hook_authority("", json!([]));
         authority.canonical_contract = json!({
             "characters": [{
@@ -1911,17 +2174,23 @@ mod tests {
             validated_settlement_from_final_body(&raw, body, &chapter, &authority);
 
         assert!(parse_error.is_none());
-        assert!(validation.passed, "{:?}", validation.warnings);
+        assert!(!validation.passed, "{:?}", validation.warnings);
         assert!(settlement.state_changes.is_empty());
         assert!(validation
-            .advisories
+            .warnings
             .iter()
-            .any(|item| item.contains("ignored untrusted typed delta")));
+            .any(|item| item.contains("unauthorized state delta")));
     }
 
     #[test]
     fn high_risk_typed_delta_still_blocks_without_polluting_pending_state() {
-        let authority = hook_authority("", json!([]));
+        let mut authority = hook_authority("", json!([]));
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "沈砚"
+            }]
+        });
         let chapter = ChapterRecord {
             number: 1,
             title: "chapter".to_string(),
@@ -1946,8 +2215,7 @@ mod tests {
                 "value": body,
                 "evidence": {"excerpt": body},
                 "authority_path": "chapter_contract.character_change",
-                "authority_excerpt": "改名",
-                "changes_identity": true
+                "authority_excerpt": "改名"
             }]
         })
         .to_string();
@@ -1961,7 +2229,7 @@ mod tests {
         assert!(validation
             .warnings
             .iter()
-            .any(|item| item.contains("high-risk transition")));
+            .any(|item| item.contains("unauthorized state delta")));
     }
 
     #[test]
@@ -2047,6 +2315,44 @@ mod tests {
             change.authority_excerpt,
             "南听宁发现必须寻找散落的第三枚灯芯"
         );
+    }
+
+    #[test]
+    fn exhausted_observer_recovers_required_existing_hook_advance() {
+        let required = "沈砚确认必须寻找失落的灯芯";
+        let mut authority = hook_authority(
+            "",
+            json!([{
+                "id": "hook-lampwick",
+                "title": "寻找失落的灯芯",
+                "reader_knows": "寻找失落的灯芯"
+            }]),
+        );
+        authority.chapter_contract.new_state_after_chapter = required.to_string();
+        authority.chapter_contract.payoff_target = required.to_string();
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: required.chars().count(),
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+
+        let recovered = recover_explicit_required_state_change(&chapter, required, &authority, &[])
+            .expect("required hook advance should recover");
+
+        assert_eq!(
+            recovered.event_type,
+            novel_bible::ChapterStateEventType::HookAdvance
+        );
+        assert_eq!(recovered.entity_id, "hook-lampwick");
     }
 
     #[test]

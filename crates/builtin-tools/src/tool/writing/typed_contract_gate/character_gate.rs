@@ -1,7 +1,7 @@
 use super::*;
 use crate::tool::writing::creation_contract::issue::{
-    user_story_semantic_issue_kind, ContractIssue, ContractIssueEvidence, ContractIssueKind,
-    ContractIssueList,
+    user_story_semantic_issue_kind, ContractIssue, ContractIssueDisposition, ContractIssueEvidence,
+    ContractIssueKind, ContractIssueList,
 };
 
 pub(super) fn validate_superseded_character_name_residue(
@@ -514,6 +514,7 @@ fn validate_gendered_primary_role_against_story_text(
         issues.push_issue(ContractIssue::new(
             "contract.character_story_identity",
             issue_kind,
+            ContractIssueDisposition::HardBlock,
             ContractIssueEvidence::new(source_label, observed_label),
             issue_text,
         ));

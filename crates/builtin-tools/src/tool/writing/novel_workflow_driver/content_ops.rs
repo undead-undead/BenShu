@@ -886,10 +886,7 @@ pub(crate) fn format_novel_content_mutation_result(
         .and_then(Value::as_u64)
         .or_else(|| revision.get("unit_count").and_then(Value::as_u64))
         .unwrap_or(0);
-    let quality_passed = revision
-        .pointer("/quality_gate/passed")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let quality_passed = quality_gate_body_passed(revision);
     let audit_success = audit
         .get("success")
         .and_then(Value::as_bool)

@@ -1013,6 +1013,40 @@
         assert!(recovered.is_none());
     }
 
+    async fn write_progress_test_receipt(
+        project_dir: &std::path::Path,
+        manifest: &NovelProjectManifest,
+        chapter_number: usize,
+    ) {
+        let chapter = manifest
+            .chapters
+            .iter()
+            .find(|chapter| chapter.number == chapter_number)
+            .expect("progress test chapter");
+        let raw = tokio::fs::read_to_string(project_dir.join(&chapter.path))
+            .await
+            .expect("progress test body");
+        let body = normalize_chapter_body_for_record(&strip_frontmatter(&raw), &chapter.title);
+        write_approval_receipt(
+            project_dir,
+            &ApprovalReceipt {
+                transaction_id: format!("progress-test-{chapter_number}"),
+                chapter_number,
+                body_fingerprint: chapter_quality::chapter_body_fingerprint(&body),
+                metadata_fingerprint: "metadata".to_string(),
+                authority_fingerprint: "authority".to_string(),
+                review_fingerprint: "review".to_string(),
+                settlement_fingerprint: "settlement".to_string(),
+                truth_fingerprint:
+                    super::super::approval_transaction::approval_truth_fingerprint(manifest),
+                committed_at: now_iso(),
+                legacy: false,
+            },
+        )
+        .await
+        .expect("write progress test receipt");
+    }
+
     #[tokio::test]
     async fn durable_progress_stops_at_the_first_disk_gap() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1051,6 +1085,7 @@
                 updated_at: Utc::now().to_rfc3339(),
             })
             .collect();
+        write_progress_test_receipt(dir.path(), &manifest, 1).await;
 
         let progress = durable_chapter_progress(dir.path(), &manifest).await;
         assert_eq!(progress.approved_prefix_chapters, 1);
@@ -1079,6 +1114,59 @@
             .is_some_and(|blockers| blockers.iter().any(|blocker| blocker
                 .as_str()
                 .is_some_and(|value| value.contains("missing from the manifest")))));
+    }
+
+    #[tokio::test]
+    async fn durable_progress_stops_at_the_first_receipt_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        tokio::fs::create_dir_all(dir.path().join("chapters"))
+            .await
+            .expect("chapter dir");
+        for number in 1..=2 {
+            tokio::fs::write(
+                dir.path().join(format!("chapters/{number:04}.md")),
+                format!("# 第{number}章\n\n雨落在旧城，守门人点亮第{number}盏归航灯。"),
+            )
+            .await
+            .expect("chapter body");
+        }
+
+        let mut manifest = test_manifest_with_primary_character();
+        manifest.target_units = Some(1_000);
+        manifest.chapters = (1usize..=2)
+            .map(|number| ChapterRecord {
+                number,
+                title: format!("第{number}章"),
+                volume_id: String::new(),
+                volume_title: String::new(),
+                path: format!("chapters/{number:04}.md"),
+                summary: String::new(),
+                unit_count: 999,
+                status: "approved".to_string(),
+                key_facts: Vec::new(),
+                continuity_updates: Vec::new(),
+                created_at: Utc::now().to_rfc3339(),
+                updated_at: Utc::now().to_rfc3339(),
+            })
+            .collect();
+        write_progress_test_receipt(dir.path(), &manifest, 1).await;
+        write_progress_test_receipt(dir.path(), &manifest, 2).await;
+        let mut first = read_approval_receipt(dir.path(), 1)
+            .await
+            .expect("read first receipt")
+            .expect("first receipt");
+        first.body_fingerprint = "tampered".to_string();
+        write_approval_receipt(dir.path(), &first)
+            .await
+            .expect("tamper first receipt");
+
+        let progress = durable_chapter_progress(dir.path(), &manifest).await;
+        assert_eq!(progress.approved_prefix_chapters, 0);
+        assert_eq!(progress.next_chapter, 1);
+        assert_eq!(progress.first_unapproved_chapter, Some(1));
+        assert!(progress.blockers.iter().any(|blocker| {
+            blocker.contains("chapter 1 approval receipt does not match")
+        }), "{:?}", progress.blockers);
     }
 
     #[tokio::test]

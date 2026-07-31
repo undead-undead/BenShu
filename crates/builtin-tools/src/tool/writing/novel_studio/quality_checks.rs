@@ -1862,7 +1862,7 @@ mod local_quality_tests {
             genre: "异界修仙".to_string(),
             brief: String::new(),
             target_units: Some(50_000),
-            chapter_unit_target: Some(2_500),
+            chapter_unit_target: None,
             max_chapters_per_turn: Some(1),
             export_format: Some("txt".to_string()),
             export_when_complete: true,

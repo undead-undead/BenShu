@@ -4694,7 +4694,7 @@ fn patch_scope_diagnostic_does_not_drag_stage_back_to_characters() {
 
     let mut issues = super::super::issue::ContractIssueList::from_messages(
         "contract.patch_scope",
-        super::super::issue::ContractIssueKind::Diagnostic,
+        super::super::issue::ContractIssueKind::Other,
         "typed_patch",
         vec![
             "typed patch 作用域校验未通过：character_patch 至少需要 1 个非主角关键角色"
@@ -4702,9 +4702,11 @@ fn patch_scope_diagnostic_does_not_drag_stage_back_to_characters() {
             "character_patch 角色 :\"陆玄辰 缺少欲望/恐惧/底线/弧线字段".to_string(),
         ],
     );
+    issues.set_disposition(super::super::issue::ContractIssueDisposition::Diagnostic);
     issues.push_issue(super::super::issue::ContractIssue::new(
         "contract.world_rules",
         super::super::issue::ContractIssueKind::Governance,
+        super::super::issue::ContractIssueDisposition::Repairable,
         super::super::issue::ContractIssueEvidence::new("world_rules", "missing"),
         "ContractBlocker: 小说合同缺少世界规则",
     ));
@@ -4748,6 +4750,7 @@ fn missing_outline_takes_precedence_over_character_quality_issue_when_cast_exist
     issues.push_issue(super::super::issue::ContractIssue::new(
         "contract.character_authority",
         super::super::issue::ContractIssueKind::Characters,
+        super::super::issue::ContractIssueDisposition::Repairable,
         super::super::issue::ContractIssueEvidence::new("characters", "supporting missing"),
         "小说合同角色权威表缺少非主角关键角色、关系对象或对手，不能支撑冲突和关系线",
     ));
@@ -4791,12 +4794,14 @@ fn missing_governance_with_existing_outline_does_not_loop_back_to_plot() {
         super::super::issue::ContractIssue::new(
             "contract.outline.plan",
             super::super::issue::ContractIssueKind::Plot,
+            super::super::issue::ContractIssueDisposition::Repairable,
             super::super::issue::ContractIssueEvidence::new("outline", "missing stage plan"),
             "ContractBlocker: 小说合同缺少分卷/阶段安排或近期章节包",
         ),
         super::super::issue::ContractIssue::new(
             "contract.outline.plan",
             super::super::issue::ContractIssueKind::Plot,
+            super::super::issue::ContractIssueDisposition::Repairable,
             super::super::issue::ContractIssueEvidence::new("outline", "missing outline"),
             "小说合同尚未形成逐章规划或分卷/阶段大纲",
         ),

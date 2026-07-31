@@ -394,32 +394,6 @@ pub(crate) fn line_looks_like_numbered_chapter_plan_item(line: &str) -> bool {
     !title.is_empty() && !chapter_plan_title_is_goal_marker(title)
 }
 
-pub(crate) fn fiction_outline_has_stage_or_recent_chapter_plan(text: &str) -> bool {
-    let explicit_chapters = count_explicit_chapter_plan_lines(text);
-    if explicit_chapters >= 2 {
-        return true;
-    }
-    [
-        "分卷",
-        "卷",
-        "阶段",
-        "近期章节",
-        "章节包",
-        "第一阶段",
-        "第二阶段",
-        "开端",
-        "发展",
-        "高潮",
-        "收束",
-        "volume",
-        "arc",
-        "stage",
-        "phase",
-    ]
-    .iter()
-    .any(|term| text.contains(term) || text.to_ascii_lowercase().contains(term))
-}
-
 #[cfg(test)]
 pub(crate) fn chapter_plan_missing_goal_issue(text: &str, expected: usize) -> Option<String> {
     let lines = collect_explicit_chapter_plan_lines(text);

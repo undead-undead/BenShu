@@ -447,7 +447,7 @@ fn submit_title_only_contract_patch_candidate(
     let readiness_issues =
         contract_readiness_issues_for_candidate_draft(&candidate_draft, &canonical_contract_text);
     if !readiness_issues.is_empty() {
-        let gate = contract_gate_from_issues(draft, &canonical_contract_text, readiness_issues);
+        let gate = contract_gate_from_findings(draft, &canonical_contract_text, readiness_issues);
         let actionable = gate.actionable_issues();
         record_contract_repair_candidate(
             draft,
@@ -581,20 +581,16 @@ fn contract_boundary_rejection_outcome(
     draft: &mut SessionCreationDraftState,
     candidate_text: &str,
 ) -> Option<ContractSubmissionOutcome> {
-    let issues = contract_boundary_quality_issues(draft, candidate_text);
-    if issues.is_empty() {
+    let findings = contract_boundary_quality_findings(draft, candidate_text);
+    if findings.is_empty() {
         return None;
     }
+    let issues = findings.messages();
     record_contract_repair_candidate(draft, candidate_text, None, &issues);
     draft.set_lifecycle_status(CreationDraftLifecycleStatus::DraftingContract);
     draft.updated_at = chrono::Utc::now().to_rfc3339();
     Some(ContractSubmissionOutcome {
-        gate: ContractGateResult {
-            status: ContractGateStatus::NeedsRepair,
-            blocking_issues: Vec::new(),
-            repairable_issues: issues,
-            warnings: Vec::new(),
-        },
+        gate: contract_gate_from_findings(draft, candidate_text, findings),
         committed: false,
     })
 }
@@ -629,8 +625,9 @@ fn submit_novel_creation_contract_candidate_from_preapplied_draft(
     contract.normalize();
     let normalized_contract_text =
         serde_json::to_string(&contract).unwrap_or_else(|_| normalized_text.clone());
-    let boundary_issues = contract_boundary_quality_issues(draft, &normalized_contract_text);
-    if !boundary_issues.is_empty() {
+    let boundary_findings = contract_boundary_quality_findings(draft, &normalized_contract_text);
+    if !boundary_findings.is_empty() {
+        let boundary_issues = boundary_findings.messages();
         let boundary_pending_value =
             serde_json::to_value(&contract).unwrap_or_else(|_| normalized_value.clone());
         record_contract_repair_candidate(
@@ -642,12 +639,7 @@ fn submit_novel_creation_contract_candidate_from_preapplied_draft(
         draft.set_lifecycle_status(CreationDraftLifecycleStatus::DraftingContract);
         draft.updated_at = chrono::Utc::now().to_rfc3339();
         return ContractSubmissionOutcome {
-            gate: ContractGateResult {
-                status: ContractGateStatus::NeedsRepair,
-                blocking_issues: Vec::new(),
-                repairable_issues: boundary_issues,
-                warnings: Vec::new(),
-            },
+            gate: contract_gate_from_findings(draft, &normalized_contract_text, boundary_findings),
             committed: false,
         };
     }
@@ -671,7 +663,7 @@ fn submit_novel_creation_contract_candidate_from_preapplied_draft(
     let readiness_issues =
         contract_readiness_issues_for_candidate_draft(&candidate_draft, &canonical_contract_text);
     if !readiness_issues.is_empty() {
-        let gate = contract_gate_from_issues(draft, &normalized_text, readiness_issues);
+        let gate = contract_gate_from_findings(draft, &normalized_text, readiness_issues);
         let actionable = gate.actionable_issues();
         let pending_value = canonical_contract_value;
         record_contract_repair_candidate(draft, &sanitized, Some(pending_value), &actionable);
@@ -722,21 +714,20 @@ fn record_contract_repair_candidate(
 fn contract_readiness_issues_for_candidate_draft(
     draft: &SessionCreationDraftState,
     canonical_contract_text: &str,
-) -> Vec<String> {
-    let mut issues = creation_draft_contract_blocking_issues_for_scope(
+) -> super::issue::ContractIssueList {
+    let mut issues = creation_draft_contract_blocking_findings_for_scope(
         draft,
         ContractReadinessScope::LockedAuthorityContract,
     );
-    issues.extend(contract_boundary_quality_issues(
+    issues.extend_findings(contract_boundary_quality_findings(
         draft,
         canonical_contract_text,
     ));
-    issues.extend(forbidden_naming_contract_issues(
+    issues.extend_messages(forbidden_naming_contract_issues(
         draft,
         canonical_contract_text,
     ));
-    issues.sort();
-    issues.dedup();
+    issues.sort_dedup();
     issues
 }
 

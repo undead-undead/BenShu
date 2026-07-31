@@ -426,15 +426,13 @@ fn default_volume_arc_uses_clean_localized_fallback() {
 }
 
 #[test]
-fn story_contract_requires_core_character_anchor() {
+fn story_contract_runtime_mirror_does_not_reblock_character_richness() {
     let mut weak = contract();
     weak.characters = vec!["name: 沈砚; role: 主角".to_string()];
 
     let blockers = story_contract_blockers(&weak);
 
-    assert!(blockers
-        .iter()
-        .any(|item| item.contains("desire/fear/bottom-line")));
+    assert!(blockers.is_empty(), "{blockers:?}");
 }
 
 #[test]

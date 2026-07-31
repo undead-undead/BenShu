@@ -13,6 +13,7 @@ use super::contract_text::{
     chapter_plan_invalid_title_issue, chapter_plan_title_diversity_issue,
     collect_explicit_chapter_plan_titles,
 };
+use super::issue::{ContractIssueDisposition, ContractIssueKind, ContractIssueList};
 #[cfg(test)]
 use super::planning_gate::generated_fiction_contract_planning_issues;
 use super::{ContractGateResult, ContractGateStatus, SessionCreationDraftState};
@@ -64,7 +65,13 @@ pub fn generated_contract_gate_result(
     if issues.is_empty() {
         return ContractGateResult::ready();
     }
-    contract_gate_from_issues(draft, contract_text, issues)
+    let mut findings = ContractIssueList::new(
+        "contract.generated_quality",
+        ContractIssueKind::Other,
+        "generated_contract",
+    );
+    findings.extend_messages(issues);
+    contract_gate_from_findings(draft, contract_text, findings)
 }
 
 #[cfg(test)]
@@ -178,39 +185,44 @@ pub fn generated_contract_advisory_issues(
     issues
 }
 
-pub(super) fn contract_gate_from_issues(
+pub(super) fn contract_gate_from_findings(
     draft: &SessionCreationDraftState,
     contract_text: &str,
-    issues: Vec<String>,
+    issues: ContractIssueList,
 ) -> ContractGateResult {
     let mut blocking_issues = Vec::new();
     let mut repairable_issues = Vec::new();
-    for issue in issues {
-        if contract_quality_issue_is_blocking(&issue) {
-            blocking_issues.push(issue);
-        } else {
-            repairable_issues.push(issue);
+    let mut warnings = Vec::new();
+    let mut typed_issues = ContractIssueList::new(
+        "contract.generated_advisory",
+        ContractIssueKind::Other,
+        "generated_contract",
+    );
+    typed_issues.set_disposition(ContractIssueDisposition::Advisory);
+    typed_issues.extend_messages(generated_contract_advisory_issues(draft, contract_text));
+    typed_issues.extend_findings(issues);
+    typed_issues.sort_dedup();
+    for issue in typed_issues {
+        match issue.disposition {
+            ContractIssueDisposition::HardBlock => blocking_issues.push(issue.text),
+            ContractIssueDisposition::Repairable => repairable_issues.push(issue.text),
+            ContractIssueDisposition::Advisory => warnings.push(issue.text),
+            ContractIssueDisposition::Diagnostic => {}
         }
     }
     let status = if !blocking_issues.is_empty() {
         ContractGateStatus::Blocked
-    } else {
+    } else if !repairable_issues.is_empty() {
         ContractGateStatus::NeedsRepair
+    } else {
+        ContractGateStatus::Ready
     };
+    warnings.sort();
+    warnings.dedup();
     ContractGateResult {
         status,
         blocking_issues,
         repairable_issues,
-        warnings: generated_contract_advisory_issues(draft, contract_text),
+        warnings,
     }
-}
-
-fn contract_quality_issue_is_blocking(issue: &str) -> bool {
-    issue.contains("混入面板说明")
-        || issue.contains("连续重复退化")
-        || issue.contains("非中文脚本残片")
-        || issue.contains("转义或 LaTeX 残片")
-        || issue.contains("异常下划线残片")
-        || issue.contains("异常列表前缀")
-        || issue.contains("命名字段异常")
 }

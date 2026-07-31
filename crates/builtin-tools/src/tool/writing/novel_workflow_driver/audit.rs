@@ -254,7 +254,7 @@ impl NovelChapterRunner {
         let Some(audit) = parse_llm_quality_audit_output(&raw) else {
             return Ok(None);
         };
-        let locally_confirmed_codes = local_hard_finding_codes(write_result);
+        let locally_confirmed_findings = local_hard_findings(write_result);
         let mut advisories = audit.advisories;
         let findings = audit
             .authority_conflicts
@@ -262,7 +262,7 @@ impl NovelChapterRunner {
             .filter_map(|conflict| {
                 let finding = validate_llm_authority_conflict(
                     &conflict,
-                    &locally_confirmed_codes,
+                    &locally_confirmed_findings,
                     &authority_context,
                     &content,
                 );

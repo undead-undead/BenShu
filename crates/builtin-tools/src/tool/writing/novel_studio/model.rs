@@ -35,9 +35,50 @@ pub(super) struct StateValidationOutput {
     #[serde(default)]
     pub(super) passed: bool,
     #[serde(default)]
+    pub(super) disposition: StateSettlementDisposition,
+    #[serde(default)]
     pub(super) warnings: Vec<String>,
     #[serde(default)]
     pub(super) advisories: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum StateSettlementDisposition {
+    #[default]
+    Ready,
+    ObserverFormatDegraded,
+    DisplayMetadataDegraded,
+    RequiredStateMissing,
+    StatePollution,
+    DependencyMismatch,
+}
+
+impl StateSettlementDisposition {
+    pub(super) fn is_blocking(self) -> bool {
+        matches!(
+            self,
+            Self::RequiredStateMissing | Self::StatePollution | Self::DependencyMismatch
+        )
+    }
+
+    pub(super) fn merge(self, other: Self) -> Self {
+        fn rank(value: StateSettlementDisposition) -> u8 {
+            match value {
+                StateSettlementDisposition::Ready => 0,
+                StateSettlementDisposition::DisplayMetadataDegraded => 1,
+                StateSettlementDisposition::ObserverFormatDegraded => 2,
+                StateSettlementDisposition::RequiredStateMissing => 3,
+                StateSettlementDisposition::StatePollution => 4,
+                StateSettlementDisposition::DependencyMismatch => 5,
+            }
+        }
+        if rank(other) > rank(self) {
+            other
+        } else {
+            self
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -1,5 +1,5 @@
 #[cfg(test)]
-use super::issue::{ContractIssue, ContractIssueEvidence};
+use super::issue::{ContractIssue, ContractIssueDisposition, ContractIssueEvidence};
 use super::issue::{ContractIssueKind, ContractIssueList, ContractIssueSet};
 use super::*;
 
@@ -342,6 +342,7 @@ mod tests {
         super::ContractIssue::new(
             code,
             kind,
+            ContractIssueDisposition::Repairable,
             super::ContractIssueEvidence::new("test", text),
             text,
         )
