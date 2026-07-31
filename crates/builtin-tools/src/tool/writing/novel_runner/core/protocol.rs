@@ -279,6 +279,13 @@ struct IndexedBodySentence {
     end: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FinalBodyEvidenceSpan {
+    pub(crate) start_char: usize,
+    pub(crate) end_char: usize,
+    pub(crate) excerpt: String,
+}
+
 pub(crate) fn render_final_body_sentence_index(content: &str) -> String {
     let mut rendered = String::new();
     let mut previous_paragraph = None;
@@ -297,6 +304,38 @@ pub(crate) fn render_final_body_sentence_index(content: &str) -> String {
         previous_paragraph = Some(sentence.paragraph);
     }
     rendered
+}
+
+/// Returns the same bounded sentence windows exposed to the final-body
+/// observer. Deterministic settlement recovery must consume these indexed
+/// windows instead of maintaining a second sentence splitter.
+pub(crate) fn final_body_evidence_spans(content: &str) -> Vec<FinalBodyEvidenceSpan> {
+    let sentences = indexed_body_sentences(content);
+    let mut spans = Vec::new();
+    for (start_index, first) in sentences.iter().enumerate() {
+        for width in 1..=3 {
+            let Some(last) = sentences.get(start_index + width - 1) else {
+                break;
+            };
+            if last.paragraph != first.paragraph {
+                break;
+            }
+            let excerpt = content[first.start..last.end].trim();
+            if excerpt.is_empty() || excerpt.chars().count() > 320 {
+                break;
+            }
+            let mut matches = content.match_indices(excerpt);
+            if matches.next().is_none() || matches.next().is_some() {
+                continue;
+            }
+            spans.push(FinalBodyEvidenceSpan {
+                start_char: content[..first.start].chars().count(),
+                end_char: content[..last.end].chars().count(),
+                excerpt: excerpt.to_string(),
+            });
+        }
+    }
+    spans
 }
 
 fn indexed_body_sentences(content: &str) -> Vec<IndexedBodySentence> {

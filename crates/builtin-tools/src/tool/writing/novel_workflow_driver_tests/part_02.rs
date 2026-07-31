@@ -52,7 +52,7 @@
     }
 
     #[test]
-    fn chapter_loop_routes_small_length_shortfall_to_single_topup() {
+    fn chapter_loop_stops_after_single_topup_for_pure_length_shortfall() {
         let write_result = json!({
             "unit_count": 2499,
             "quality_gate": {
@@ -1652,7 +1652,14 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
             "quality_gate": {
                 "findings": [{
                     "code": "future_chapter_consumed",
-                    "disposition": "hard_block"
+                    "disposition": "hard_block",
+                    "message": "chapter 1 consumes the sealed chapter 2 boundary early",
+                    "authority_evidence": [{
+                        "excerpt": "叶知宁测绘局部地形"
+                    }],
+                    "body_evidence": [{
+                        "excerpt": "他完成了这片局部区域的基础测绘。"
+                    }]
                 }]
             }
         });
@@ -1664,6 +1671,8 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         assert!(guidance.contains("章节边界"));
         assert!(guidance.contains("不代表全书进入终局或尾声"));
         assert!(guidance.contains("下一章事件可以被预示或准备"));
+        assert!(guidance.contains("叶知宁测绘局部地形"));
+        assert!(guidance.contains("他完成了这片局部区域的基础测绘。"));
         assert!(!guidance.contains("这是终局/尾声修订"));
         assert_eq!(mode, novel_runner::RevisionMode::LocalRepair);
         assert!(guidance.contains("以当前正文为底稿做局部修补"));

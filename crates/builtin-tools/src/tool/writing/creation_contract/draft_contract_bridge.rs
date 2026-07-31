@@ -506,10 +506,54 @@ pub(crate) fn normalize_fiction_creation_draft_after_contract_change(
     }
     let authority_changed = prune_explicit_non_character_draft_authority(draft);
     reconcile_title_from_model_rationale(draft);
+    preserve_explicit_user_primary_role_authority(draft);
     canonicalize_fiction_contract_v2_to_current_character_authority(draft);
     if authority_changed {
         rebuild_current_contract_from_visible_draft(draft);
     }
+}
+
+fn preserve_explicit_user_primary_role_authority(draft: &mut SessionCreationDraftState) -> bool {
+    let Some(expected_role) = explicit_gendered_primary_role_from_user_story_authority(draft)
+    else {
+        return false;
+    };
+    let Some(primary_index) = draft
+        .fiction_characters
+        .iter()
+        .position(|line| draft_character_line_role_looks_primary(line))
+    else {
+        return false;
+    };
+    let mut primary = draft_character_line_to_contract(&draft.fiction_characters[primary_index]);
+    if primary.role == expected_role {
+        return false;
+    }
+    primary.role = expected_role.to_string();
+    draft.fiction_characters[primary_index] = primary.to_draft_line();
+    true
+}
+
+fn explicit_gendered_primary_role_from_user_story_authority(
+    draft: &SessionCreationDraftState,
+) -> Option<&'static str> {
+    draft
+        .planning_notes
+        .iter()
+        .filter_map(|note| note.strip_prefix("用户故事核心权威："))
+        .filter_map(|authority| {
+            [
+                ("女主人公", "女主"),
+                ("男主人公", "男主"),
+                ("女主", "女主"),
+                ("男主", "男主"),
+            ]
+            .into_iter()
+            .filter_map(|(marker, role)| authority.find(marker).map(|index| (index, role)))
+            .min_by_key(|(index, _)| *index)
+            .map(|(_, role)| role)
+        })
+        .last()
 }
 
 fn prune_explicit_non_character_draft_authority(draft: &mut SessionCreationDraftState) -> bool {
@@ -2032,6 +2076,56 @@ mod tests {
             "关键关系对象"
         );
         assert_eq!(draft_character_role_from_basis("盟友", ""), "同伴");
+    }
+
+    #[test]
+    fn contract_normalization_restores_explicit_user_primary_role_authority() {
+        let mut draft = build_initial_creation_draft(
+            "session-explicit-gendered-primary",
+            "fiction",
+            "写一部都市职场言情小说。女主是一名建筑修复师，男主是档案馆员。",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![
+            CharacterContract {
+                canonical_name: "闻星衡".to_string(),
+                role: "主角".to_string(),
+                ..Default::default()
+            }
+            .to_draft_line(),
+            CharacterContract {
+                canonical_name: "裴望川".to_string(),
+                role: "关键关系对象".to_string(),
+                ..Default::default()
+            }
+            .to_draft_line(),
+        ];
+
+        normalize_fiction_creation_draft_after_contract_change(&mut draft);
+
+        let primary = draft_character_line_to_contract(&draft.fiction_characters[0]);
+        assert_eq!(primary.role, "女主");
+    }
+
+    #[test]
+    fn contract_normalization_does_not_invent_unspecified_primary_gender() {
+        let mut draft = build_initial_creation_draft(
+            "session-unspecified-primary-gender",
+            "fiction",
+            "写一部都市职场小说。主角是一名建筑修复师。",
+        )
+        .expect("draft");
+        draft.fiction_characters = vec![CharacterContract {
+            canonical_name: "闻星衡".to_string(),
+            role: "主角".to_string(),
+            ..Default::default()
+        }
+        .to_draft_line()];
+
+        normalize_fiction_creation_draft_after_contract_change(&mut draft);
+
+        let primary = draft_character_line_to_contract(&draft.fiction_characters[0]);
+        assert_eq!(primary.role, "主角");
     }
 
     #[test]

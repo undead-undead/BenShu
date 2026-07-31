@@ -87,6 +87,10 @@ pub(super) struct NovelStudioArgs {
     pub(super) source_url: String,
     #[serde(default)]
     pub(super) notes: String,
+    /// Internal workflow signal. It is intentionally omitted from the public
+    /// tool schema and must not be encoded into user-facing free text.
+    #[serde(default)]
+    pub(super) observer_attempts_exhausted: bool,
     #[serde(default)]
     pub(super) content: String,
     #[serde(default)]

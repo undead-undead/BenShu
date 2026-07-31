@@ -79,6 +79,10 @@ pub(crate) fn contract_outline_text_is_polluted(value: &str) -> bool {
     outline_gate::outline_text_is_polluted(value)
 }
 
+pub(crate) fn contract_outline_plan_text_is_placeholder(value: &str) -> bool {
+    outline_gate::outline_plan_text_is_placeholder(value)
+}
+
 pub(crate) fn payoff_matrix_entry_is_complete(entry: &PayoffMatrixEntry) -> bool {
     !value_missing(&entry.promise)
         && !value_missing(&entry.payoff_target)

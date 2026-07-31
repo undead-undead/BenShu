@@ -47,6 +47,47 @@ pub(super) fn validated_settlement_from_final_body(
     SettlementSource,
     Option<String>,
 ) {
+    validated_settlement_from_final_body_with_recovery(
+        raw_observation,
+        body,
+        chapter,
+        authority,
+        false,
+    )
+}
+
+pub(super) fn validated_settlement_from_final_body_after_observer_exhaustion(
+    raw_observation: &str,
+    body: &str,
+    chapter: &ChapterRecord,
+    authority: &governance::SealedChapterAuthority,
+) -> (
+    SettlementOutput,
+    StateValidationOutput,
+    SettlementSource,
+    Option<String>,
+) {
+    validated_settlement_from_final_body_with_recovery(
+        raw_observation,
+        body,
+        chapter,
+        authority,
+        true,
+    )
+}
+
+fn validated_settlement_from_final_body_with_recovery(
+    raw_observation: &str,
+    body: &str,
+    chapter: &ChapterRecord,
+    authority: &governance::SealedChapterAuthority,
+    recover_required_character_state: bool,
+) -> (
+    SettlementOutput,
+    StateValidationOutput,
+    SettlementSource,
+    Option<String>,
+) {
     let parsed = parse_explicit_settlement_output(raw_observation);
     let (mut settlement, source, parse_error) = match parsed {
         Ok(settlement) => (settlement, SettlementSource::FinalBodyObserver, None),
@@ -62,7 +103,13 @@ pub(super) fn validated_settlement_from_final_body(
         ),
     };
     bind_settlement_fingerprints(&mut settlement, chapter, body, authority);
-    let validation = validate_and_bind_settlement(chapter, body, authority, &mut settlement);
+    let validation = validate_and_bind_settlement(
+        chapter,
+        body,
+        authority,
+        &mut settlement,
+        recover_required_character_state,
+    );
     (settlement, validation, source, parse_error)
 }
 
@@ -141,7 +188,7 @@ pub(super) fn validate_settlement_for_chapter(
     settlement: &SettlementOutput,
 ) -> StateValidationOutput {
     let mut checked = settlement.clone();
-    validate_and_bind_settlement(chapter, content, authority, &mut checked)
+    validate_and_bind_settlement(chapter, content, authority, &mut checked, false)
 }
 
 fn validate_and_bind_settlement(
@@ -149,6 +196,7 @@ fn validate_and_bind_settlement(
     content: &str,
     authority: &governance::SealedChapterAuthority,
     settlement: &mut SettlementOutput,
+    recover_required_character_state: bool,
 ) -> StateValidationOutput {
     let mut validation = deterministic_state_validation(content, settlement);
     if !settlement.degraded_reason.trim().is_empty() {
@@ -219,6 +267,21 @@ fn validate_and_bind_settlement(
         }
         accepted_changes.push(change);
     }
+    if recover_required_character_state
+        && !accepted_changes.iter().any(|change| {
+            change.authority_path.trim() == "chapter_contract.new_state_after_chapter"
+        })
+    {
+        if let Some(change) =
+            recover_explicit_required_character_state_change(chapter, content, authority)
+        {
+            accepted_changes.push(change);
+            validation.advisories.push(
+                "recovered an explicitly identified required character end-state delta from sealed authority and bounded final-body evidence after observer attempts were exhausted"
+                    .to_string(),
+            );
+        }
+    }
     settlement.state_changes = dedupe_required_end_state_changes(accepted_changes);
     if !authority
         .chapter_contract
@@ -243,6 +306,115 @@ fn validate_and_bind_settlement(
     validation.advisories.dedup();
     validation.passed = validation.warnings.is_empty();
     validation
+}
+
+fn recover_explicit_required_character_state_change(
+    chapter: &ChapterRecord,
+    content: &str,
+    authority: &governance::SealedChapterAuthority,
+) -> Option<novel_bible::ChapterStateChange> {
+    const REQUIRED_PATH: &str = "chapter_contract.new_state_after_chapter";
+
+    let required = authority.chapter_contract.new_state_after_chapter.trim();
+    if required.is_empty() {
+        return None;
+    }
+    let contract =
+        serde_json::from_value::<NovelCreationContract>(authority.canonical_contract.clone())
+            .ok()?;
+    let normalized_required = normalize_evidence_text(required);
+    let primary_role_is_named = character_contract_line_marks_primary(required);
+    let mentioned_candidates = contract
+        .characters
+        .iter()
+        .filter(|character| {
+            let explicitly_named = [
+                character.character_id.as_str(),
+                character.canonical_name.as_str(),
+            ]
+            .into_iter()
+            .chain(character.aliases.iter().map(String::as_str))
+            .filter(|surface| !surface.trim().is_empty())
+            .any(|surface| normalized_required.contains(&normalize_evidence_text(surface)));
+            explicitly_named || (primary_role_is_named && character.role_looks_primary())
+        })
+        .collect::<Vec<_>>();
+    let mut longest_leading_surface: Option<usize> = None;
+    for character in &contract.characters {
+        for surface in std::iter::once(character.canonical_name.as_str())
+            .chain(character.aliases.iter().map(String::as_str))
+        {
+            let surface = normalize_evidence_text(surface);
+            if !surface.is_empty() && normalized_required.starts_with(&surface) {
+                longest_leading_surface = Some(
+                    longest_leading_surface
+                        .unwrap_or_default()
+                        .max(surface.chars().count()),
+                );
+            }
+        }
+    }
+    let mut candidates = if let Some(longest_leading_surface) = longest_leading_surface {
+        contract
+            .characters
+            .iter()
+            .filter(|character| {
+                std::iter::once(character.canonical_name.as_str())
+                    .chain(character.aliases.iter().map(String::as_str))
+                    .map(normalize_evidence_text)
+                    .any(|surface| {
+                        surface.chars().count() == longest_leading_surface
+                            && normalized_required.starts_with(&surface)
+                    })
+            })
+            .collect::<Vec<_>>()
+    } else {
+        mentioned_candidates
+    };
+    candidates.sort_by(|left, right| {
+        left.character_id
+            .cmp(&right.character_id)
+            .then_with(|| left.canonical_name.cmp(&right.canonical_name))
+    });
+    candidates.dedup_by(|left, right| {
+        left.character_id == right.character_id && left.canonical_name == right.canonical_name
+    });
+    let character = (candidates.len() == 1).then(|| candidates.remove(0))?;
+    let entity_id = if character.character_id.trim().is_empty() {
+        character.canonical_name.trim()
+    } else {
+        character.character_id.trim()
+    };
+    if entity_id.is_empty() {
+        return None;
+    }
+    let entity = authority_entity_resolution(authority, entity_id);
+    let cjk = required.chars().chain(content.chars()).any(is_cjk_unified);
+    for span in runner::final_body_evidence_spans(content) {
+        if !governance::contract_change_supported_by_final_evidence(required, &span.excerpt, cjk) {
+            continue;
+        }
+        let mut change = novel_bible::ChapterStateChange {
+            change_id: format!("chapter-{:04}-change-required-recovered", chapter.number),
+            entity_id: entity_id.to_string(),
+            event_type: novel_bible::ChapterStateEventType::Character,
+            value: span.excerpt.clone(),
+            evidence: novel_bible::ChapterBodyEvidence {
+                start_char: span.start_char,
+                end_char: span.end_char,
+                excerpt: span.excerpt,
+            },
+            authority_path: REQUIRED_PATH.to_string(),
+            ..Default::default()
+        };
+        bind_contract_authority(authority, &mut change);
+        if validate_final_body_evidence(content, &entity, &mut change).is_err() {
+            continue;
+        }
+        change.allowance = authority_allowance(authority, &change).ok()?;
+        return Some(change);
+    }
+    None
 }
 
 /// `new_state_after_chapter` is the required outcome assertion for this
@@ -1355,6 +1527,234 @@ mod tests {
             settlement.state_changes[0].authority_excerpt,
             authority.chapter_contract.new_state_after_chapter
         );
+    }
+
+    #[test]
+    fn exhausted_observer_recovers_unique_required_character_state_from_final_body() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 4;
+        authority.chapter_contract.number = 4;
+        authority.chapter_contract.new_state_after_chapter =
+            "主角进入意识层面的感知状态".to_string();
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "顾景真",
+                "role": "主角"
+            }]
+        });
+        let chapter = ChapterRecord {
+            number: 4,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 12,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "顾景真感觉意识正在脱离肉体的束缚。他进入了一种非物质的流动状态。";
+        let raw = json!({
+            "current_state": "顾景真进入非物质感知状态。",
+            "chapter_summary": "顾景真通过共振越过物理感官边界。",
+            "state_changes": []
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body_after_observer_exhaustion(
+                &raw, body, &chapter, &authority,
+            );
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(settlement.state_changes.len(), 1);
+        let recovered = &settlement.state_changes[0];
+        assert_eq!(recovered.entity_id, "character-0001");
+        assert_eq!(
+            recovered.authority_path,
+            "chapter_contract.new_state_after_chapter"
+        );
+        assert_eq!(
+            recovered.allowance,
+            novel_bible::StateChangeAllowance::Contract
+        );
+        assert!(recovered.evidence.excerpt.contains("顾景真"));
+        assert!(recovered.evidence.excerpt.contains("进入"));
+    }
+
+    #[test]
+    fn exhausted_observer_does_not_guess_character_for_unnamed_required_outcome() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 4;
+        authority.chapter_contract.number = 4;
+        authority.chapter_contract.new_state_after_chapter =
+            "样衣获得市场初步反馈，资金开始回笼。".to_string();
+        authority.canonical_contract = json!({
+            "characters": [
+                {
+                    "character_id": "character-0001",
+                    "canonical_name": "唐昭遥",
+                    "role": "主角"
+                },
+                {
+                    "character_id": "character-0002",
+                    "canonical_name": "梁泊澜",
+                    "role": "关键关系对象"
+                }
+            ]
+        });
+        let chapter = ChapterRecord {
+            number: 4,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 36,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body =
+            "唐昭遥向摊主展示了样衣，获得了真实的市场反馈。她接过第一笔货款，资金终于开始回笼。";
+        let raw = json!({
+            "current_state": "唐昭遥完成样衣试销并回笼第一笔资金。",
+            "chapter_summary": "样衣通过市场初步验证。",
+            "state_changes": []
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body_after_observer_exhaustion(
+                &raw, body, &chapter, &authority,
+            );
+
+        assert!(parse_error.is_none());
+        assert!(!validation.passed);
+        assert!(settlement.state_changes.is_empty());
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("missing the required typed end-state change")));
+    }
+
+    #[test]
+    fn exhausted_observer_uses_leading_actor_when_required_state_mentions_another_character() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 2;
+        authority.chapter_contract.number = 2;
+        authority.chapter_contract.new_state_after_chapter =
+            "秦昭原发现沈栖声采购的材料纯度远超行业平均水平".to_string();
+        authority.canonical_contract = json!({
+            "characters": [
+                {
+                    "character_id": "character-0001",
+                    "canonical_name": "沈栖声",
+                    "role": "女主"
+                },
+                {
+                    "character_id": "character-0002",
+                    "canonical_name": "秦昭原",
+                    "role": "关键关系对象"
+                }
+            ]
+        });
+        let chapter = ChapterRecord {
+            number: 2,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 24,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "秦昭原盯着沈栖声手里的报告，确认她采购的材料纯度远超行业平均水平。";
+        let raw = json!({
+            "current_state": "秦昭原确认材料纯度远超行业平均水平。",
+            "chapter_summary": "秦昭原完成高精度检测。",
+            "state_changes": []
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body_after_observer_exhaustion(
+                &raw, body, &chapter, &authority,
+            );
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(settlement.state_changes.len(), 1);
+        assert_eq!(settlement.state_changes[0].entity_id, "character-0002");
+    }
+
+    #[test]
+    fn exhausted_observer_does_not_recover_name_only_or_ambiguous_character_state() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 4;
+        authority.chapter_contract.number = 4;
+        authority.chapter_contract.new_state_after_chapter =
+            "主角进入意识层面的感知状态".to_string();
+        authority.canonical_contract = json!({
+            "characters": [
+                {
+                    "character_id": "character-0001",
+                    "canonical_name": "顾景真",
+                    "role": "主角"
+                },
+                {
+                    "character_id": "character-0002",
+                    "canonical_name": "程昭禾",
+                    "role": "主角"
+                }
+            ]
+        });
+        let chapter = ChapterRecord {
+            number: 4,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 12,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let raw = json!({
+            "current_state": "两人仍在探测器内。",
+            "chapter_summary": "顾景真和程昭禾继续等待。",
+            "state_changes": []
+        })
+        .to_string();
+
+        let (settlement, validation, _, _) =
+            validated_settlement_from_final_body_after_observer_exhaustion(
+                &raw,
+                "顾景真看着程昭禾，两人继续等待。",
+                &chapter,
+                &authority,
+            );
+
+        assert!(settlement.state_changes.is_empty());
+        assert!(!validation.passed);
+        assert!(validation
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("required typed end-state change")));
     }
 
     #[test]

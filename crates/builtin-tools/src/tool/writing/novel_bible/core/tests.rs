@@ -560,6 +560,43 @@ fn approved_chapter_updates_each_character_state_from_own_evidence() {
 }
 
 #[test]
+fn required_character_end_state_persists_authority_outcome_not_prose_evidence() {
+    let mut bible = build_story_bible(
+        "星门试炼",
+        "zh-CN",
+        "玄幻",
+        "brief",
+        &contract(),
+        "now".to_string(),
+    );
+    let protagonist = bible.character_ledger[0].clone();
+    let evidence = "冰冷从沈砚的骨缝里渗出来，他扶墙站稳。";
+    let required_state = "沈砚已适应重生后的身体状态并初步稳住军心";
+    let chapter = ApprovedChapterDelta {
+        number: 1,
+        state_changes: vec![ChapterStateChange {
+            entity_id: protagonist.id,
+            event_type: ChapterStateEventType::Character,
+            value: evidence.to_string(),
+            evidence: ChapterBodyEvidence {
+                start_char: 0,
+                end_char: evidence.chars().count(),
+                excerpt: evidence.to_string(),
+            },
+            authority_path: "chapter_contract.new_state_after_chapter".to_string(),
+            authority_excerpt: required_state.to_string(),
+            allowance: StateChangeAllowance::Contract,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+
+    apply_approved_chapter_delta(&mut bible, &chapter, "later".to_string());
+
+    assert_eq!(bible.character_ledger[0].current_state, required_state);
+}
+
+#[test]
 fn approved_chapter_updates_structured_contract_v2_evidence() {
     let mut contract = contract();
     contract

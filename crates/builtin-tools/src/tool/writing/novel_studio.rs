@@ -175,7 +175,9 @@ use runtime_records::*;
 #[cfg(test)]
 use settlement::{deterministic_state_validation, parse_settlement_output};
 use settlement::{
-    payoff_continuity_update, validate_settlement_for_chapter, validated_settlement_from_final_body,
+    payoff_continuity_update, validate_settlement_for_chapter,
+    validated_settlement_from_final_body,
+    validated_settlement_from_final_body_after_observer_exhaustion,
 };
 use storage::atomic_write_file;
 use support::*;

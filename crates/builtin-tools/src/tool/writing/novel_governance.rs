@@ -303,6 +303,16 @@ pub(crate) fn text_consumes_future_chapter(
     next_seed: &str,
     cjk: bool,
 ) -> bool {
+    text_consumes_future_chapter_with_required_anchors(text, current_seed, next_seed, cjk, &[])
+}
+
+fn text_consumes_future_chapter_with_required_anchors(
+    text: &str,
+    current_seed: &str,
+    next_seed: &str,
+    cjk: bool,
+    required_character_anchors: &[String],
+) -> bool {
     let event_text = compact_event_probe_text(text);
     let current_seed_compact = compact_event_probe_text(current_seed);
     let current_seed_lower = current_seed.to_ascii_lowercase();
@@ -324,6 +334,13 @@ pub(crate) fn text_consumes_future_chapter(
             } else {
                 segment
             };
+            if required_character_anchors
+                .iter()
+                .filter(|anchor| segment.contains(anchor.as_str()))
+                .any(|anchor| !event_text.contains(anchor.as_str()))
+            {
+                return false;
+            }
             if (cjk && event_text.contains(&segment))
                 || (!cjk && text.to_ascii_lowercase().contains(&segment))
             {
@@ -416,6 +433,7 @@ pub(crate) fn final_body_future_consumption_evidence(
     current_seed: &str,
     next_seed: &str,
     cjk: bool,
+    required_character_anchors: &[String],
 ) -> Option<String> {
     body.split_inclusive(['。', '！', '？', '.', '!', '?', '\n'])
         .map(str::trim)
@@ -427,7 +445,13 @@ pub(crate) fn final_body_future_consumption_evidence(
                 .filter(|clause| !clause.is_empty())
                 .any(|clause| {
                     sentence_reports_completed_outcome(clause, cjk)
-                        && text_consumes_future_chapter(clause, current_seed, next_seed, cjk)
+                        && text_consumes_future_chapter_with_required_anchors(
+                            clause,
+                            current_seed,
+                            next_seed,
+                            cjk,
+                            required_character_anchors,
+                        )
                 })
         })
         .map(ToString::to_string)
@@ -444,6 +468,7 @@ pub(crate) fn validated_future_boundary_observer_evidence(
     current_seed: &str,
     next_seed: &str,
     cjk: bool,
+    required_character_anchors: &[String],
 ) -> Option<String> {
     let evidence = evidence.trim();
     if evidence.is_empty() || evidence.chars().count() > 320 {
@@ -454,8 +479,33 @@ pub(crate) fn validated_future_boundary_observer_evidence(
     if matches.next().is_some() {
         return None;
     }
-    final_body_future_consumption_evidence(evidence, current_seed, next_seed, cjk)?;
+    final_body_future_consumption_evidence(
+        evidence,
+        current_seed,
+        next_seed,
+        cjk,
+        required_character_anchors,
+    )?;
     Some(evidence.to_string())
+}
+
+pub(crate) fn distinct_future_boundary_character_anchors(
+    authority: &SealedChapterAuthority,
+    current_seed: &str,
+    next_seed: &str,
+) -> Vec<String> {
+    authority
+        .canonical_contract
+        .get("characters")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|character| character.get("canonical_name").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .filter(|name| next_seed.contains(name) && !current_seed.contains(name))
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Reads the current and next chapter seeds from the already sealed authority
@@ -1785,13 +1835,13 @@ mod tests {
         let next = "闻望宁前往黑市鉴定记忆胶囊来源；确认其源自上层区主脑核心的原始备份；黑市商人透露原主人身份";
         let body = "闻望宁收好胶囊，决定明天前往黑市。";
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "preparing the next action must leave that boundary open"
         );
 
         let consumed = "但这段被三次覆盖的原始记忆却显示，收割的源头直指上层区的主脑核心。";
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
         );
     }
@@ -1802,13 +1852,13 @@ mod tests {
         let next = "岑晏白首次用真视之眼辨识变异灵草；救下一株濒死仙草；引起管事注意";
         let consumed = "他没想到，自己随手的一举，竟然真的救活了一株濒死仙草。";
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
         );
 
         let intent = "为了救活那株濒死仙草，他决定明天再去药园查找药材。";
         assert!(
-            final_body_future_consumption_evidence(intent, current, next, true).is_none(),
+            final_body_future_consumption_evidence(intent, current, next, true, &[]).is_none(),
             "purpose and future-intent clauses must not be treated as completed outcomes"
         );
     }
@@ -1819,13 +1869,14 @@ mod tests {
         let next = "温望川遭遇企业安保系统的全方位扫描，被迫在数据缝隙中穿行";
         let foreshadowing = "他感觉到了一种压迫感正从高空降临，那是企业安保系统即将展开的扫描。";
         assert!(
-            final_body_future_consumption_evidence(foreshadowing, current, next, true).is_none(),
+            final_body_future_consumption_evidence(foreshadowing, current, next, true, &[])
+                .is_none(),
             "ongoing or anticipated pressure must leave the next boundary unperformed"
         );
 
         let consumed = "企业安保系统已经完成全方位扫描，温望川被迫在数据缝隙中穿行。";
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
         );
     }
@@ -1841,13 +1892,14 @@ mod tests {
                 current,
                 next,
                 true,
+                &[],
             )
             .is_none(),
             "a character name plus one shared action character is not future-event evidence"
         );
         let consumed = "入夜后，阮听舟已经潜入废弃矿坑。";
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
         );
     }
@@ -1859,7 +1911,7 @@ mod tests {
         let body = "跑了大约五分钟，陆启朔在一处岔路口停了下来。";
 
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "a recurring subject plus ordinary grammar must not consume the next event"
         );
     }
@@ -1872,7 +1924,7 @@ mod tests {
         let body = "这枚芯片所释放出的逻辑波纹，似乎在某种程度上打破了下城区原本沉闷的秩序。";
 
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "了下城区 is grammatical overlap, not evidence that the pursuer arrived"
         );
     }
@@ -1885,7 +1937,7 @@ mod tests {
         let body = "随着一声轻微的脆响，陆昭白的心猛地提到了嗓子眼。";
 
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "陆昭白的 is a recurring subject plus possessive marker, not a future event"
         );
     }
@@ -1897,7 +1949,7 @@ mod tests {
         let body = "阮启白指向那片在黑雾中翻涌的深渊，提醒钟清序赶紧站稳。";
 
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "a shared location phrase must not prove that the next chapter event completed"
         );
     }
@@ -1909,13 +1961,32 @@ mod tests {
         let body = "但在沈维言这里，他已经重新夺回了在事务所内部的技术话语权。";
 
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "a current-chapter authority shift must not prove material tampering, direct confrontation, or a later power reshuffle"
         );
 
         let consumed = "裴启桥已经调整材料参数来掩盖缺陷，双方第一次技术层面的正面博弈由此爆发。";
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
+            Some(consumed)
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_requires_distinct_next_character_anchor() {
+        let current = "叶云宁在酸雨覆盖的废墟中回收一段高价值的残缺记忆；记忆中出现宋家金色纹章";
+        let next = "叶云宁因记忆容量不足面临身份降级，被迫在贫民窟边缘寻找生存空间；季维棠递给了他一枚散发着微弱蓝光的禁忌记忆芯片";
+        let body = "随着污垢褪去，一枚闪烁着淡蓝色微光的记忆芯片显露了出来。";
+        let required = vec!["季维棠".to_string()];
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true, &required).is_none(),
+            "a similar object must not prove that the next chapter's distinct actor performed its action"
+        );
+        let consumed = "季维棠已经递给了他一枚散发着微弱蓝光的禁忌记忆芯片。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, current, next, true, &required)
+                .as_deref(),
             Some(consumed)
         );
     }
@@ -1927,14 +1998,14 @@ mod tests {
         let body = "虽然岑听野在刚才的关键时刻用纯粹的灵力卸掉了致命的攻势，但那份协作的默契并不能让他获得真正的喘息。";
 
         assert!(
-            final_body_future_consumption_evidence(body, current, next, true).is_none(),
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "a recurring character name plus 在 is grammar/location setup, not completion of the next chapter's base"
         );
 
         let consumed =
             "秦景朔与岑听野已经在废土边缘建立临时据点，并通过特定仪式改变了周围的灵气浓度。";
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
         );
     }
@@ -1947,7 +2018,7 @@ mod tests {
         let consumed = "通往天穹塔主服务器的隐藏通道已开启。";
 
         assert_eq!(
-            final_body_future_consumption_evidence(consumed, current, next, true).as_deref(),
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
         );
     }
@@ -1961,7 +2032,7 @@ mod tests {
         let evidence = "梁砚桥已经察觉到陆家庄园存在异常繁荣迹象，竞争压力开始显现。";
 
         assert_eq!(
-            validated_future_boundary_observer_evidence(body, evidence, current, next, true)
+            validated_future_boundary_observer_evidence(body, evidence, current, next, true, &[])
                 .as_deref(),
             Some(evidence)
         );
@@ -1979,6 +2050,7 @@ mod tests {
             current,
             next,
             true,
+            &[],
         )
         .is_none());
     }

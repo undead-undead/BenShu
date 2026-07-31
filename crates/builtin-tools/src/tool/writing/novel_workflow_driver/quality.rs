@@ -1,4 +1,5 @@
 use super::*;
+use crate::tool::writing::typed_contract_gate;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod issue_classification;
@@ -3104,6 +3105,12 @@ fn govern_rolling_future_chapters(
         let Some(seed) = seed else {
             continue;
         };
+        if typed_contract_gate::contract_outline_plan_text_is_placeholder(&seed.goal)
+            || typed_contract_gate::contract_outline_plan_text_is_placeholder(&seed.expected_turn)
+            || rolling_seed_replays_current_transition(context, chapter_number, &seed)
+        {
+            break;
+        }
         if !rolling_seed_stays_within_volume_scope(context, &seed) {
             continue;
         }
@@ -3126,6 +3133,33 @@ fn govern_rolling_future_chapters(
         governed.push(seed);
     }
     governed
+}
+
+fn rolling_seed_replays_current_transition(
+    context: &Value,
+    chapter_number: usize,
+    seed: &crate::tool::writing::creation_contract_model::ChapterSeedContract,
+) -> bool {
+    let Some(current) = chapter_seed_contract_from_context(context, chapter_number) else {
+        return false;
+    };
+    let current_turn = normalize_repetition_segment(&current.expected_turn);
+    let future_goal = normalize_repetition_segment(&seed.goal);
+    if current_turn.is_empty() || future_goal.is_empty() {
+        return false;
+    }
+    if current_turn == future_goal {
+        return true;
+    }
+    let cjk = current_turn.chars().any(is_cjk_char) || future_goal.chars().any(is_cjk_char);
+    if !cjk {
+        let current_turn = current_turn.to_ascii_lowercase();
+        let future_goal = future_goal.to_ascii_lowercase();
+        return current_turn.split_whitespace().count() >= 4 && future_goal.contains(&current_turn);
+    }
+    current_turn.chars().count() >= 8
+        && future_goal.chars().count() >= 8
+        && chapter_quality::shared_distinctive_bigram_count(&current_turn, &future_goal) >= 8
 }
 
 fn rolling_seed_stays_within_volume_scope(
@@ -5905,6 +5939,89 @@ mod tests {
 
         assert_eq!(governed.future_chapters.len(), 1);
         assert_eq!(governed.future_chapters[0].number, Some(4));
+    }
+
+    #[test]
+    fn rolling_outline_drops_a_future_goal_that_replays_the_current_required_turn() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "outline": {
+                    "near_chapters": [{
+                        "number": 5,
+                        "goal": "遭遇巡逻艇的近距离火力试探",
+                        "expected_turn": "双方在云层中展开第一次实质性的机动对抗"
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "云端勘探", 5, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(6),
+                goal: "在能量波动区遭遇城邦武装的第一次实质性机动对抗".to_string(),
+                expected_turn: "勘探队被迫改变原定航线".to_string(),
+            },
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(7),
+                goal: "勘探队沿新航线寻找安全着陆点".to_string(),
+                expected_turn: "叶维遥发现废弃补给塔仍有能源反应".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "云端勘探",
+            5,
+            &context,
+            false,
+            None,
+        );
+
+        assert!(governed.future_chapters.is_empty());
+    }
+
+    #[test]
+    fn rolling_outline_drops_future_seed_with_existing_outline_placeholder() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "outline": {
+                    "near_chapters": [{
+                        "number": 5,
+                        "goal": "勘探队进入异常云层",
+                        "expected_turn": "叶维遥确认云层会干扰高度读数"
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "云端勘探", 5, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(6),
+                goal: "追查高度读数的异常来源".to_string(),
+                expected_turn: "本章末不可逆变化".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "云端勘探",
+            5,
+            &context,
+            false,
+            None,
+        );
+
+        assert!(governed.future_chapters.is_empty());
     }
 
     #[test]

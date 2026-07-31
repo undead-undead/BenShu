@@ -440,6 +440,26 @@ mod tests {
     }
 
     #[test]
+    fn final_body_evidence_spans_reuse_indexed_same_paragraph_windows() {
+        let body = "顾景真感到意识脱离肉体。他进入非物质状态。\n程昭禾仍在等待。";
+        let spans = final_body_evidence_spans(body);
+
+        assert!(spans
+            .iter()
+            .any(|span| span.excerpt == "顾景真感到意识脱离肉体。他进入非物质状态。"));
+        assert!(!spans
+            .iter()
+            .any(|span| span.excerpt.contains("非物质状态。\n程昭禾")));
+        assert!(spans.iter().all(|span| {
+            body.chars()
+                .skip(span.start_char)
+                .take(span.end_char - span.start_char)
+                .collect::<String>()
+                == span.excerpt
+        }));
+    }
+
+    #[test]
     fn final_chapter_observer_delegates_offsets_to_local_validator() {
         let prompt = final_chapter_observer_prompt(
             "zh-CN",

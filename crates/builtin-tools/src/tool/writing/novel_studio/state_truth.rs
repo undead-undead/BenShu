@@ -23,7 +23,16 @@ impl NovelStudioTool {
         let authority =
             read_sealed_chapter_authority(&project_dir, &manifest, chapter_number).await?;
         let (settlement, validation, settlement_source, observer_fallback_reason) =
-            validated_settlement_from_final_body(&args.content, &body, &chapter, &authority);
+            if args.observer_attempts_exhausted {
+                validated_settlement_from_final_body_after_observer_exhaustion(
+                    &args.content,
+                    &body,
+                    &chapter,
+                    &authority,
+                )
+            } else {
+                validated_settlement_from_final_body(&args.content, &body, &chapter, &authority)
+            };
         let settlement_path =
             write_pending_settlement(&project_dir, chapter_number, &settlement).await?;
         let stage_authority = write_stage_authority_record(

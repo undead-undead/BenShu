@@ -191,9 +191,78 @@ pub(in crate::tool::writing::novel_workflow_driver) fn revision_issues(
     collect_string_array(audit.pointer("/review/issues"), &mut issues);
     collect_string_array(audit.pointer("/issues"), &mut issues);
     collect_string_array(audit.pointer("/truth_validation/issues"), &mut issues);
+    collect_typed_finding_revision_issues(write_result, &mut issues);
+    collect_typed_finding_revision_issues(audit, &mut issues);
     issues.sort();
     issues.dedup();
     issues
+}
+
+fn collect_typed_finding_revision_issues(value: &Value, issues: &mut Vec<String>) {
+    for finding in ["/quality_gate/findings", "/review/findings", "/findings"]
+        .into_iter()
+        .filter_map(|pointer| value.pointer(pointer))
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter(|finding| {
+            finding
+                .get("disposition")
+                .and_then(Value::as_str)
+                .is_some_and(|disposition| disposition == "hard_block")
+        })
+    {
+        let mut parts = Vec::new();
+        if let Some(message) = finding
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|message| !message.is_empty())
+        {
+            parts.push(message.to_string());
+        } else if let Some(code) = finding
+            .get("code")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|code| !code.is_empty())
+        {
+            parts.push(code.to_string());
+        }
+        let authority_evidence = finding
+            .get("authority_evidence")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|evidence| evidence.get("excerpt").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|excerpt| !excerpt.is_empty())
+            .map(|excerpt| preview_text(excerpt, 480))
+            .collect::<Vec<_>>();
+        if !authority_evidence.is_empty() {
+            parts.push(format!(
+                "sealed authority evidence: {}",
+                authority_evidence.join(" | ")
+            ));
+        }
+        let body_evidence = finding
+            .get("body_evidence")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|evidence| evidence.get("excerpt").and_then(Value::as_str))
+            .map(str::trim)
+            .filter(|excerpt| !excerpt.is_empty())
+            .map(|excerpt| preview_text(excerpt, 480))
+            .collect::<Vec<_>>();
+        if !body_evidence.is_empty() {
+            parts.push(format!(
+                "final body evidence to repair: {}",
+                body_evidence.join(" | ")
+            ));
+        }
+        if !parts.is_empty() {
+            issues.push(parts.join("; "));
+        }
+    }
 }
 
 pub(in crate::tool::writing::novel_workflow_driver) fn revision_issues_include_tail_completion(

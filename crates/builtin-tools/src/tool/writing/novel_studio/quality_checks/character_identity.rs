@@ -201,7 +201,12 @@ pub(in crate::tool::writing::novel_studio) fn contract_character_pronoun_drift_i
             .filter(|other| *other != name)
             .cloned()
             .collect::<BTreeSet<_>>();
-        let evidence = character_pronoun_evidence_near_name(content, name, &other_character_names);
+        let evidence = character_pronoun_evidence_near_name(
+            content,
+            name,
+            &other_character_names,
+            PronounEvidenceScope::ChapterHardGate,
+        );
         let contradicts = match expected {
             "feminine" => evidence.masculine,
             "masculine" => evidence.feminine,
@@ -284,6 +289,7 @@ pub(in crate::tool::writing) fn stable_character_pronoun_profile_in_text(
         content,
         name,
         other_character_names,
+        PronounEvidenceScope::ContractInference,
     ))
 }
 
@@ -363,6 +369,7 @@ fn character_pronoun_evidence_near_name(
     content: &str,
     name: &str,
     other_character_names: &BTreeSet<String>,
+    scope: PronounEvidenceScope,
 ) -> CharacterPronounEvidence {
     CharacterPronounEvidence {
         feminine: direct_identity_marker_count_for_name(
@@ -371,6 +378,7 @@ fn character_pronoun_evidence_near_name(
             other_character_names,
             FEMININE_IDENTITY_MARKERS,
             FEMININE_ROLE_MARKERS,
+            scope,
         ),
         masculine: direct_identity_marker_count_for_name(
             content,
@@ -378,8 +386,15 @@ fn character_pronoun_evidence_near_name(
             other_character_names,
             MASCULINE_IDENTITY_MARKERS,
             MASCULINE_ROLE_MARKERS,
+            scope,
         ),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PronounEvidenceScope {
+    ContractInference,
+    ChapterHardGate,
 }
 
 fn direct_identity_marker_count_for_name(
@@ -388,26 +403,32 @@ fn direct_identity_marker_count_for_name(
     other_character_names: &BTreeSet<String>,
     markers: &[&str],
     same_profile_role_markers: &[&str],
+    scope: PronounEvidenceScope,
 ) -> usize {
     window
         .match_indices(name)
         .map(|(index, matched)| {
             let after = &window[index + matched.len()..];
             let before = &window[..index];
-            nearby_identity_marker_count(
+            let direct = nearby_identity_marker_count(
                 after,
                 markers,
                 same_profile_role_markers,
                 other_character_names,
                 true,
-            ) + following_sentence_identity_marker_count(after, markers, other_character_names)
-                + nearby_identity_marker_count(
-                    before,
-                    same_profile_role_markers,
-                    same_profile_role_markers,
-                    other_character_names,
-                    false,
-                )
+            ) + nearby_identity_marker_count(
+                before,
+                same_profile_role_markers,
+                same_profile_role_markers,
+                other_character_names,
+                false,
+            );
+            direct
+                + if scope == PronounEvidenceScope::ContractInference {
+                    following_sentence_identity_marker_count(after, markers, other_character_names)
+                } else {
+                    0
+                }
         })
         .sum()
 }
@@ -578,11 +599,58 @@ fn personal_pronoun_directly_attributes_nearby_name(
         .chars()
         .filter(|ch| !ch.is_whitespace())
         .collect::<String>();
-    compact.chars().count() <= max_distance
-        && (compact.is_empty()
-            || compact
-                .chars()
-                .any(|ch| matches!(ch, '，' | ',' | '。' | '！' | '!' | '？' | '?' | '；' | ';')))
+    if compact.chars().count() > max_distance {
+        return false;
+    }
+    if compact.is_empty() {
+        return true;
+    }
+    let Some((boundary, _)) = compact
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| matches!(ch, '，' | ',' | '。' | '！' | '!' | '？' | '?' | '；' | ';'))
+    else {
+        return false;
+    };
+    let continuation =
+        compact[boundary..].trim_start_matches(['，', ',', '。', '！', '!', '？', '?', '；', ';']);
+    let prior_clause = &compact[..boundary];
+    let prior_clause_has_object_pronoun = ["他", "她"].iter().any(|marker| {
+        prior_clause
+            .match_indices(marker)
+            .any(|(index, _)| identity_marker_occurrence_is_explicit(prior_clause, index, marker))
+    });
+    prior_clause_has_object_pronoun
+        || matches!(
+            continuation,
+            "" | "而"
+                | "但"
+                | "然而"
+                | "却"
+                | "随后"
+                | "然后"
+                | "于是"
+                | "接着"
+                | "此时"
+                | "这时"
+                | "最终"
+                | "仍"
+                | "仍然"
+                | "仍旧"
+                | "依然"
+                | "也"
+                | "又"
+                | "便"
+                | "就"
+                | "则"
+                | "转而"
+                | "忽然"
+                | "突然"
+                | "旋即"
+                | "随即"
+                | "紧接着"
+                | "下一刻"
+        )
 }
 
 #[cfg(test)]
@@ -600,6 +668,7 @@ mod pronoun_tests {
             &other_names,
             MASCULINE_IDENTITY_MARKERS,
             MASCULINE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
         );
         let feminine = direct_identity_marker_count_for_name(
             content,
@@ -607,9 +676,79 @@ mod pronoun_tests {
             &other_names,
             FEMININE_IDENTITY_MARKERS,
             FEMININE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
         );
 
         assert!(masculine > 0);
+        assert_eq!(feminine, 0);
+    }
+
+    #[test]
+    fn object_clause_pronoun_after_comma_is_not_attributed_to_prior_name() {
+        let content = "唐承序正在构建他的帝国。唐承序的意志仿佛化作巨浪，试图冲垮她建立的防御。每个连接处都承受着来自唐承序秩序的挤压。如果她不能及时锁死零件，韩予真就会失去最后的防线。";
+        let other_names = BTreeSet::from(["韩予真".to_string()]);
+
+        let masculine = direct_identity_marker_count_for_name(
+            content,
+            "唐承序",
+            &other_names,
+            MASCULINE_IDENTITY_MARKERS,
+            MASCULINE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+        let feminine = direct_identity_marker_count_for_name(
+            content,
+            "唐承序",
+            &other_names,
+            FEMININE_IDENTITY_MARKERS,
+            FEMININE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+
+        assert_eq!(masculine, 0);
+        assert_eq!(feminine, 0);
+    }
+
+    #[test]
+    fn discourse_connector_keeps_following_subject_pronoun_attributable() {
+        let content = "唐承序停在门前，随后他推开了门。";
+        let other_names = BTreeSet::new();
+
+        let masculine = direct_identity_marker_count_for_name(
+            content,
+            "唐承序",
+            &other_names,
+            MASCULINE_IDENTITY_MARKERS,
+            MASCULINE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+
+        assert_eq!(masculine, 1);
+    }
+
+    #[test]
+    fn implicit_cross_sentence_subject_switch_is_not_hard_attributed_to_previous_name() {
+        let content = "唐承序停在门前，随后他推开了门。她重新看向坐标点。";
+        let other_names = BTreeSet::from(["韩予真".to_string()]);
+
+        let masculine = direct_identity_marker_count_for_name(
+            content,
+            "唐承序",
+            &other_names,
+            MASCULINE_IDENTITY_MARKERS,
+            MASCULINE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+        let feminine = direct_identity_marker_count_for_name(
+            content,
+            "唐承序",
+            &other_names,
+            FEMININE_IDENTITY_MARKERS,
+            FEMININE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+
+        assert_eq!(masculine, 1);
         assert_eq!(feminine, 0);
     }
 }

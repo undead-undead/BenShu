@@ -1831,6 +1831,18 @@ async fn run_supervised_chat(
             let result =
                 execute_supervised_chat(state.clone(), session_id, messages, supervisor_task_id)
                     .await;
+            if let Err(error) = result.as_ref() {
+                if let Err(status_error) =
+                    mark_supervisor_task_failed(&state, supervisor_task_id, &error.to_string())
+                        .await
+                {
+                    warn!(
+                        task_id = %supervisor_task_id,
+                        error = %status_error,
+                        "failed to persist supervised chat error status"
+                    );
+                }
+            }
             state.cancel_tokens.remove(&supervisor_token_key);
             let _ = result_tx.send(result);
             tokio::spawn(async move {
@@ -5585,7 +5597,7 @@ async fn mark_supervisor_task_failed(
     else {
         return Ok(());
     };
-    if matches!(task.status, TaskStatus::Cancelled) {
+    if !supervisor_task_accepts_execution_error(&task.status) {
         return Ok(());
     }
     let is_creation_contract_task =
@@ -5643,6 +5655,10 @@ async fn mark_supervisor_task_failed(
     task.result = Some(result);
     state.kernel.state_task().save(task).await?;
     Ok(())
+}
+
+fn supervisor_task_accepts_execution_error(status: &TaskStatus) -> bool {
+    !is_terminal_task_status(status) && !matches!(status, TaskStatus::Paused(_))
 }
 
 async fn persist_chat_runtime_mainline(
@@ -6845,7 +6861,7 @@ mod tests {
         );
         let response = super::active_session_task_interruption_response(&task);
         assert!(response.contains("不会用这条新消息打断它或开启重复任务"));
-        assert!(response.contains(&task.id.to_string()));
+        assert!(!response.contains(&task.id.to_string()));
     }
 
     #[test]
@@ -7409,10 +7425,34 @@ result: {"success":true,"runtime_effect":"artifact.needs_revision","accepted":fa
     }
 
     #[test]
+    fn supervisor_execution_error_only_finalizes_an_active_task() {
+        assert!(super::supervisor_task_accepts_execution_error(
+            &TaskStatus::Running
+        ));
+        assert!(!super::supervisor_task_accepts_execution_error(
+            &TaskStatus::Paused(chrono::Utc::now())
+        ));
+        assert!(!super::supervisor_task_accepts_execution_error(
+            &TaskStatus::Completed
+        ));
+        assert!(!super::supervisor_task_accepts_execution_error(
+            &TaskStatus::Blocked {
+                reason: "quality gate".to_string(),
+            }
+        ));
+        assert!(!super::supervisor_task_accepts_execution_error(
+            &TaskStatus::Failed("runtime failure".to_string())
+        ));
+        assert!(!super::supervisor_task_accepts_execution_error(
+            &TaskStatus::Cancelled
+        ));
+    }
+
+    #[test]
     fn chat_contract_infers_generic_durable_effect_requirements() {
         let messages = vec![benshu_brain::agent::message::Message::user(
             benshu_brain::agent::message::Content::text(
-                "查找论文，放到数据库，然后写一篇仔细的研究论文并做成 PDF。",
+                "把已有的大语言模型推理优化论文资料放到数据库，并将现有研究论文文件导出为 PDF。",
             ),
         )];
 

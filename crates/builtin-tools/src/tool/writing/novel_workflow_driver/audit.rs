@@ -101,7 +101,8 @@ impl NovelChapterRunner {
                     "project_path": self.project_path,
                     "chapter_number": chapter_number,
                     "content": content,
-                    "notes": "final_body_observer"
+                    "observer_attempts_exhausted":
+                        attempt == MAX_FINAL_STATE_OBSERVER_ATTEMPTS
                 }),
             )
             .await?;

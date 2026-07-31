@@ -118,7 +118,7 @@ fn apply_typed_state_changes(bible: &mut StoryBible, chapter: &ApprovedChapterDe
                 if let Some(character) = bible.character_ledger.iter_mut().find(|character| {
                     character.id == change.entity_id || character.name == change.entity_id
                 }) {
-                    character.current_state = change.value.clone();
+                    character.current_state = durable_character_state_value(change).to_string();
                 }
             }
             Event::Relationship => {}
@@ -165,6 +165,17 @@ fn apply_typed_state_changes(bible: &mut StoryBible, chapter: &ApprovedChapterDe
         {
             hook.status = HookStatus::Overdue;
         }
+    }
+}
+
+fn durable_character_state_value(change: &ChapterStateChange) -> &str {
+    if change.allowance == StateChangeAllowance::Contract
+        && change.authority_path.trim() == "chapter_contract.new_state_after_chapter"
+        && !change.authority_excerpt.trim().is_empty()
+    {
+        change.authority_excerpt.trim()
+    } else {
+        change.value.trim()
     }
 }
 

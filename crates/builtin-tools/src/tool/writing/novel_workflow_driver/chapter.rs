@@ -61,12 +61,18 @@ fn inject_sealed_future_boundary_finding(
         return false;
     };
     let cjk = language_looks_cjk(language);
+    let required_character_anchors = governance::distinct_future_boundary_character_anchors(
+        authority,
+        &current_seed,
+        &next_seed,
+    );
     let Some((excerpt, source)) = sealed_future_boundary_evidence(
         body,
         &observation.future_boundary_evidence,
         &current_seed,
         &next_seed,
         cjk,
+        &required_character_anchors,
     ) else {
         return false;
     };
@@ -105,6 +111,7 @@ fn sealed_future_boundary_evidence(
     current_seed: &str,
     next_seed: &str,
     cjk: bool,
+    required_character_anchors: &[String],
 ) -> Option<(String, &'static str)> {
     if let Some(excerpt) = governance::validated_future_boundary_observer_evidence(
         body,
@@ -112,17 +119,23 @@ fn sealed_future_boundary_evidence(
         current_seed,
         next_seed,
         cjk,
+        required_character_anchors,
     ) {
         return Some((excerpt, "final_body_observer+sealed_next_chapter_boundary"));
     }
-    governance::final_body_future_consumption_evidence(body, current_seed, next_seed, cjk).map(
-        |excerpt| {
-            (
-                excerpt,
-                "final_body_completed_event+sealed_next_chapter_boundary",
-            )
-        },
+    governance::final_body_future_consumption_evidence(
+        body,
+        current_seed,
+        next_seed,
+        cjk,
+        required_character_anchors,
     )
+    .map(|excerpt| {
+        (
+            excerpt,
+            "final_body_completed_event+sealed_next_chapter_boundary",
+        )
+    })
 }
 
 fn apply_character_registrations_to_package(
@@ -2267,7 +2280,7 @@ mod tests {
         let body = "梁砚桥已经察觉陆家庄园异常繁荣，竞争压力开始显现。";
 
         let (excerpt, source) =
-            sealed_future_boundary_evidence(body, "", current, next, true).expect("evidence");
+            sealed_future_boundary_evidence(body, "", current, next, true, &[]).expect("evidence");
 
         assert_eq!(excerpt, body);
         assert_eq!(

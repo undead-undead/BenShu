@@ -748,24 +748,34 @@ fn creation_parameter_control_clause(value: &str) -> bool {
         || compact.contains("万")
         || compact.chars().any(|ch| ch.is_ascii_digit());
     unit_marker
-        && ([
-            "每章",
-            "总字数",
-            "目标字数",
-            "至少",
-            "起步",
-            "起",
-            "不少于",
-            "大概",
-            "约",
-            "章节",
-            "每次",
-            "自动写",
-            "字数",
-        ]
+        && (creation_non_truncation_scope_clause(&compact)
+            || [
+                "每章",
+                "总字数",
+                "目标字数",
+                "至少",
+                "起步",
+                "起",
+                "不少于",
+                "大概",
+                "约",
+                "章节",
+                "每次",
+                "自动写",
+                "字数",
+            ]
+            .iter()
+            .any(|marker| compact.contains(marker))
+            || creation_limited_write_scope_clause(&compact))
+}
+
+fn creation_non_truncation_scope_clause(compact: &str) -> bool {
+    ["不要", "不能", "不得", "别", "禁止"]
         .iter()
         .any(|marker| compact.contains(marker))
-            || creation_limited_write_scope_clause(&compact))
+        && ["停止", "停下", "停在", "截成", "截断", "截止"]
+            .iter()
+            .any(|marker| compact.contains(marker))
 }
 
 fn creation_limited_write_scope_clause(compact: &str) -> bool {
@@ -1675,6 +1685,20 @@ mod tests {
         assert!(!brief.contains("先建立"));
         assert!(!brief.contains("创作合同"));
         assert!(!brief.contains("合同确认后"));
+    }
+
+    #[test]
+    fn creation_brief_excludes_negated_chapter_truncation_scope() {
+        let brief = creation_brief(
+            "请写一本古代言情权谋小说。女主调查父亲冤案，与漕运官员从互不信任走向并肩合作；确认后连续自动写完整本小说，不要在前十章停止。",
+            "fiction",
+        );
+
+        assert!(brief.contains("调查父亲冤案"), "{brief}");
+        assert!(brief.contains("从互不信任走向并肩合作"), "{brief}");
+        assert!(!brief.contains("确认后"), "{brief}");
+        assert!(!brief.contains("前十章"), "{brief}");
+        assert!(!brief.contains("停止"), "{brief}");
     }
 
     #[test]

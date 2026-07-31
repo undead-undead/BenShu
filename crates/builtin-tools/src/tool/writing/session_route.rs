@@ -400,6 +400,10 @@ pub(crate) fn extract_requested_chapter_number_from_text(text: &str) -> Option<u
         if chars[index] != '第' {
             continue;
         }
+        let byte_index = chars[..index].iter().map(|ch| ch.len_utf8()).sum();
+        if super::creation_contract::operation_term_is_negated(&normalized, byte_index) {
+            continue;
+        }
         let tail = chars[index + 1..].iter().collect::<String>();
         let mut digits = String::new();
         for ch in tail.chars() {
@@ -575,6 +579,17 @@ USER REQUEST\n\
         assert_eq!(route.requested_start_chapter, Some(2));
         let command = super::writing_command_from_task(&route.task).expect("writing command");
         assert_eq!(command.target_chapter, Some(2));
+    }
+
+    #[test]
+    fn full_book_continuation_does_not_treat_negated_stop_boundary_as_start_chapter() {
+        let request = "自动连续完成整本10万字小说，不要在第10章停止，也不要把请求改成只写前10章。";
+
+        assert_eq!(super::direct_writer_requested_start_chapter(request), None);
+        assert_eq!(
+            super::extract_requested_chapter_number_from_text(request),
+            None
+        );
     }
 
     #[test]

@@ -339,6 +339,7 @@ fn plot_patch_prompt(
 必须输出 1 到 5 个 volumes，以及连续编号、从第 1 章开始的 3 到 8 个 near_chapters。near_chapters 只覆盖全书开篇窗口：当 expected_chapters 大于近期章节末章时，不得在近期章节内完成权威终局、主冲突总解决、主角弧线终点或终局后的稳定状态；最后一个近期章节必须仍给后续分卷留下可推进的主线债务。有多卷时，只有最后一卷可以完成权威终局、主角弧线终点和终局稳定状态；非末卷必须留有明确未解决的主线债务，不得把终局提前完成后再用后续卷回顾或铺续作。每卷都要有具体 objective 和不可逆 ending_change；每章都要有具体事件 goal。每个 expected_turn 只写一个点名受影响人物或权威实体、能由章末一段连续正文证明的完整结果，不能只写数字、章节号、抽象主题或总结性空话，也不得串联互不依赖的多个变化。raw_outline 只写故事规划，不得写入总字数、每章字数、预计章数、“全书共多少章”或确认/写作流程说明。角色引用只能使用稳定锚点中的权威姓名。分卷和章节必须服从稳定锚点中的故事前提、世界规则、主线因果与终局，不能凭空扩大人物、工具或制度的能力边界，也不能依赖未建立的关键能力完成阶段目标。\n\n\
 如果当前缺口包含 `outline.longform_position`，必须完整改写 volumes 的阶段边界，不能原样返回当前分卷：若倒数第二卷已经完成权威终局，而最后一卷只是终局后的尾声、回顾或稳定生活，就合并/删除单独尾声卷，或让倒数第二卷保留未解决的主线债务并把权威终局移到实际最后一卷。最终输出中，只有 volumes 数组的最后一个元素可以出现权威终局、主冲突总解决或主角弧线终点。\n\n\
 如果当前缺口包含 `outline.terminal_coverage`，必须让 volumes 最后一个元素的 objective 或 ending_change 在语义上完整执行稳定锚点中“终局方向”的全部核心行动，并写出对应直接结果和不可逆变化；不能把其中的关键人物、物件、机制、行动或结果改成较弱的泛化结尾，也不要为了字面相同而把完整终局复制到职责不符的字段。保持当前分卷数量和不涉及终局的阶段边界；但如果任一非末卷已经用原句或同义表达完成了终局方向中的选择、核心行动、关系确认、主冲突总解决或不可逆结果，必须把该非末卷改成尚未完成终局的准备、代价或未解决债务，并把完整终局移到末卷。这种迁移属于修复当前 terminal_coverage，不得因“保持非末卷阶段边界”而保留提前完成的终局，也不得改动无关分卷或既有角色登场/离场锚点。\n\n\
+如果当前缺口包含 `semantic.outline_character_authority`，并且精确证据点名同一具名人物、物件、协议、法则、装置、术法、能力、制度或地点在权威字段与候选字段之间名称不一致，权威证据中的专名是本轮只读锚点；必须在补丁中完整提供候选证据所属字段，并把该实体在全部 Plot 字段中的旧写法同步改为权威专名。候选证据属于全书大纲时必须输出完整修正后的 `raw_outline`；属于分卷、近期章节或兑现矩阵时必须输出相应完整数组。不得改书名、书名理由、角色权威、世界规则或终局来迁就候选，也不得把未被精确证据认定为同一实体的普通类别词强行替换成专名。\n\n\
 如果当前缺口包含 `semantic.outline_character_authority`，并且点名卷目标、卷尾变化、兑现矩阵、终局状态、逻辑顺序或“直接跳到终局”，必须把它当作同一个 Plot 因果链问题处理：保留角色权威、世界规则和终局方向不变；同步重写被点名 volume 的 objective 与 ending_change，使卷目标先建立达成终局所需的条件、代价或突破，卷尾变化只写该阶段真实完成的不可逆结果；如果该卷是末卷，objective 必须包含通向终局核心行动的因果步骤，ending_change 才能完成终局结果；如果该卷不是末卷，不得出现终局完成或终局稳定状态。payoff_matrix 中镜像同一错误终局跳跃的 payoff_target 也必须一并改写为同一阶段的伏笔兑现或末卷终局兑现，不能只改 volumes 留下旧兑现矩阵继续触发相同语义冲突。\n\n\
 稳定锚点：\n{stable_anchor}\n\n\
 当前质量门缺口：{issue_focus}\n\n\
@@ -1416,6 +1417,50 @@ mod tests {
         );
         assert!(prompt.contains("\"payoff_matrix\""), "{prompt}");
         assert!(prompt.contains("\"volumes\""), "{prompt}");
+    }
+
+    #[test]
+    fn semantic_outline_authority_prompt_synchronizes_cited_named_entity_in_owning_field() {
+        let draft = super::build_initial_creation_draft(
+            "plot-semantic-named-entity-drift",
+            "fiction",
+            "写修仙小说，每章2500字，一共10万字。",
+        )
+        .expect("draft");
+        let issues = typed_issues(
+            ContractIssueKind::Plot,
+            vec![
+                "ContractBlocker[semantic.outline_character_authority]: 核心阵法名称漂移；权威证据 终局方向=`完成万象归一阵`；候选证据 大纲=`通过重组万象大阵`"
+                    .to_string(),
+            ],
+        );
+        let prompt = plot_patch_prompt(
+            &draft,
+            "其他内容你来决定",
+            &issues,
+            "终局方向：主角完成万象归一阵并稳固灵脉",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(
+            prompt.contains("权威证据中的专名是本轮只读锚点"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("候选证据属于全书大纲时必须输出完整修正后的 `raw_outline`"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("全部 Plot 字段中的旧写法同步改为权威专名"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("不得把未被精确证据认定为同一实体的普通类别词强行替换"),
+            "{prompt}"
+        );
     }
 
     #[test]
