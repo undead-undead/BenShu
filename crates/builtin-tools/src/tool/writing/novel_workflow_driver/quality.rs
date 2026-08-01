@@ -2400,14 +2400,6 @@ pub(super) fn govern_generated_execution_package(
         });
     }
 
-    // The rolling outline owns the required outcome. Model-generated scene
-    // detail may be related to that outcome while still weakening or changing
-    // it, so it cannot replace the expected-turn authority. Settlement verifies
-    // the immutable final body against this same canonical atomic end state.
-    if !canonical.new_state_after_chapter.trim().is_empty() {
-        package.new_state_after_chapter = canonical.new_state_after_chapter.clone();
-    }
-
     // The canonical contract owns the immutable chapter goal and future
     // exclusion boundary. The model may refine scenes and typed transitions,
     // but it cannot replace those two authority fields before sealing.
@@ -2415,6 +2407,13 @@ pub(super) fn govern_generated_execution_package(
     package.memo = canonical.memo;
     package.scene_goal = canonical.scene_goal;
     package.title_basis = canonical.title_basis;
+    // Keep the sealed chapter contract's required outcome as the sole state
+    // authority. Atomic evidence selection belongs to the existing settlement
+    // recovery path after the final body is available; execution-package
+    // governance must not derive a second pre-body state authority.
+    if !canonical.new_state_after_chapter.trim().is_empty() {
+        package.new_state_after_chapter = canonical.new_state_after_chapter;
+    }
     let architecture = if generated_architecture.is_empty() {
         canonical.architecture
     } else if language_looks_cjk(language) {
@@ -5666,6 +5665,34 @@ mod tests {
         assert_eq!(
             package.new_state_after_chapter,
             "叶承白第一次感受到强烈悲伤，感知能力发生质变"
+        );
+    }
+
+    #[test]
+    fn generated_execution_package_preserves_model_state_when_context_is_unavailable() {
+        let mut package = fallback_chapter_execution_package(
+            "zh-CN",
+            "断线档案",
+            1,
+            "not valid json",
+            false,
+            None,
+        );
+        package.new_state_after_chapter = "主角保住了唯一的证据".to_string();
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "断线档案",
+            1,
+            "not valid json",
+            false,
+            None,
+        );
+
+        assert_eq!(
+            governed.new_state_after_chapter, "主角保住了唯一的证据",
+            "a failed context parse must not erase a model state that has no canonical replacement"
         );
     }
 

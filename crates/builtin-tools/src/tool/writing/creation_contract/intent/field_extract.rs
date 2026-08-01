@@ -163,7 +163,32 @@ pub fn requested_chapter_unit_target(message: &str) -> Option<usize> {
     requested_raw_chapter_unit_target(message).map(nearest_novel_chapter_unit_band)
 }
 
+/// Return the most recent explicit user-authority clause from a runtime
+/// continuation envelope.  Generated envelopes may also contain a stale
+/// normalized field (for example `chapter_unit_target: 5000`) alongside the
+/// user's original `2500` request; field extraction must never let that
+/// internal copy override the user clause.
+pub(crate) fn explicit_user_authority_slice(message: &str) -> &str {
+    for marker in ["用户最新要求：", "用户最新要求:"] {
+        if let Some((_, tail)) = message.split_once(marker) {
+            return tail.lines().next().unwrap_or(tail).trim();
+        }
+    }
+    for marker in ["Full user request:", "Original user request:"] {
+        if let Some((_, tail)) = message.split_once(marker) {
+            if marker == "Original user request:" {
+                if let Some((original, _)) = tail.split_once("\n\nDelegated task:") {
+                    return original.trim();
+                }
+            }
+            return tail.trim();
+        }
+    }
+    message
+}
+
 pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
+    let message = explicit_user_authority_slice(message);
     let lowered = message.to_ascii_lowercase();
     let body_is_chapter_scoped = approval_requests_first_writing_unit(message, "fiction")
         || ["本章", "上一章", "下一章", "当前章"]
@@ -190,10 +215,23 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
     .chain(body_is_chapter_scoped.then_some("正文"));
     for marker in markers {
         if let Some(segment) = requested_unit_segment_before_marker(message, marker) {
+            let segment = if matches!(marker, "字档" | "字档位") {
+                segment
+                    .rsplit_once(['和', '与', '及'])
+                    .map(|(_, suffix)| suffix.trim().to_string())
+                    .unwrap_or(segment)
+            } else {
+                segment
+            };
             if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
                 return Some(value);
             }
         }
+        // Prefer the quantity immediately before a chapter marker.  In a
+        // natural request such as “2500字每章、至少5万字”, the text after
+        // “每章” belongs to the project total, not the chapter band.  The
+        // after-marker path remains a fallback for forms such as “每章目标
+        // 2500字” where no useful quantity precedes the marker.
         if let Some(segment) = requested_unit_segment_after_marker(
             message,
             marker,
@@ -224,6 +262,7 @@ pub fn nearest_novel_chapter_unit_band(requested: usize) -> usize {
 }
 
 pub fn requested_total_unit_target(message: &str) -> Option<usize> {
+    let message = explicit_user_authority_slice(message);
     let total_markers = [
         "一共",
         "总共",
@@ -1134,7 +1173,15 @@ pub fn explicit_user_character_name_declarations(
 pub fn explicit_user_character_name_notes(message: &str) -> Vec<String> {
     explicit_user_character_name_declarations(message)
         .into_iter()
-        .map(|declaration| format!("明确指定角色姓名：{}", declaration.name))
+        .flat_map(|declaration| {
+            [
+                format!("明确指定角色姓名：{}", declaration.name),
+                format!(
+                    "角色姓名权威（用户）：{}={}",
+                    declaration.role, declaration.name
+                ),
+            ]
+        })
         .collect()
 }
 
@@ -1152,6 +1199,23 @@ fn collect_cjk_character_name_declarations(
         ("反派", "反派"),
         ("对手", "对手"),
         ("导师", "导师"),
+        ("记者", "记者"),
+        ("关键关系对象", "关键关系对象"),
+        ("关键关系", "关键关系对象"),
+        // Preserve the concrete role label as well as the surrounding
+        // relationship-object label.  The model may return either surface;
+        // both declarations enter the same existing user-name authority path.
+        ("剑修", "剑修"),
+        ("医生", "医生"),
+        ("警察", "警察"),
+        ("律师", "律师"),
+        ("工程师", "工程师"),
+        ("调查员", "调查员"),
+        ("同伴", "同伴"),
+        ("盟友", "盟友"),
+        ("伙伴", "伙伴"),
+        ("朋友", "朋友"),
+        ("恋人", "恋人"),
         ("角色", "角色"),
         ("人物", "角色"),
     ];
@@ -1162,6 +1226,8 @@ fn collect_cjk_character_name_declarations(
         "名字改成",
         "姓名改为",
         "名字改为",
+        "姓名为",
+        "名字为",
         "姓名是",
         "名字是",
         "设定为",
@@ -1173,9 +1239,59 @@ fn collect_cjk_character_name_declarations(
         "是",
     ];
 
+    // Reuse the typed character-reference parser for the natural, unpunctuated
+    // form "主角顾沉舟在……".  The declaration still enters this existing
+    // user-name authority path; this is not a second name governance system.
+    for name in crate::tool::writing::typed_contract_gate::primary_role_person_references(clause) {
+        if !declarations
+            .iter()
+            .any(|declaration| declaration.name == name)
+        {
+            declarations.push(UserCharacterNameDeclaration {
+                role: "主角".to_string(),
+                name,
+            });
+        }
+    }
+
+    // Reuse the same declaration object for the common relational form
+    // "与记者沈砚舟……". This extends the existing user-name parser to
+    // non-primary roles; it does not create a second authority table.
+    const RELATIONAL_PREFIXES: &[char] = &['与', '和', '跟', '同'];
+    for (alias, role) in ROLE_ALIASES {
+        if *role == "角色" {
+            continue;
+        }
+        for prefix in RELATIONAL_PREFIXES {
+            let marker = format!("{prefix}{alias}");
+            let mut rest = clause;
+            while let Some(marker_index) = rest.find(&marker) {
+                let tail = &rest[marker_index + marker.len()..];
+                if let Some(name) = cjk_declared_character_name(tail, false) {
+                    declarations.push(UserCharacterNameDeclaration {
+                        role: (*role).to_string(),
+                        name,
+                    });
+                }
+                rest = tail;
+            }
+        }
+    }
+
     for (alias, role) in ROLE_ALIASES {
         let mut rest = clause;
         while let Some(role_index) = rest.find(alias) {
+            // Prefer the longest role surface when aliases overlap (for
+            // example, "关键关系对象" must win over its "关键关系"
+            // prefix).  This keeps one declaration on the existing authority
+            // path instead of emitting a second, truncated role candidate.
+            if ROLE_ALIASES.iter().any(|(longer, _)| {
+                longer.len() > alias.len() && rest[role_index..].starts_with(longer)
+            }) {
+                let skip = role_index + alias.len();
+                rest = &rest[skip..];
+                continue;
+            }
             let after_role = &rest[role_index + alias.len()..];
             let Some((connector_index, connector)) = CONNECTORS
                 .iter()
@@ -1236,7 +1352,19 @@ fn cjk_declared_character_name(tail: &str, bare_copula: bool) -> Option<String> 
                 || remaining.starts_with("负责")
                 || remaining.starts_with("是一")
                 || remaining.starts_with("将会")
-                || remaining.starts_with("会在"))
+                || remaining.starts_with("会在")
+                || remaining.starts_with("共同")
+                || remaining.starts_with("一起")
+                || remaining.starts_with("并肩")
+                || remaining.starts_with("携手")
+                || remaining.starts_with("相伴")
+                || remaining.starts_with("同行")
+                || remaining.starts_with("前行")
+                || remaining.starts_with("踏上")
+                || remaining.starts_with("在")
+                || remaining.starts_with("因")
+                || remaining.starts_with("与")
+                || remaining.starts_with("和"))
         {
             break;
         }
@@ -1383,6 +1511,8 @@ mod tests {
         let cases = [
             ("主角叫林远。", "林远"),
             ("主角名叫林远。", "林远"),
+            ("主角姓名为陆沉舟。", "陆沉舟"),
+            ("关键关系对象剑修姓名为苏晚棠。", "苏晚棠"),
             ("主人公是林远。", "林远"),
             ("男主我想叫林远。", "林远"),
             ("反派设定为顾寒。", "顾寒"),
@@ -1398,6 +1528,43 @@ mod tests {
                 "{message}: {declarations:?}"
             );
         }
+        let declarations =
+            explicit_user_character_name_declarations("关键关系对象剑修姓名为苏晚棠。");
+        assert!(declarations
+            .iter()
+            .any(|declaration| declaration.role == "关键关系对象" && declaration.name == "苏晚棠"));
+        assert!(declarations
+            .iter()
+            .any(|declaration| declaration.role == "剑修" && declaration.name == "苏晚棠"));
+    }
+
+    #[test]
+    fn extracts_inline_primary_name_from_story_sentence() {
+        let declarations = explicit_user_character_name_declarations(
+            "题材是玄幻修行：主角顾沉舟在边荒小城发现失踪师父留下的星渊残图。",
+        );
+
+        assert!(declarations.iter().any(|declaration| {
+            declaration.role == "主角" && declaration.name == "顾沉舟"
+        }));
+
+        let declarations = explicit_user_character_name_declarations(
+            "题材是沿海城市的旧港档案：主角陆知遥在废弃灯塔中发现一卷未公开的航运录音",
+        );
+        assert!(declarations.iter().any(|declaration| {
+            declaration.role == "主角" && declaration.name == "陆知遥"
+        }));
+    }
+
+    #[test]
+    fn extracts_inline_secondary_name_from_relational_story_sentence() {
+        let declarations = explicit_user_character_name_declarations(
+            "主角许知遥追查旧城录音，并与记者沈砚舟共同面对选择。",
+        );
+
+        assert!(declarations.iter().any(|declaration| {
+            declaration.role == "记者" && declaration.name == "沈砚舟"
+        }));
     }
 
     #[test]
@@ -1636,6 +1803,16 @@ mod tests {
             Some(2500)
         );
         assert_eq!(
+            requested_raw_chapter_unit_target("写一部小说，总字数10万字，每章2500字。"),
+            Some(2500)
+        );
+        assert_eq!(
+            requested_raw_chapter_unit_target(
+                "请从零创建并自动写完一部全新的赛博朋克题材小说，总字数10万字，每章使用2500字档。"
+            ),
+            Some(2500)
+        );
+        assert_eq!(
             requested_total_unit_target("每章2500字，写10万字。"),
             Some(100000)
         );
@@ -1714,5 +1891,20 @@ mod tests {
             requested_total_unit_target("新建一本整本总字数20万字的小说，每章2500字。"),
             Some(200000)
         );
+    }
+
+    #[test]
+    fn runtime_continuation_uses_latest_user_tier_over_stale_internal_tier() {
+        let envelope = "SESSION WORK TARGET\nproject_path: /tmp/demo\n\n\
+USER REQUEST\n[BENSHU_DIRECT_WRITER_CONTINUATION]\n\
+每章目标字数档位：5000（小说仅支持 2500 / 5000）\n\
+用户最新要求：按这个合同开始。保持10万字总目标和2500字档，从第1章开始自然连续写完全书。";
+
+        assert_eq!(
+            explicit_user_authority_slice(envelope),
+            "按这个合同开始。保持10万字总目标和2500字档，从第1章开始自然连续写完全书。"
+        );
+        assert_eq!(requested_raw_chapter_unit_target(envelope), Some(2500));
+        assert_eq!(requested_total_unit_target(envelope), Some(100_000));
     }
 }

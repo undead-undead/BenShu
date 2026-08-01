@@ -1286,6 +1286,9 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
         "开始",
         "决定",
         "认为",
+        "面对",
+        "面临",
+        "面向",
         "买断",
         "夺走",
         "夺取",
@@ -1523,7 +1526,8 @@ fn direct_role_reference_name(after_marker: &str) -> Option<String> {
         }
         break;
     }
-    trim_role_reference_candidate(&candidate)
+    let candidate = trim_role_reference_candidate(&candidate)?;
+    role_reference_candidate_looks_like_person(&candidate).then_some(candidate)
 }
 
 fn quoted_role_reference_name(value: &str) -> Option<String> {
@@ -1880,7 +1884,7 @@ pub(super) fn role_reference_candidate_looks_like_person(candidate: &str) -> boo
         '酆', '鲍', '史', '唐', '费', '廉', '岑', '薛', '雷', '贺', '倪', '汤', '滕', '殷', '罗',
         '毕', '郝', '邬', '安', '常', '乐', '于', '时', '傅', '皮', '卞', '齐', '康', '伍', '余',
         '元', '卜', '顾', '孟', '平', '黄', '和', '穆', '萧', '尹', '钟', '闻', '祝', '辛', '白',
-        '温', '晏', '裴', '梁', '宋', '宁', '阮', '程', '段', '景', '洛', '司', '南',
+        '温', '晏', '裴', '梁', '宋', '宁', '阮', '程', '段', '景', '洛', '司', '南', '陆',
     ]
     .contains(&first)
         || reference_starts_with_compound_surname(candidate);
@@ -2748,6 +2752,15 @@ mod tests {
         );
 
         assert_eq!(refs, vec!["林深".to_string(), "苏念".to_string()]);
+    }
+
+    #[test]
+    fn primary_role_references_split_names_before_facing_predicates() {
+        let refs = primary_role_person_references(
+            "男主南晏舟面对突如其来的选择，女主沈知遥面临家族压力。",
+        );
+
+        assert_eq!(refs, vec!["南晏舟".to_string(), "沈知遥".to_string()]);
     }
 
     #[test]

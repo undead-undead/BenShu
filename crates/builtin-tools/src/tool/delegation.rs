@@ -543,6 +543,11 @@ impl DelegateTool {
     }
 
     fn user_request_slice_for_phase_boundary(task: &str) -> &str {
+        if task.contains("[BENSHU_DIRECT_WRITER_CONTINUATION]")
+            || task.contains("SESSION WORK TARGET")
+        {
+            return crate::tool::writing::creation_contract::explicit_user_authority_slice(task);
+        }
         for marker in ["Full user request:", "Original user request:"] {
             let Some((_, tail)) = task.split_once(marker) else {
                 continue;

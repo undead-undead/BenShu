@@ -1,8 +1,8 @@
 # BenShu 剩余硬门 1～8 现状评估与整合决策
 
-> 状态：第 1～8 项已按本文顺序实施并完成组件回归；真实聊天测试按用户要求暂不执行
+> 状态：第 1～8 项已按本文顺序实施；真实聊天测试按用户要求暂不执行
 >
-> 核对日期：2026-07-31
+> 核对日期：2026-08-01
 >
 > 冻结基线：`d691ada fix(writing): stabilize chapter continuity and settlement`
 >
@@ -23,17 +23,18 @@
   required recovery 清单。
 - observer 的 high-risk 布尔值来自模型且默认 false，当前没有本地派生，不能直接宣称状态
   污染门已经完整。
-- proposed delta 没有正文证据时当前会被丢弃并记 advisory；只有正文和权威证据确认的越权
-  变化才应定义为 `StatePollution`。
+- proposed delta 没有正文证据、不能绑定密封权威或非法延后 hook 时，复用结算层已有的
+  `DependencyMismatch` 阻断 owner；变更标记为 `Rejected`，不写入后续状态，章节进入
+  `state-repair-required`。不再另建 `StatePollution` 枚举或第二套状态污染门。
 - durable progress 只保存循环中最后一章的 receipt 验证结果，approved prefix 的历史
   receipt 失败可能被后章覆盖。
 - 跨模块 `Repairable/Degraded` 是决策语义，不要求在章节侧再建一套枚举；章节侧复用现有
   `DeterministicRepair/Warning`。
 
-以下各节保留冻结基线上的问题描述与实施决策，便于核对改动来源。生产代码现已按该顺序
-完成迁移；实施后的验证结果记录在下一节。
+以下各节保留冻结基线上的问题描述与实施决策，便于核对改动来源。生产代码按该顺序
+原位修复；验证结果记录在下一节。
 
-## 实施结果（2026-07-31）
+## 实施结果（2026-08-01）
 
 - 第 1～7 项均在本文指定的既有 owner 中原位升级，没有建立第二套合同 gate、章节 gate、
   状态机、修订器、元数据存储或进度 ledger。
@@ -41,9 +42,10 @@
   observer 自报高风险布尔值路径以及元数据 terminal blocker。
 - `FullLongformContract` 已退出生产路径；测试侧只保留它作为历史强字段校验夹具，不参与
   创建、修复、确认或写作运行时决策。
-- 完整写作模块回归：`1695 passed; 0 failed`。
-- `cargo check -p benshu-builtin-tools`、`cargo fmt --all -- --check` 与 `git diff --check`
-  均通过。
+- 章节档位/总字数混合解析、空批准载荷、用户书名与角色姓名权威保留、越权 typed delta
+  均有定向回归覆盖；定向测试通过。
+- 完整回归结果必须以当前工作树最后一次运行的实际数字为准；本文件不再提前宣称
+  `0 failed`。`cargo fmt --all -- --check` 与 `git diff --check` 均通过。
 - 第 15.2 节真实聊天测试未运行。
 
 ## 0. 先纠正两个项目约束
@@ -642,7 +644,7 @@ state_repair_required
 
 1. `validate_final_body_evidence` 或 `authority_allowance` 失败的 proposed delta 当前会被丢弃
    并只记 advisory，本身不会必然阻断。这一行为适合“observer 幻觉且正文没有证据”的
-   情况，不能把所有被丢弃 delta 都改成 `StatePollution`。
+   情况，不能把所有被丢弃 delta 都升级为阻断。
 2. 当前高风险判断 `state_change_claims_forbidden_transition` 依赖 observer 输出的
    `changes_identity`、`changes_core_ability`、`changes_world_hard_rule`、
    `pays_future_hook_early` 等布尔值。它们 serde 默认是 `false`，observer prompt 的严格
@@ -671,7 +673,6 @@ enum StateSettlementDisposition {
     ObserverFormatDegraded,
     DisplayMetadataDegraded,
     RequiredStateMissing,
-    StatePollution,
     DependencyMismatch,
 }
 ```
@@ -688,11 +689,6 @@ enum StateSettlementDisposition {
 - `RequiredStateMissing`
   - sealed contract 明确要求章末变化，但最终正文没有可验证证据。
   - hard block。
-- `StatePollution`
-  - 最终正文中存在有证据的越权身份、能力、世界硬规则、未来伏笔回收等变化。
-  - 高风险分类由本地 canonical authority/path/event/body evidence 推导，不能信任模型
-    自报的风险布尔值。
-  - 丢弃 proposed delta、保留旧 truth，并 hard block 当前章进入下一章。
 - `DependencyMismatch`
   - settlement 绑定的正文或 authority fingerprint 不一致。
   - hard block。
@@ -727,8 +723,9 @@ observer 证据”本身也不能证明正文提前消费未来章节。本地�
 - 直接信任 observer `changes_*`/`pays_*`/`opens_*` 布尔值决定 high-risk hard 的路径；
   改为在现有 settlement validator 中本地派生。
 
-`state_repair_required` 状态本身不能删除；它应只用于真实 required state 缺失、状态污染
-或依赖指纹不匹配。
+`state_repair_required` 状态本身不能删除；它只用于真实 required state 缺失或依赖指纹不匹配。
+最终正文中有权威证据的越权身份、能力、世界硬规则或未来伏笔变化由现有章节质量门阻断，
+不在 settlement 中新增第二个状态污染出口。
 
 ### 6.6 验收
 
@@ -1136,7 +1133,8 @@ approval_requires_metadata_repair
 
 保留：
 
-- `state_repair_required` 生命周期状态，用于真实状态污染。
+- `state_repair_required` 生命周期状态，用于真实 required state 缺失或依赖指纹不匹配；正文
+  状态污染由章节质量门的确定性 finding 阻断。
 - pending/approved settlement。
 - typed delta evidence、allowance 和 fingerprint。
 - metadata gate 作为修复/告警 producer。

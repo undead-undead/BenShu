@@ -269,6 +269,7 @@ where
         &finding,
         "semantic.user_story_authority",
         issue_kind,
+        ContractIssueDisposition::HardBlock,
         "ContractBlocker[semantic.user_story_authority]: 故事前提、总主线因果、终局或大纲偏离用户故事核心权威，或含明显错字、词序损坏、截断和不可读拼接；必须按用户原始核心重写这些字段并同步大纲",
     ))
 }
@@ -286,6 +287,7 @@ fn semantic_authority_conflict_issue(
     finding: &SemanticReviewFinding,
     code: &str,
     kind: ContractIssueKind,
+    disposition: ContractIssueDisposition,
     conflict_message: &str,
 ) -> Option<ContractIssue> {
     let evidence = finding
@@ -305,7 +307,7 @@ fn semantic_authority_conflict_issue(
         ContractIssue::new(
             code,
             kind,
-            ContractIssueDisposition::HardBlock,
+            disposition,
             ContractIssueEvidence::new(
                 evidence.candidate_field.trim(),
                 format!(
@@ -377,7 +379,8 @@ where
         &finding,
         "semantic.outline_character_authority",
         issue_kind,
-        "ContractBlocker[semantic.outline_character_authority]: 小说合同核心字段、大纲或兑现矩阵存在名称、角色权威、能力边界、事件语义或语言完整性冲突；必须按书名、角色权威表、世界规则和终局重写被点名的候选字段",
+        ContractIssueDisposition::Advisory,
+        "ContractAdvisory[semantic.outline_character_authority]: 模型语义审查认为小说合同核心字段、大纲或兑现矩阵可能存在名称、角色权威、能力边界、事件语义或语言完整性冲突；该意见没有独立的确定性 typed gate 证据，不能重开合同或阻断写作",
     ))
 }
 
@@ -421,7 +424,9 @@ where
         .await?
         .map(ContractIssueList::from_issue)
     };
-    let Some(issue) = issue else {
+    let Some(issue) =
+        issue.filter(|issues| ContractIssueSet::new(issues).actionable().next().is_some())
+    else {
         *draft = review_draft;
         return Ok(None);
     };
@@ -1937,6 +1942,7 @@ mod tests {
             &finding,
             "semantic.user_story_authority",
             kind,
+            ContractIssueDisposition::HardBlock,
             "ContractBlocker[semantic.user_story_authority]: 角色职能偏离用户权威",
         )
         .expect("semantic issue");
@@ -2053,6 +2059,7 @@ mod tests {
             &conflict,
             "semantic.user_story_authority",
             ContractIssueKind::Skeleton,
+            ContractIssueDisposition::HardBlock,
             "ContractBlocker[semantic.user_story_authority]: 权威冲突",
         )
         .expect("confirmed semantic conflict must block");
@@ -2064,6 +2071,7 @@ mod tests {
             &uncertain,
             "semantic.test",
             ContractIssueKind::Skeleton,
+            ContractIssueDisposition::HardBlock,
             "unused"
         )
         .is_none());
@@ -2071,9 +2079,39 @@ mod tests {
             &equivalent,
             "semantic.test",
             ContractIssueKind::Skeleton,
+            ContractIssueDisposition::HardBlock,
             "unused"
         )
         .is_none());
+    }
+
+    #[test]
+    fn model_only_internal_contract_semantics_are_advisory_not_actionable() {
+        let conflict = SemanticReviewFinding {
+            verdict: SemanticReviewVerdict::Conflict,
+            rationale: "卷尾结果不是终局行动的直接结果".to_string(),
+            evidence: Some(
+                crate::tool::writing::contract_semantic_review::SemanticConflictEvidence {
+                    authority_field: "终局方向".to_string(),
+                    authority_quote: "主角碎裂自身星核以点燃碎星炉，重塑天地灵气秩序".to_string(),
+                    candidate_field: "第2卷卷尾变化".to_string(),
+                    candidate_quote: "天地灵气重新涌向人间".to_string(),
+                },
+            ),
+        };
+
+        let issue = semantic_authority_conflict_issue(
+            &conflict,
+            "semantic.outline_character_authority",
+            ContractIssueKind::Plot,
+            ContractIssueDisposition::Advisory,
+            "ContractAdvisory[semantic.outline_character_authority]: 模型语义意见",
+        )
+        .expect("grounded model opinion remains visible as an advisory");
+        let issues = ContractIssueList::from_issue(issue.clone());
+
+        assert_eq!(issue.disposition, ContractIssueDisposition::Advisory);
+        assert!(ContractIssueSet::new(&issues).actionable().next().is_none());
     }
 
     #[test]

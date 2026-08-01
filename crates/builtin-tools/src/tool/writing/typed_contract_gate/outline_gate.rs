@@ -608,9 +608,11 @@ fn final_volume_retains_distinct_terminal_debt(
     if final_volume_explicitly_declares_post_terminal_only(final_volume) {
         return false;
     }
-    [
+    let combined = final_volume_resolution_text(final_volume);
+    let retains_distinct_debt = [
         final_volume.objective.as_str(),
         final_volume.ending_change.as_str(),
+        combined.as_str(),
     ]
     .into_iter()
     .any(|final_clause| {
@@ -619,7 +621,8 @@ fn final_volume_retains_distinct_terminal_debt(
             .any(|terminal| clause_resolves_terminal_debt(final_clause, terminal, authority_names))
             && !clauses_share_distinctive_event(early_clause, final_clause, authority_names)
             && !clauses_share_distinctive_event(final_clause, early_clause, authority_names)
-    })
+    });
+    retains_distinct_debt
 }
 
 fn final_volume_misses_authoritative_terminal_resolution(contract: &NovelCreationContract) -> bool {
@@ -641,12 +644,25 @@ fn final_volume_misses_authoritative_terminal_resolution(contract: &NovelCreatio
     {
         return false;
     }
-    ![
+    let combined = final_volume_resolution_text(final_volume);
+    let resolves_terminal = [
         final_volume.objective.as_str(),
         final_volume.ending_change.as_str(),
+        combined.as_str(),
     ]
     .into_iter()
-    .any(|clause| clause_resolves_terminal_debt(clause, terminal, &authority_names))
+    .any(|clause| clause_resolves_terminal_debt(clause, terminal, &authority_names));
+    !resolves_terminal
+}
+
+fn final_volume_resolution_text(
+    final_volume: &super::super::creation_contract_model::VolumeContract,
+) -> String {
+    format!(
+        "{}；{}",
+        final_volume.objective.trim(),
+        final_volume.ending_change.trim()
+    )
 }
 
 fn final_volume_explicitly_declares_post_terminal_only(
@@ -1608,6 +1624,41 @@ mod tests {
                 .iter()
                 .any(|issue| issue.contains("outline.terminal_coverage")),
             "equivalent irreversible transformation verbs must preserve terminal coverage: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn final_volume_goal_and_ending_change_jointly_cover_the_terminal_action() {
+        let mut contract = NovelCreationContract::default();
+        contract.target_units = Some(100_000);
+        contract.chapter_unit_target = Some(2_500);
+        contract.characters.push(CharacterContract {
+            canonical_name: "许砚舟".to_string(),
+            role: "主角".to_string(),
+            ..Default::default()
+        });
+        contract.ending.desired_resolution = "许砚舟将自身神魂融入碎星炉，彻底点燃星火".to_string();
+        contract.outline.volumes = vec![
+            VolumeContract {
+                title: "碎星初醒".to_string(),
+                objective: "许砚舟取得碎星炉并确认永夜源头".to_string(),
+                ending_change: "陆照白开始阻断星火复苏".to_string(),
+            },
+            VolumeContract {
+                title: "永夜终火".to_string(),
+                objective: "许砚舟面对陆照白的终极阻挠，完成神魂与碎星炉的融合".to_string(),
+                ending_change: "许砚舟化身星火点燃世界，彻底终结永恒黑夜并重塑秩序".to_string(),
+            },
+        ];
+
+        let mut issues = ContractIssueList::default();
+        validate_longform_plan_position(&contract, &mut issues);
+
+        assert!(
+            !issues
+                .iter()
+                .any(|issue| issue.contains("outline.terminal_coverage")),
+            "one final volume's objective and ending change jointly execute the terminal event: {issues:?}"
         );
     }
 

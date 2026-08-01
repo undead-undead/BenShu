@@ -1,3 +1,4 @@
+use super::draft_lifecycle::user_authority_planning_notes;
 use super::*;
 
 #[async_trait]
@@ -45,6 +46,9 @@ fn sync_and_validate_approved_contract(
     }
 
     let mut synchronized = draft.clone();
+    let user_chapter_unit_target = draft.user_chapter_unit_target();
+    let user_chapter_unit_target_specified = draft.chapter_unit_target_user_specified;
+    let user_authority_notes = user_authority_planning_notes(draft);
     let execution_scope_note = synchronized
         .planning_notes
         .iter()
@@ -57,11 +61,27 @@ fn sync_and_validate_approved_contract(
     synchronized.target_units = None;
     synchronized.chapter_unit_target = None;
     synchronized.max_chapters_per_turn = None;
+    // Do not let the approval payload's projection inherit the old mutable
+    // chapter fields.  The authoritative tier is restored only after the
+    // approved payload has been applied; otherwise an empty approval payload
+    // looks like a change and rebuilds a synthetic current contract.
+    synchronized.chapter_unit_target_user_specified = false;
+    synchronized.chapter_unit_target_user_authority = None;
     clear_fiction_contract_fields(&mut synchronized);
+    // Title, character-name, and story authority are stored in the existing
+    // planning-note channel consumed by patch/governance.  Restore them
+    // before applying the approved contract so that the existing authority
+    // path can enforce them during synchronization.
+    synchronized.planning_notes = merge_list(&synchronized.planning_notes, &user_authority_notes);
     if let Some(project_path) = project_path_from_approved_creation_draft(approved) {
         synchronized.project_path = project_path;
     }
     sync_creation_draft_from_approval(&mut synchronized, approved);
+    if let Some(target) = user_chapter_unit_target {
+        synchronized.chapter_unit_target = Some(target);
+        synchronized.chapter_unit_target_user_authority = Some(target);
+    }
+    synchronized.chapter_unit_target_user_specified = user_chapter_unit_target_specified;
     if let Some(execution_scope_note) = execution_scope_note {
         synchronized
             .planning_notes
@@ -653,5 +673,45 @@ mod tests {
             persisted_creation_execution_scope(&draft.planning_notes),
             Some(CreationDraftTurnScope::AllRemaining)
         );
+    }
+
+    #[test]
+    fn approved_project_sync_preserves_user_title_and_character_authority() {
+        let mut draft = build_initial_creation_draft(
+            "authority-names",
+            "fiction",
+            "请创建都市玄幻小说《用户书名》，总字数5万字，每章2500字，主角姓名为顾星河。",
+        )
+        .expect("draft");
+        let mut authority_contract = NovelCreationContract::default();
+        authority_contract.title.canonical_title = "模型书名".to_string();
+        authority_contract.characters = vec![CharacterContract {
+            canonical_name: "模型主角".to_string(),
+            role: "主角".to_string(),
+            ..Default::default()
+        }];
+        let approved = serde_json::json!({
+            "success": true,
+            "project_path": "data/generated/novels/project",
+            "draft": {
+                "authority_contract": serde_json::to_value(authority_contract).expect("contract")
+            }
+        });
+
+        let _ = sync_and_validate_approved_contract(&mut draft, &approved);
+
+        assert_eq!(draft.title, "用户书名");
+        assert!(draft
+            .planning_notes
+            .iter()
+            .any(|note| note == "书名权威（用户）：用户书名"));
+        assert!(draft
+            .planning_notes
+            .iter()
+            .any(|note| note == "角色姓名权威（用户）：主角=顾星河"));
+        assert!(draft
+            .fiction_characters
+            .iter()
+            .any(|line| line.contains("顾星河")));
     }
 }

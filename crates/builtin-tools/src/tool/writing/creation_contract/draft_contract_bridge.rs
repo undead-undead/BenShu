@@ -18,6 +18,18 @@ pub(crate) fn apply_strong_novel_contract_to_creation_draft(
     prune_explicit_non_character_draft_authority(draft);
     prune_explicit_non_character_contract_characters(draft, contract);
     contract.normalize();
+    if let Some(title) = patch::user_title_authority(draft) {
+        contract.title.canonical_title = title.clone();
+        contract.title.source = TitleSource::User;
+        if !contract
+            .title
+            .candidates
+            .iter()
+            .any(|candidate| candidate.trim() == title.trim())
+        {
+            contract.title.candidates.insert(0, title);
+        }
+    }
     complete_minimum_character_slots(&mut contract.characters, draft);
     if !draft_has_character_authority(draft) {
         let governance = patch::govern_initial_character_names(&mut contract.characters, draft);
@@ -47,8 +59,10 @@ pub(crate) fn apply_strong_novel_contract_to_creation_draft(
     } else {
         draft.target_units = contract.target_units.or(draft.target_units);
     }
-    if draft.chapter_unit_target_user_specified {
-        contract.chapter_unit_target = draft.chapter_unit_target;
+    let user_chapter_unit_target = draft.user_chapter_unit_target();
+    if let Some(target) = user_chapter_unit_target {
+        draft.chapter_unit_target = Some(target);
+        contract.chapter_unit_target = Some(target);
     } else {
         draft.chapter_unit_target = contract.chapter_unit_target.or(draft.chapter_unit_target);
     }
@@ -999,6 +1013,7 @@ pub(crate) fn creation_draft_title_story_evidence(draft: &SessionCreationDraftSt
 pub(crate) fn strong_novel_contract_from_creation_draft(
     draft: &SessionCreationDraftState,
 ) -> NovelCreationContract {
+    let user_chapter_unit_target = draft.user_chapter_unit_target();
     if let Some(mut contract) = draft
         .current_contract
         .as_ref()
@@ -1007,6 +1022,9 @@ pub(crate) fn strong_novel_contract_from_creation_draft(
     {
         prune_explicit_non_character_contract_characters(draft, &mut contract);
         contract.normalize();
+        if let Some(target) = user_chapter_unit_target {
+            contract.chapter_unit_target = Some(target);
+        }
         if !contract.characters.is_empty()
             || !value_missing(&contract.title.canonical_title)
             || !value_missing(&contract.premise)
@@ -1079,14 +1097,20 @@ pub(crate) fn strong_novel_contract_from_visible_creation_draft(
         title: TitleContract {
             canonical_title: draft.title.clone(),
             rationale: draft.fiction_title_rationale.clone(),
-            source: TitleSource::LlmContract,
+            source: if patch::user_title_authority(draft).is_some() {
+                TitleSource::User
+            } else {
+                TitleSource::LlmContract
+            },
             ..Default::default()
         },
         language: draft.language.clone(),
         genre: draft.genre.clone(),
         brief: draft.brief.clone(),
         target_units: draft.target_units,
-        chapter_unit_target: draft.chapter_unit_target,
+        chapter_unit_target: draft
+            .chapter_unit_target_user_authority
+            .or(draft.chapter_unit_target),
         max_chapters_per_turn: draft.max_chapters_per_turn,
         premise: draft.fiction_premise.clone(),
         ending,
@@ -1301,10 +1325,44 @@ pub(crate) fn draft_character_role_from_basis(
         "主角"
     } else if fallback_lowered_line.contains("antagonist") {
         "对手"
+    } else if is_specific_character_role_label(role_basis) {
+        // Preserve a concise model role label (for example "剑修" or
+        // "记者") so the existing user-name authority matcher can align it
+        // with the same role surface.  Long prose still falls back to the
+        // generic role and is handled by the normal role inference above.
+        role_basis.trim()
     } else {
         "角色"
     }
     .to_string()
+}
+
+fn is_specific_character_role_label(role: &str) -> bool {
+    let role = role.trim();
+    !role.is_empty()
+        && role.chars().count() <= 8
+        && !role.chars().any(|ch| {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    ':' | '：'
+                        | ';'
+                        | '；'
+                        | ','
+                        | '，'
+                        | '。'
+                        | '！'
+                        | '？'
+                        | '('
+                        | ')'
+                        | '（'
+                        | '）'
+                )
+        })
+        && !matches!(
+            role,
+            "角色" | "人物" | "关键角色" | "主要角色" | "配角" | "重要角色"
+        )
 }
 
 pub(crate) fn apply_project_arc_to_primary_character(
@@ -1546,6 +1604,26 @@ mod tests {
         assert_eq!(draft.target_units, Some(100_000));
         assert_eq!(draft.chapter_unit_target, Some(2500));
         assert_eq!(contract.target_units, Some(100_000));
+        assert_eq!(contract.chapter_unit_target, Some(2500));
+    }
+
+    #[test]
+    fn stale_current_contract_cannot_replace_user_chapter_tier() {
+        let mut draft = build_initial_creation_draft(
+            "session-stale-tier-authority",
+            "fiction",
+            "写一部赛博朋克小说，总字数10万字，每章2500字。",
+        )
+        .expect("draft");
+        draft.current_contract = Some(serde_json::json!({
+            "title": {"canonical_title": "冷却液之歌"},
+            "chapter_unit_target": 5000,
+            "target_units": 100000
+        }));
+
+        let contract = strong_novel_contract_from_creation_draft(&draft);
+
+        assert_eq!(draft.chapter_unit_target_user_authority, Some(2500));
         assert_eq!(contract.chapter_unit_target, Some(2500));
     }
 

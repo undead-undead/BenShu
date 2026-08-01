@@ -50,16 +50,12 @@ pub(super) enum StateSettlementDisposition {
     ObserverFormatDegraded,
     DisplayMetadataDegraded,
     RequiredStateMissing,
-    StatePollution,
     DependencyMismatch,
 }
 
 impl StateSettlementDisposition {
     pub(super) fn is_blocking(self) -> bool {
-        matches!(
-            self,
-            Self::RequiredStateMissing | Self::StatePollution | Self::DependencyMismatch
-        )
+        matches!(self, Self::RequiredStateMissing | Self::DependencyMismatch)
     }
 
     pub(super) fn merge(self, other: Self) -> Self {
@@ -69,8 +65,7 @@ impl StateSettlementDisposition {
                 StateSettlementDisposition::DisplayMetadataDegraded => 1,
                 StateSettlementDisposition::ObserverFormatDegraded => 2,
                 StateSettlementDisposition::RequiredStateMissing => 3,
-                StateSettlementDisposition::StatePollution => 4,
-                StateSettlementDisposition::DependencyMismatch => 5,
+                StateSettlementDisposition::DependencyMismatch => 4,
             }
         }
         if rank(other) > rank(self) {

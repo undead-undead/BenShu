@@ -168,6 +168,7 @@ pub fn sync_creation_draft_from_approval(
     let previous_characters = draft.fiction_characters.clone();
     let previous_current_contract_characters =
         character_lines_from_current_contract(draft.current_contract.as_ref());
+    let user_chapter_unit_target = draft.user_chapter_unit_target();
     let mut changed = false;
     changed |= sync_string_field(approved_draft, "title", &mut draft.title);
     changed |= sync_string_field(approved_draft, "language", &mut draft.language);
@@ -180,6 +181,11 @@ pub fn sync_creation_draft_from_approval(
         "chapter_unit_target",
         &mut draft.chapter_unit_target,
     );
+    if let Some(target) = user_chapter_unit_target {
+        changed |= draft.chapter_unit_target != Some(target);
+        draft.chapter_unit_target = Some(target);
+        draft.chapter_unit_target_user_authority = Some(target);
+    }
     changed |= sync_option_usize_field(
         approved_draft,
         "max_chapters_per_turn",

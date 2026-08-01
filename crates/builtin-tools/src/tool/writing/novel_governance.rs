@@ -219,13 +219,21 @@ pub(crate) fn contract_change_supported_by_final_evidence(
     authority_value: &str,
     evidence: &str,
     cjk: bool,
+    ignored_entity_surfaces: &[String],
 ) -> bool {
     if contains_unexpected_script_residue(authority_value, evidence) {
         return false;
     }
     if cjk {
-        let authority = compact_event_probe_text(strip_truth_label(authority_value));
-        let evidence = compact_event_probe_text(evidence);
+        let mut authority = compact_event_probe_text(strip_truth_label(authority_value));
+        let mut evidence = compact_event_probe_text(evidence);
+        for surface in ignored_entity_surfaces {
+            let surface = compact_event_probe_text(surface);
+            if surface.chars().count() >= 2 {
+                authority = authority.replace(&surface, "");
+                evidence = evidence.replace(&surface, "");
+            }
+        }
         if authority.is_empty() || evidence.is_empty() {
             return false;
         }
@@ -1410,27 +1418,88 @@ fn contains_unexpected_script_residue(value: &str, content: &str) -> bool {
     })
 }
 
-fn required_entity_anchors(value: &str) -> Vec<String> {
+pub(crate) fn required_entity_anchors(value: &str) -> Vec<String> {
     let compact = cjk_compact(strip_truth_label(value));
     if compact.chars().count() < 4 {
         return Vec::new();
     }
-    let Some(index) = [
+    let prefix_markers = [
         "通过", "进入", "发现", "决定", "开始", "选择", "成功", "失败", "意识", "收到", "听见",
-        "看见", "锁定", "保护", "离开", "回到", "面对", "承认", "拒绝",
-    ]
-    .iter()
-    .filter_map(|marker| compact.find(marker))
-    .min() else {
-        return Vec::new();
-    };
-    let prefix = compact[..index].to_string();
-    let count = prefix.chars().count();
-    if (2..=4).contains(&count) && !generic_cjk_anchor(&prefix) {
-        vec![prefix]
-    } else {
-        Vec::new()
+        "看见", "锁定", "保护", "离开", "回到", "面对", "承认", "拒绝", "建立", "引发", "导致",
+    ];
+    if let Some(index) = prefix_markers
+        .iter()
+        .filter_map(|marker| compact.find(marker))
+        .min()
+    {
+        let prefix = compact[..index].to_string();
+        // A required outcome can lead with an object followed by its
+        // property, for example “芯片病毒的扩散程度决定……”.  Reuse the
+        // existing leading-entity extraction by keeping the canonical noun
+        // before the first possessive marker instead of treating the whole
+        // property phrase as an unresolvable entity.
+        let parts = prefix.split('的').collect::<Vec<_>>();
+        let leading = parts.first().copied().unwrap_or(prefix.as_str());
+        let trailing = parts.last().copied().unwrap_or(leading);
+        // Compound possessive subjects such as “唐云川派出的侦察机” put
+        // an action phrase before the concrete entity.  If that leading
+        // phrase is materially longer than the terminal noun, use the
+        // terminal noun; ordinary property outcomes such as
+        // “芯片病毒的扩散程度” keep their leading object anchor.
+        let anchor = if parts.len() > 1 && leading.chars().count() > trailing.chars().count() + 1 {
+            trailing
+        } else {
+            leading
+        };
+        let count = anchor.chars().count();
+        if (2..=8).contains(&count) && !generic_cjk_anchor(anchor) {
+            return vec![anchor.to_string()];
+        }
     }
+
+    // Some contracts phrase the required outcome as an encounter with an
+    // object or institution (for example, “遭遇能源管理者的直接干预”), so
+    // there is no leading character before the event verb. Reuse this same
+    // anchor extractor for that grammatical form instead of introducing a
+    // separate state-recovery path. The supporting sealed chapter fields and
+    // final-body evidence still have to corroborate the candidate later.
+    let object_markers = ["遭遇", "面对", "受到", "承受", "经历"];
+    for marker in object_markers {
+        let Some(index) = compact.find(marker) else {
+            continue;
+        };
+        let tail = &compact[index + marker.len()..];
+        let end = tail
+            .char_indices()
+            .find(|(_, ch)| {
+                matches!(
+                    *ch,
+                    '的' | '了'
+                        | '并'
+                        | '和'
+                        | '与'
+                        | '在'
+                        | '被'
+                        | '将'
+                        | '因'
+                        | '为'
+                        | '，'
+                        | '。'
+                        | '；'
+                        | ';'
+                        | ','
+                        | '.'
+                )
+            })
+            .map(|(offset, _)| offset)
+            .unwrap_or(tail.len());
+        let candidate = tail[..end].trim();
+        let count = candidate.chars().count();
+        if (2..=8).contains(&count) && !generic_cjk_anchor(candidate) {
+            return vec![candidate.to_string()];
+        }
+    }
+    Vec::new()
 }
 
 fn generic_cjk_anchor(value: &str) -> bool {
@@ -1616,11 +1685,54 @@ mod tests {
             authority,
             "宋泊禾推开房门，窗外正下着雨。",
             true,
+            &[],
         ));
         assert!(contract_change_supported_by_final_evidence(
             authority,
             "宋泊禾终于发现影契正在加速他的衰老。",
             true,
+            &[],
+        ));
+    }
+
+    #[test]
+    fn required_entity_anchors_cover_established_state_outcomes() {
+        assert_eq!(
+            required_entity_anchors("周砚建立了一个不稳定的局部记忆阵地"),
+            vec!["周砚".to_string()]
+        );
+    }
+
+    #[test]
+    fn required_entity_anchors_cover_object_event_outcomes() {
+        assert_eq!(
+            required_entity_anchors("遭遇能源管理者的直接干预"),
+            vec!["能源管理者".to_string()]
+        );
+        assert_eq!(
+            required_entity_anchors("芯片病毒的扩散程度决定了逃亡的紧迫性"),
+            vec!["芯片病毒".to_string()]
+        );
+        assert_eq!(
+            required_entity_anchors("唐云川派出的侦察机锁定了秦怀弦所在的废墟坐标"),
+            vec!["侦察机".to_string()]
+        );
+    }
+
+    #[test]
+    fn contract_change_evidence_ignores_resolved_character_name_outside_subject_position() {
+        let surfaces = vec!["裴予朔".to_string()];
+        assert!(!contract_change_supported_by_final_evidence(
+            "利用旧时代的遮蔽装置救下了即将暴露的裴予朔",
+            "酸雨敲打窗棂，裴予朔听见机械脉搏般的回声。",
+            true,
+            &surfaces,
+        ));
+        assert!(contract_change_supported_by_final_evidence(
+            "利用旧时代的遮蔽装置救下了即将暴露的裴予朔",
+            "姜云野启动旧时代遮蔽装置，把即将暴露的裴予朔救进废墟。",
+            true,
+            &surfaces,
         ));
     }
 
@@ -1630,6 +1742,7 @@ mod tests {
             "闻庭安取得铜钥匙",
             "闻庭安带着铜钥匙离开旧站。",
             true,
+            &[],
         ));
     }
 

@@ -73,6 +73,12 @@ pub fn build_initial_creation_draft(
             &[format!("用户故事核心权威：{}", brief.trim())],
         );
     }
+    if !title.trim().is_empty() {
+        planning_notes = merge_list(
+            &planning_notes,
+            &[format!("书名权威（用户）：{}", title.trim())],
+        );
+    }
     let mut draft = SessionCreationDraftState {
         schema_version: "benshu.writing.creation_draft.v1".to_string(),
         session_id: session_id.to_string(),
@@ -107,6 +113,7 @@ pub fn build_initial_creation_draft(
         target_units_user_specified: target_units.is_some(),
         chapter_unit_target,
         chapter_unit_target_user_specified: raw_chapter_unit_target.is_some(),
+        chapter_unit_target_user_authority: chapter_unit_target,
         section_unit_target,
         max_chapters_per_turn: requested_max_chapters_per_turn(message),
         export_format,
@@ -204,6 +211,10 @@ pub fn apply_message_to_creation_draft(draft: &mut SessionCreationDraftState, me
     forbidden.normalize();
     if let Some(title) = requested_title_value.as_ref() {
         draft.title = title.clone();
+        draft.planning_notes = merge_list(
+            &draft.planning_notes,
+            &[format!("书名权威（用户）：{}", title.trim())],
+        );
     }
     if let Some(target) = requested_total_unit_target(message) {
         draft.target_units = Some(target);
@@ -213,6 +224,7 @@ pub fn apply_message_to_creation_draft(draft: &mut SessionCreationDraftState, me
     if let Some(target) = raw_chapter_unit_target.map(nearest_novel_chapter_unit_band) {
         draft.chapter_unit_target = Some(target);
         draft.chapter_unit_target_user_specified = true;
+        draft.chapter_unit_target_user_authority = Some(target);
         record_chapter_unit_band_normalization_note(draft, raw_chapter_unit_target, Some(target));
     }
     if let Some(target) = requested_section_unit_target(message) {
@@ -945,9 +957,51 @@ pub(crate) fn clear_fiction_contract_fields(draft: &mut SessionCreationDraftStat
     draft.set_contract_v2(initial_structured_contract(&draft.genre));
 }
 
+/// Return user-owned planning notes that must survive replacement of the
+/// generated contract projection.  These notes are the existing authority
+/// source consumed by the title/character governance path; they are not a
+/// second authority store.
+pub(crate) fn user_authority_planning_notes(draft: &SessionCreationDraftState) -> Vec<String> {
+    const AUTHORITY_PREFIXES: &[&str] = &[
+        "用户故事核心权威：",
+        "书名权威（用户）：",
+        "角色姓名权威（用户）：",
+        "明确指定角色姓名：",
+    ];
+    draft
+        .planning_notes
+        .iter()
+        .filter(|note| {
+            AUTHORITY_PREFIXES
+                .iter()
+                .any(|prefix| note.starts_with(prefix))
+        })
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn initial_draft_preserves_compound_relationship_name_authority() {
+        let draft = build_initial_creation_draft(
+            "compound-relationship-name-authority",
+            "fiction",
+            "请从零创建玄幻小说《星墟回响》，总字数10万字，每章2500字，主角姓名为顾星河，关键关系对象剑修姓名为苏晚棠，对手姓名为谢无尘。",
+        )
+        .expect("draft");
+
+        assert!(draft
+            .planning_notes
+            .iter()
+            .any(|note| note == "明确指定角色姓名：苏晚棠"));
+        assert!(draft
+            .planning_notes
+            .iter()
+            .any(|note| note == "角色姓名权威（用户）：关键关系对象=苏晚棠"));
+    }
 
     #[test]
     fn full_book_execution_scope_survives_short_confirmation_turn() {

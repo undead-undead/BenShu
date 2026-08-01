@@ -248,7 +248,6 @@ fn sentence_has_contract_meta_surface(sentence: &str) -> bool {
         "大纲",
         "提纲",
         "设定",
-        "本文",
         "本章",
         "主角弧线",
         "终局",
@@ -293,6 +292,13 @@ mod tests {
         ));
         assert!(sentence_has_contract_meta_surface(
             "这份故事合同要求本章必须完成失踪案线索"
+        ));
+    }
+
+    #[test]
+    fn ordinary_compound_noun_containing_ben_wen_is_not_writing_meta_surface() {
+        assert!(!sentence_has_contract_meta_surface(
+            "他怀中紧紧抱着那本文明记录本，生怕冰晶生物将它夺走"
         ));
     }
 }

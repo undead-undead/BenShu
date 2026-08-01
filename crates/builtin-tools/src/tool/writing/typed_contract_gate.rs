@@ -126,7 +126,10 @@ pub(crate) fn validate_novel_creation_contract_for_scope(
             if let Some(issue) = naming::title_formality_issue(title, "书名") {
                 issues.push(format!("ContractBlocker: {issue}"));
             }
-        } else {
+        } else if !matches!(
+            contract.title.source,
+            crate::tool::writing::creation_contract_model::TitleSource::User
+        ) {
             let evidence = naming::BookTitleEvidence::new("书名", contract.story_basis_text());
             let decision = naming::select_book_title_candidate_decision(
                 [naming::BookTitleCandidate::new(
@@ -602,7 +605,11 @@ fn subordinate_character_anchor_lacks_resolution(compact: &str) -> bool {
 
 fn character_anchor_ends_like_truncated_clause(compact: &str) -> bool {
     [
-        "的", "以", "而", "为", "把", "被", "将", "向", "给", "从", "让", "用",
+        // Do not treat a bare trailing “将” as a dangling clause.  It is
+        // also a valid noun suffix in concise role anchors such as “败将”;
+        // the other clause connectors below remain unambiguous truncation
+        // signals here.
+        "的", "以", "而", "为", "把", "被", "向", "给", "从", "让", "用",
     ]
     .iter()
     .any(|suffix| compact.ends_with(suffix))
@@ -1273,6 +1280,13 @@ mod tests {
         ));
         assert!(!character_anchor_looks_like_storyline_or_truncated_surface(
             "随着老街消失而失去与女儿和解的机会"
+        ));
+    }
+
+    #[test]
+    fn concise_arc_start_with_a_concrete_role_is_accepted() {
+        assert!(!character_anchor_looks_like_storyline_or_truncated_surface(
+            "背负家族覆灭遗憾的败将"
         ));
     }
 

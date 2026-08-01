@@ -41,6 +41,11 @@ pub struct SessionCreationDraftState {
     pub chapter_unit_target: Option<usize>,
     #[serde(default)]
     pub chapter_unit_target_user_specified: bool,
+    /// The normalized chapter tier captured from the user's request.  This is
+    /// kept separately from the mutable draft projection so generated
+    /// contract candidates and approval responses cannot replace it.
+    #[serde(default)]
+    pub chapter_unit_target_user_authority: Option<usize>,
     pub section_unit_target: Option<usize>,
     pub max_chapters_per_turn: Option<usize>,
     pub export_format: String,
@@ -133,6 +138,14 @@ pub struct SessionCreationDraftState {
 }
 
 impl SessionCreationDraftState {
+    pub(crate) fn user_chapter_unit_target(&self) -> Option<usize> {
+        self.chapter_unit_target_user_authority.or_else(|| {
+            self.chapter_unit_target_user_specified
+                .then_some(self.chapter_unit_target)
+                .flatten()
+        })
+    }
+
     pub fn lifecycle_status(&self) -> CreationDraftLifecycleStatus {
         CreationDraftLifecycleStatus::from_str(&self.status)
             .unwrap_or(CreationDraftLifecycleStatus::DraftingContract)

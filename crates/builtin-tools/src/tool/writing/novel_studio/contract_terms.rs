@@ -176,12 +176,10 @@ fn leading_declared_name(value: &str) -> Option<String> {
     {
         return None;
     }
-    let candidate = value
-        .chars()
-        .take_while(|ch| ('\u{4e00}'..='\u{9fff}').contains(ch))
-        .take(4)
-        .collect::<String>();
-    stable_character_anchor_name(&candidate).map(ToString::to_string)
+    cjk_name_like_candidates(value)
+        .into_iter()
+        .filter(|candidate| value.starts_with(candidate))
+        .max_by_key(|candidate| candidate.chars().count())
 }
 
 fn trailing_declared_name(value: &str) -> Option<String> {
@@ -190,16 +188,35 @@ fn trailing_declared_name(value: &str) -> Option<String> {
         .iter()
         .find_map(|marker| value.strip_suffix(marker))?
         .trim_end_matches([' ', '\t', ':', '：', '-', '—', '=']);
-    let candidate = value
-        .chars()
-        .rev()
-        .take_while(|ch| ('\u{4e00}'..='\u{9fff}').contains(ch))
-        .take(4)
-        .collect::<Vec<_>>()
+    cjk_name_like_candidates(value)
         .into_iter()
-        .rev()
-        .collect::<String>();
-    stable_character_anchor_name(&candidate).map(ToString::to_string)
+        .filter(|candidate| value.ends_with(candidate))
+        .max_by_key(|candidate| candidate.chars().count())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::declared_character_names_in_line;
+
+    #[test]
+    fn role_word_followed_by_a_predicate_is_not_a_declared_character() {
+        let names = declared_character_names_in_line("秦予安转过身，看到导师正站在不远处。");
+
+        assert!(
+            names.is_empty(),
+            "predicate text must not become a name: {names:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_role_declaration_still_extracts_the_person_name() {
+        let names = declared_character_names_in_line("关键人物：林婉儿，负责核对实验记录。");
+
+        assert!(
+            names.contains("林婉儿"),
+            "explicit declared name was lost: {names:?}"
+        );
+    }
 }
 
 fn collect_structured_contract_terms(

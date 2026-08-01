@@ -1356,7 +1356,10 @@ fn emotional_state_ledger_from_field_pack(
         .collect()
 }
 
-fn relationship_names_from_line(line: &str, characters: &[CharacterContract]) -> Vec<String> {
+pub(crate) fn relationship_names_from_line(
+    line: &str,
+    characters: &[CharacterContract],
+) -> Vec<String> {
     let mut names = characters
         .iter()
         .filter_map(|character| {

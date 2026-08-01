@@ -16,6 +16,9 @@ pub fn creation_draft_tool_args(action: &str, draft: &SessionCreationDraftState)
         let style_rules = authority_contract.style_rules.clone();
         let must_avoid = authority_contract.must_avoid.clone();
         let contract_v2 = authority_contract.structured.clone();
+        let chapter_unit_target = draft
+            .chapter_unit_target_user_authority
+            .or(draft.chapter_unit_target);
         let tool_action = match action {
             "draft" => "draft_project",
             "update" => "update_draft",
@@ -31,7 +34,7 @@ pub fn creation_draft_tool_args(action: &str, draft: &SessionCreationDraftState)
             "genre": draft.genre,
             "brief": brief,
             "target_units": draft.target_units,
-            "chapter_unit_target": draft.chapter_unit_target,
+            "chapter_unit_target": chapter_unit_target,
             "max_chapters_per_turn": draft.max_chapters_per_turn,
             "format": draft.export_format,
             "export_when_complete": draft.export_when_complete,

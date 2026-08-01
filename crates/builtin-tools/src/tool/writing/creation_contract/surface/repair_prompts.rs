@@ -148,9 +148,17 @@ pub fn final_prompt_from_title_metadata_repair(
     }
     let title_anchor = title_repair_anchor_with_character_authority(&clean_anchor);
     let title_issues = title_metadata_issues_for_prompt(issues);
+    let title_authority_instruction = super::super::patch::user_title_authority(draft)
+        .map(|title| {
+            format!(
+                "用户已明确指定书名《{title}》，必须保留该书名；只补齐与该书名对应的具体命名理由，不得改成新的书名。\n\n"
+            )
+        })
+        .unwrap_or_default();
     Some(format!(
         "你正在修复小说故事蓝图的书名 metadata。不要重写故事蓝图、角色、世界观、大纲或章节包。\n\n\
     可复用故事锚点：\n{title_anchor}\n\n\
+    {title_authority_instruction}\
     当前只需要修复这些书名问题：{}\n\n\
 		请只输出一个 JSON 对象，格式必须是：\n\
 			{{\"title\":{{\"canonical_title\":\"中文作品名\",\"candidates\":[{{\"title\":\"候选1\",\"hook_type\":\"关键物件/地点事件/制度/关键事件/结局变化/人物关系\",\"rationale\":\"候选1如何来自故事证据\"}},{{\"title\":\"候选2\",\"hook_type\":\"不同证据类型\",\"rationale\":\"候选2如何来自故事证据\"}},{{\"title\":\"候选3\",\"hook_type\":\"不同证据类型\",\"rationale\":\"候选3如何来自故事证据\"}}],\"rationale\":\"用一句具体中文说明最终书名如何来自终局、主线、世界规则或关键事件\"}}}}\n\n\

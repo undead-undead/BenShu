@@ -877,6 +877,11 @@ impl TitlePatch {
     }
 
     pub(crate) fn apply_repair_to_draft(&self, draft: &mut SessionCreationDraftState) {
+        if let Some(user_title) = user_title_authority(draft) {
+            draft.title = user_title.clone();
+            draft.fiction_title_rationale = self.rationale_for_user_title(draft, &user_title);
+            return;
+        }
         if let Some(candidate) = self.best_title_candidate_for_draft(draft) {
             draft.title = candidate.title;
             draft.fiction_title_rationale = candidate.rationale;
@@ -884,6 +889,11 @@ impl TitlePatch {
     }
 
     fn apply_metadata_repair_to_draft(&self, draft: &mut SessionCreationDraftState) {
+        if let Some(user_title) = user_title_authority(draft) {
+            draft.title = user_title.clone();
+            draft.fiction_title_rationale = self.rationale_for_user_title(draft, &user_title);
+            return;
+        }
         let evidence = draft_title_evidence(draft, &self.rationale);
         let mut canonical_candidate = Vec::new();
         push_unique_title_candidate(&mut canonical_candidate, &self.canonical_title);
@@ -1037,6 +1047,25 @@ impl TitlePatch {
         )
     }
 
+    fn rationale_for_user_title(&self, draft: &SessionCreationDraftState, title: &str) -> String {
+        let evidence = draft_title_evidence(draft, "");
+        let candidate_rationale = self
+            .candidate_rationales
+            .get(title.trim())
+            .map(String::as_str)
+            .or_else(|| (!value_missing(&self.rationale)).then_some(self.rationale.as_str()));
+        if let Some(rationale) = candidate_rationale
+            .map(str::trim)
+            .filter(|rationale| user_title_rationale_matches_title(rationale, title))
+            .filter(|rationale| {
+                naming::title_contract_basis_issue(title, "书名", rationale, &evidence).is_none()
+            })
+        {
+            return self.rationale_with_candidate_hook_type(title, rationale);
+        }
+        contract_evidence_title_rationale_from_draft(title, draft)
+    }
+
     fn rationale_with_candidate_hook_type(&self, title: &str, rationale: &str) -> String {
         let Some(hook_type) = self
             .candidate_hook_types
@@ -1068,6 +1097,22 @@ fn title_patch_rationale_has_candidate_residue(rationale: &str) -> bool {
     ]
     .iter()
     .any(|term| rationale.contains(term))
+}
+
+fn user_title_rationale_matches_title(rationale: &str, title: &str) -> bool {
+    let title = title.trim();
+    if title.is_empty() {
+        return false;
+    }
+    let compact_title = title
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation())
+        .collect::<String>();
+    let compact_rationale = rationale
+        .chars()
+        .filter(|ch| !ch.is_whitespace() && !ch.is_ascii_punctuation())
+        .collect::<String>();
+    !compact_title.is_empty() && compact_rationale.contains(&compact_title)
 }
 
 fn title_has_story_anchor_support(title: &str, evidence: &str) -> bool {
@@ -1720,6 +1765,29 @@ pub(crate) fn govern_character_name_candidates(
         // A fresh model candidate cannot establish its own provenance. Only the
         // user request or this local allocator may create initial name authority.
         character.name_source.clear();
+        if let Some(user_name) =
+            explicit_user_character_name_for_role(draft, character, &used_names)
+        {
+            if user_name != old_name {
+                governance
+                    .replacements
+                    .insert(old_name.clone(), user_name.clone());
+                if source_name_is_unambiguous
+                    && !character
+                        .previous_names
+                        .iter()
+                        .any(|name| name.trim() == old_name)
+                {
+                    character.previous_names.push(old_name);
+                }
+            }
+            character.canonical_name = user_name.clone();
+            used_names.insert(user_name.clone());
+            governance
+                .authority_sources
+                .insert(user_name, "user".to_string());
+            continue;
+        }
         if user_named {
             governance
                 .authority_sources
@@ -1838,6 +1906,69 @@ pub(crate) fn draft_explicitly_names_character(
         .planning_notes
         .iter()
         .any(|note| note.trim() == marker)
+}
+
+pub(crate) fn user_title_authority(draft: &SessionCreationDraftState) -> Option<String> {
+    draft
+        .planning_notes
+        .iter()
+        .filter_map(|note| note.strip_prefix("书名权威（用户）："))
+        .map(str::trim)
+        .find(|title| !value_missing(title))
+        .map(ToString::to_string)
+}
+
+fn explicit_user_character_name_for_role(
+    draft: &SessionCreationDraftState,
+    character: &CharacterContract,
+    used_names: &BTreeSet<String>,
+) -> Option<String> {
+    let mut matches = draft
+        .planning_notes
+        .iter()
+        .filter_map(|note| note.strip_prefix("角色姓名权威（用户）："))
+        .filter_map(|value| value.split_once('='))
+        .filter(|(role, name)| {
+            !value_missing(role)
+                && !value_missing(name)
+                && (character_contract_roles_match(
+                    character,
+                    &CharacterContract {
+                        role: role.trim().to_string(),
+                        ..Default::default()
+                    },
+                ) || character_identity_surface_mentions_role(character, role))
+        })
+        .map(|(_, name)| name.trim().to_string())
+        .filter(|name| {
+            fiction_contract_character_name_is_valid(name)
+                && (!used_names.contains(name) || name == character.canonical_name.trim())
+        })
+        .collect::<BTreeSet<_>>();
+    if matches.len() == 1 {
+        matches.pop_first()
+    } else {
+        None
+    }
+}
+
+fn character_identity_surface_mentions_role(character: &CharacterContract, role: &str) -> bool {
+    let role = role.trim();
+    if role.is_empty() || matches!(role, "角色" | "人物") {
+        return false;
+    }
+    [
+        character.role.as_str(),
+        character.desire.as_str(),
+        character.fear.as_str(),
+        character.bottom_line.as_str(),
+        character.arc_start.as_str(),
+        character.arc_end.as_str(),
+        character.planned_entry.as_str(),
+        character.planned_exit.as_str(),
+    ]
+    .iter()
+    .any(|surface| surface.contains(role))
 }
 
 fn merge_missing_character_contract_fields(
@@ -4118,6 +4249,82 @@ mod tests {
     }
 
     #[test]
+    fn title_repair_preserves_explicit_user_title_while_accepting_its_rationale() {
+        let mut draft = build_initial_creation_draft(
+            "session-explicit-title-repair",
+            "fiction",
+            "写一部玄幻小说《星渊问道》，主角顾沉舟，每章2500字，共10万字",
+        )
+        .expect("draft");
+        let patch = TitlePatch {
+            canonical_title: "星辰收割者".to_string(),
+            candidates: vec!["星辰收割者".to_string()],
+            rationale: "模型候选理由".to_string(),
+            ..Default::default()
+        };
+
+        patch.apply_repair_to_draft(&mut draft);
+
+        assert_eq!(draft.title, "星渊问道");
+    }
+
+    #[test]
+    fn metadata_repair_preserves_explicit_user_title_and_rebuilds_its_rationale() {
+        let mut draft = build_initial_creation_draft(
+            "session-explicit-title-metadata-repair",
+            "fiction",
+            "写一部玄幻小说《星渊问道》，主角顾沉舟，每章2500字，共10万字",
+        )
+        .expect("draft");
+        draft.fiction_premise =
+            "顾沉舟在边荒发现星渊残图，追查失踪师父留下的宗门旧案。".to_string();
+        draft.fiction_ending_direction = "顾沉舟以星渊残图揭开宗门旧案并重建问道秩序。".to_string();
+        let patch = MetadataPatch {
+            title: TitlePatch {
+                canonical_title: "边荒星踪".to_string(),
+                candidates: vec!["边荒星踪".to_string()],
+                rationale: "边荒星踪来自另一条模型主线。".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        patch.title.apply_metadata_repair_to_draft(&mut draft);
+
+        assert_eq!(draft.title, "星渊问道");
+        assert!(draft.fiction_title_rationale.contains("星渊问道"));
+    }
+
+    #[test]
+    fn user_title_repair_rejects_rationale_for_a_different_title_sharing_an_anchor() {
+        let mut draft = build_initial_creation_draft(
+            "session-title-rationale-authority",
+            "fiction",
+            "写一部都市悬疑小说《霓虹回声》，主角林知远，每章2500字，共10万字",
+        )
+        .expect("draft");
+        draft.fiction_premise =
+            "林知远通过录音带追查旧城改造交易，最终把真相广播给全城。".to_string();
+        let patch = MetadataPatch {
+            title: TitlePatch {
+                canonical_title: "城市回声".to_string(),
+                candidate_rationales: BTreeMap::from([(
+                    "霓虹回声".to_string(),
+                    "最终定名为城市回声，结合录音带的声音与广播终局。".to_string(),
+                )]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        patch.title.apply_metadata_repair_to_draft(&mut draft);
+
+        assert_eq!(draft.title, "霓虹回声");
+        assert!(draft.fiction_title_rationale.contains("霓虹回声"));
+        assert!(!draft.fiction_title_rationale.contains("城市回声"));
+    }
+
+    #[test]
     fn authority_rewrite_does_not_touch_ordinary_story_terms() {
         let authority = CharacterAuthority {
             names: vec!["季桥晚".to_string(), "晏岑禾".to_string()],
@@ -5901,6 +6108,136 @@ mod tests {
         assert_eq!(character.canonical_name, "林默");
         assert_eq!(character.name_source, "user");
         assert!(character.previous_names.is_empty());
+    }
+
+    #[test]
+    fn initial_character_patch_maps_model_role_to_inline_user_name_authority() {
+        let mut draft = build_initial_creation_draft(
+            "session-inline-explicit-initial-name",
+            "fiction",
+            "写一部玄幻小说：主角顾沉舟在边荒小城追查师门旧案，每章2500字，共10万字",
+        )
+        .expect("draft");
+        draft.fiction_premise = "宋照宁在边荒小城追查师门旧案".to_string();
+        let patch = CharacterPatch {
+            characters: vec![CharacterContract {
+                canonical_name: "宋照宁".to_string(),
+                role: "主角".to_string(),
+                desire: "查清师门旧案".to_string(),
+                fear: "证据被宗门销毁".to_string(),
+                bottom_line: "不牺牲无辜换取真相".to_string(),
+                arc_start: "被迫逃离边荒小城".to_string(),
+                arc_end: "公开师门旧案的真相".to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        patch.apply_to_draft(&mut draft);
+
+        let character = draft_character_line_to_contract(&draft.fiction_characters[0]);
+        assert_eq!(character.canonical_name, "顾沉舟");
+        assert_eq!(character.name_source, "user");
+        assert!(character.previous_names.iter().any(|name| name == "宋照宁"));
+        assert!(draft.fiction_premise.contains("顾沉舟"));
+        assert!(!draft.fiction_premise.contains("宋照宁"));
+    }
+
+    #[test]
+    fn initial_character_patch_maps_inline_secondary_user_name_by_identity_surface() {
+        let mut draft = build_initial_creation_draft(
+            "session-inline-explicit-secondary-name",
+            "fiction",
+            "写一部都市言情小说：主角许知遥追查旧城录音，并与记者沈砚舟共同面对选择，每章2500字，共10万字",
+        )
+        .expect("draft");
+        draft.fiction_premise = "许知遥与唐承岚共同面对旧城选择".to_string();
+        let patch = CharacterPatch {
+            characters: vec![
+                CharacterContract {
+                    canonical_name: "许知遥".to_string(),
+                    role: "主角".to_string(),
+                    desire: "查清父亲留下的录音".to_string(),
+                    fear: "真相被旧城拆迁掩埋".to_string(),
+                    bottom_line: "不牺牲无辜换取真相".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "唐承岚".to_string(),
+                    role: "关键关系对象".to_string(),
+                    desire: "记录城市变迁中的真实故事".to_string(),
+                    fear: "失去对真相的判断".to_string(),
+                    bottom_line: "必须守住许知遥的信任".to_string(),
+                    arc_start: "冷静克制的旁观记者".to_string(),
+                    arc_end: "愿意共同承担选择的记者".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        patch.apply_to_draft(&mut draft);
+
+        let characters = draft
+            .fiction_characters
+            .iter()
+            .map(|line| draft_character_line_to_contract(line))
+            .collect::<Vec<_>>();
+        let secondary = characters
+            .iter()
+            .find(|character| character.role == "关键关系对象")
+            .expect("secondary character");
+        assert_eq!(secondary.canonical_name, "沈砚舟");
+        assert_eq!(secondary.name_source, "user");
+        assert!(secondary.previous_names.iter().any(|name| name == "唐承岚"));
+        assert!(draft.fiction_premise.contains("沈砚舟"));
+        assert!(!draft.fiction_premise.contains("唐承岚"));
+    }
+
+    #[test]
+    fn initial_character_patch_maps_compound_secondary_role_name_authority() {
+        let mut draft = build_initial_creation_draft(
+            "session-compound-secondary-role",
+            "fiction",
+            "写一部玄幻小说：主角顾星河与关键关系对象剑修姓名为苏晚棠并肩前行，每章2500字，共10万字",
+        )
+        .expect("draft");
+        draft.fiction_premise = "顾星河与沈云棠在星墟中并肩前行".to_string();
+        let patch = CharacterPatch {
+            characters: vec![
+                CharacterContract {
+                    canonical_name: "顾星河".to_string(),
+                    role: "主角".to_string(),
+                    desire: "重塑星核".to_string(),
+                    fear: "星墟吞噬故乡".to_string(),
+                    bottom_line: "不牺牲同伴".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "沈云棠".to_string(),
+                    role: "剑修".to_string(),
+                    desire: "守住剑道誓言".to_string(),
+                    fear: "失去顾星河的信任".to_string(),
+                    bottom_line: "不背弃同伴".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        patch.apply_to_draft(&mut draft);
+
+        let secondary = draft
+            .fiction_characters
+            .iter()
+            .map(|line| draft_character_line_to_contract(line))
+            .find(|character| character.role == "剑修")
+            .expect("sword cultivator relationship character");
+        assert_eq!(secondary.canonical_name, "苏晚棠");
+        assert_eq!(secondary.name_source, "user");
+        assert!(secondary.previous_names.iter().any(|name| name == "沈云棠"));
+        assert!(draft.fiction_premise.contains("苏晚棠"));
+        assert!(!draft.fiction_premise.contains("沈云棠"));
     }
 
     #[test]

@@ -157,7 +157,7 @@ pub(crate) use patch::*;
 pub(crate) use patch_normalizer::infer_book_title_from_rationale_text;
 pub(crate) use patch_normalizer::{
     derive_plot_contract_from_outline_text, normalize_creation_contract_patch_boundary,
-    strip_plot_control_segments_from_outline_text,
+    relationship_names_from_line, strip_plot_control_segments_from_outline_text,
 };
 #[cfg(test)]
 pub(crate) use planning_gate::generated_fiction_contract_planning_issues;
@@ -188,6 +188,7 @@ pub fn apply_continuation_controls_to_creation_draft(
     let raw_chapter_unit_target = requested_raw_chapter_unit_target(message);
     if let Some(target) = raw_chapter_unit_target.map(nearest_novel_chapter_unit_band) {
         draft.chapter_unit_target = Some(target);
+        draft.chapter_unit_target_user_authority = Some(target);
         record_chapter_unit_band_normalization_note(draft, raw_chapter_unit_target, Some(target));
     }
     if let Some(target) = requested_section_unit_target(message) {
