@@ -201,18 +201,33 @@ fn direct_writer_task_from_session_work_target(text: &str) -> Option<String> {
         return None;
     }
     let requested_total_units = super::creation_contract::requested_total_unit_target(user_request);
-    let requests_all_remaining =
-        super::creation_contract::creation_draft_requests_all_remaining(user_request, "fiction");
-    let scope = if let Some(target_units) = requested_total_units {
-        format!(
-            "本轮范围：用户要求按明确总量目标完成作品；目标总字数：{target_units}；按该目标推进章节并完成结局门，每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。"
-        )
-    } else if requests_all_remaining {
-        "本轮范围：用户要求完成全书；按当前合同推进全部剩余章节到目标规模和结局完成门；每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。".to_string()
-    } else if direct_writer_requested_chapter_count(user_request).is_some() {
-        String::new()
-    } else {
-        "本轮默认只推进下一章；完成后返回进度，不要越界连续生成。".to_string()
+    let turn_scope = super::creation_contract::creation_draft_turn_scope(user_request, "fiction");
+    let execution_scope_note =
+        super::creation_contract::creation_execution_scope_note_for_scope(turn_scope)
+            .unwrap_or_default();
+    let scope = match turn_scope {
+        super::creation_contract::CreationDraftTurnScope::AllRemaining => {
+            if let Some(target_units) = requested_total_units {
+                format!(
+                    "本轮范围：用户要求按明确总量目标完成作品；目标总字数：{target_units}；按该目标推进章节并完成结局门，每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。"
+                )
+            } else {
+                "本轮范围：用户要求完成全书；按当前合同推进全部剩余章节到目标规模和结局完成门；每章通过质量门后继续，直到目标达成、叙事闭合或出现明确 blocker。".to_string()
+            }
+        }
+        super::creation_contract::CreationDraftTurnScope::FirstUnit
+        | super::creation_contract::CreationDraftTurnScope::ExplicitUnits(_) => String::new(),
+        super::creation_contract::CreationDraftTurnScope::Configured => {
+            if let Some(target_units) = requested_total_units {
+                format!(
+                    "本轮范围：用户要求按明确总量目标推进作品；目标总字数：{target_units}；每章通过质量门后继续，直到该阶段目标达成或出现明确 blocker。"
+                )
+            } else if direct_writer_requested_chapter_count(user_request).is_some() {
+                String::new()
+            } else {
+                "本轮默认只推进下一章；完成后返回进度，不要越界连续生成。".to_string()
+            }
+        }
     };
     let target_chapter = extract_requested_chapter_number_from_text(user_request);
     let operation = if export_requested {
@@ -234,6 +249,7 @@ fn direct_writer_task_from_session_work_target(text: &str) -> Option<String> {
     let command_line = writing_command_line(&command);
     let task = format!(
         "用户要求继续当前写作项目。不要重新规划合同，不要新开项目。\n\
+        {execution_scope_note}\n\
         {command_line}\n\
         USER REQUEST\n{}\n\
         {}\n\

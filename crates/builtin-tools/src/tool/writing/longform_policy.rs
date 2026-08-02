@@ -23,6 +23,15 @@ pub(crate) fn minimum_usable_chapter_units(target: usize) -> usize {
     target.saturating_mul(4).div_ceil(5).max(1)
 }
 
+/// A small generation variance below the selected tier is not story drift and
+/// must not trigger an expansion that can introduce a new uncontracted event.
+/// The selected tier remains the target, while this tolerance lets the
+/// existing best-version path preserve a complete chapter when the model
+/// lands just below it.
+pub(crate) fn soft_chapter_shortfall_tolerance(target: usize) -> usize {
+    target.saturating_mul(2).div_ceil(100).max(1)
+}
+
 /// Returns the number of chapters needed to cover a positive total-unit target
 /// at a positive per-chapter target. Callers retain responsibility for choosing
 /// fallback inputs; the rounding rule lives here so contracts, prompts,

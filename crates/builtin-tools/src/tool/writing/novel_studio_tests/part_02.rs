@@ -551,7 +551,7 @@
             "虚".repeat(32)
         );
         let cleaned = strip_embedded_structured_field_residue_from_chinese_prose(
-            &collapse_excessive_repeated_cjk_chars(&raw),
+            &surface_sanitizer::collapse_excessive_repeated_cjk_chars(&raw),
         );
 
         assert!(cleaned.contains("陆远穿过节点"));

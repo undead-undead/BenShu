@@ -10,7 +10,8 @@ pub use field_extract::*;
 pub use intake::*;
 pub use turn_scope::{
     creation_draft_requested_turn_units, creation_draft_requests_all_remaining,
-    creation_draft_turn_scope, creation_execution_scope_note, persisted_creation_execution_scope,
+    creation_draft_turn_scope, creation_execution_scope_note,
+    creation_execution_scope_note_for_scope, persisted_creation_execution_scope,
     CreationDraftTurnScope, CREATION_EXECUTION_SCOPE_NOTE_PREFIX, FICTION_EXPLICIT_TURN_UNITS_MAX,
 };
 

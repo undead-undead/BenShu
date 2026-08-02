@@ -1030,7 +1030,7 @@
     }
 
     #[test]
-    fn chapter_unit_target_marks_one_unit_shortfall_for_bounded_repair() {
+    fn chapter_unit_target_accepts_small_generation_variance_without_topup() {
         let now = Utc::now().to_rfc3339();
         let manifest = NovelProjectManifest {
             schema_version: "1".to_string(),
@@ -1087,10 +1087,9 @@
         let content = "章".repeat(2_499);
         let issues = mechanical_chapter_issues(&manifest, &chapter, &content);
 
-        assert!(
-            issues
-                .iter()
-                .any(|issue| issue.contains("chapter length is below the soft target: 2499 of 2500")),
+        assert!(!issues
+            .iter()
+            .any(|issue| issue.contains("chapter length is below the soft target")),
             "{issues:?}"
         );
     }

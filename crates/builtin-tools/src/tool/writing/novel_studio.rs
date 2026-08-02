@@ -127,16 +127,15 @@ use project_governance::{
 };
 #[cfg(test)]
 use project_governance::{final_chapter_title_from_body, title_needs_post_body_repair};
-#[cfg(test)]
-use prose_sanitizer::{
-    collapse_excessive_repeated_cjk_chars, normalize_chinese_surface_punctuation,
-    strip_adjacent_foreign_alpha_runs_from_chinese_text, strip_chinese_markup_residue_lines,
-    strip_embedded_structured_field_residue_from_chinese_prose,
-    strip_isolated_unexpected_scripts_from_chinese_text,
-};
 use prose_sanitizer::{
     is_chinese_noise_boundary, line_is_standalone_markup_residue, sanitize_chinese_script_noise,
     sanitize_saved_prose, strip_short_escape_residue_near_chinese_line,
+};
+#[cfg(test)]
+use prose_sanitizer::{
+    normalize_chinese_surface_punctuation, strip_adjacent_foreign_alpha_runs_from_chinese_text,
+    strip_chinese_markup_residue_lines, strip_embedded_structured_field_residue_from_chinese_prose,
+    strip_isolated_unexpected_scripts_from_chinese_text,
 };
 use quality_checks::*;
 

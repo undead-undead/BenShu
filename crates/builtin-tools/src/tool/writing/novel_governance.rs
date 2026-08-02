@@ -80,7 +80,33 @@ fn contains_distinctive_cjk_span_absent_from(
             haystack.contains(&candidate)
                 && !excluded.contains(&candidate)
                 && cjk_future_overlap_is_distinctive(&candidate)
+                && cjk_future_overlap_has_completed_context(haystack, &candidate)
         })
+    })
+}
+
+fn cjk_future_overlap_has_completed_context(haystack: &str, candidate: &str) -> bool {
+    let process_markers = [
+        "的过程中",
+        "过程中",
+        "正在",
+        "持续",
+        "不断",
+        "试图",
+        "准备",
+        "决定",
+        "打算",
+    ];
+    haystack.match_indices(candidate).any(|(start, _)| {
+        let end = start + candidate.len();
+        let suffix = haystack.get(end..).unwrap_or_default();
+        let prefix = &haystack[..start];
+        !process_markers
+            .iter()
+            .any(|marker| suffix.starts_with(marker))
+            && !["正在", "试图", "准备", "决定", "打算"]
+                .iter()
+                .any(|marker| prefix.ends_with(marker))
     })
 }
 
@@ -221,8 +247,22 @@ pub(crate) fn contract_change_supported_by_final_evidence(
     cjk: bool,
     ignored_entity_surfaces: &[String],
 ) -> bool {
+    contract_change_evidence_score(authority_value, evidence, cjk, ignored_entity_surfaces) >= 2
+}
+
+/// Returns the number of distinctive event terms shared by a sealed authority
+/// value and one bounded final-body evidence span.  The boolean admission gate
+/// above remains the single owner of the minimum threshold; settlement
+/// recovery uses this score only to choose the strongest already-valid span
+/// when several adjacent spans paraphrase the same event.
+pub(crate) fn contract_change_evidence_score(
+    authority_value: &str,
+    evidence: &str,
+    cjk: bool,
+    ignored_entity_surfaces: &[String],
+) -> usize {
     if contains_unexpected_script_residue(authority_value, evidence) {
-        return false;
+        return 0;
     }
     if cjk {
         let mut authority = compact_event_probe_text(strip_truth_label(authority_value));
@@ -235,14 +275,14 @@ pub(crate) fn contract_change_supported_by_final_evidence(
             }
         }
         if authority.is_empty() || evidence.is_empty() {
-            return false;
+            return 0;
         }
         let authority_event = without_shared_leading_cjk_subject(&authority, &evidence);
         let evidence_event = without_shared_leading_cjk_subject(&evidence, &authority);
         return super::chapter_quality::shared_distinctive_bigram_count(
             &authority_event,
             &evidence_event,
-        ) >= 2;
+        );
     }
 
     let authority_terms = distinctive_english_event_terms(authority_value, evidence);
@@ -254,7 +294,6 @@ pub(crate) fn contract_change_supported_by_final_evidence(
         .filter(|term| evidence_terms.contains(term))
         .collect::<BTreeSet<_>>()
         .len()
-        >= 2
 }
 
 fn distinctive_english_event_terms(value: &str, other: &str) -> Vec<String> {
@@ -378,6 +417,41 @@ fn text_consumes_future_chapter_with_required_anchors(
 
 fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
     if cjk {
+        // Future-boundary evidence must describe a completed outcome, not a
+        // hypothetical or compelled future action. Check this before the
+        // completed markers below: phrases such as “不得不进入……阶段” can
+        // contain an outcome verb while still leaving that event for the next
+        // chapter. This is the existing completion gate's intent check, made
+        // sentence-wide so modal wording is not lost at clause boundaries.
+        if [
+            "即将",
+            "将要",
+            "正要",
+            "正在",
+            "正从",
+            "准备",
+            "决定",
+            "打算",
+            "试图",
+            "想要",
+            "预示",
+            "可能",
+            "不得不",
+            "计划",
+            "预期",
+            "一旦",
+            "如果",
+            "若是",
+            "将会",
+            "会让",
+            "会在",
+            "会导致",
+        ]
+        .iter()
+        .any(|marker| sentence.contains(marker))
+        {
+            return false;
+        }
         if sentence.contains('已') {
             return true;
         }
@@ -395,14 +469,6 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
         // explicitly describing intent, anticipation, or an event in progress.
         // Otherwise normal chapter-end foreshadowing can consume the next
         // chapter even though its result has not happened yet.
-        if [
-            "即将", "将要", "正要", "正在", "正从", "准备", "决定", "打算", "试图", "想要", "预示",
-        ]
-        .iter()
-        .any(|marker| sentence.contains(marker))
-        {
-            return false;
-        }
         let chars = sentence.chars().collect::<Vec<_>>();
         return chars.iter().enumerate().any(|(index, ch)| {
             if *ch != '了' {
@@ -516,35 +582,13 @@ pub(crate) fn distinct_future_boundary_character_anchors(
         .collect()
 }
 
-/// Reads the current and next chapter seeds from the already sealed authority
-/// projection. This keeps all consumers on the same read-only boundary instead
-/// of reconstructing a second outline view from mutable project state.
-pub(crate) fn sealed_current_and_next_chapter_seeds(
+/// Reads the current seed and bounded future window from the already sealed
+/// authority projection. This keeps all consumers on the same read-only
+/// boundary instead of reconstructing another outline view from mutable state.
+pub(crate) fn sealed_current_and_future_chapter_seeds(
     authority: &SealedChapterAuthority,
-) -> Option<(String, String, String)> {
+) -> Option<(String, Vec<(usize, String, String)>)> {
     let projection = authority.projection(AuthorityRole::Observer)?;
-    let boundaries = projection
-        .payload
-        .pointer("/authority/working_context/next_chapter_boundary")?
-        .as_array()?;
-    let next_number = authority.chapter_number.checked_add(1)?;
-    let (index, boundary) = boundaries.iter().enumerate().find(|(_, boundary)| {
-        boundary
-            .get("number")
-            .and_then(Value::as_u64)
-            .and_then(|number| usize::try_from(number).ok())
-            == Some(next_number)
-    })?;
-    let next_seed = ["goal", "expected_turn"]
-        .into_iter()
-        .filter_map(|key| boundary.get(key).and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("；");
-    if next_seed.is_empty() {
-        return None;
-    }
     let current_seed = [
         authority.chapter_contract.goal.as_str(),
         authority.chapter_contract.scene_goal.as_str(),
@@ -557,11 +601,58 @@ pub(crate) fn sealed_current_and_next_chapter_seeds(
     if current_seed.is_empty() {
         return None;
     }
-    Some((
-        current_seed,
-        next_seed,
-        format!("/authority/working_context/next_chapter_boundary/{index}"),
-    ))
+    let future =
+        future_chapter_seeds_from_projection(&projection.payload, authority.chapter_number);
+    let future = future.into_values().collect::<Vec<_>>();
+    (!future.is_empty()).then_some((current_seed, future))
+}
+
+/// Collect the bounded future window from both sealed boundary sources.  The
+/// rolling window is preferred when it contains a chapter, while the durable
+/// next-boundary pointer fills any gaps (especially the immediate next
+/// chapter).  Keeping this merge in one helper prevents consumers from
+/// choosing different authority sources for the same chapter.
+fn future_chapter_seeds_from_projection(
+    payload: &Value,
+    chapter_number: usize,
+) -> BTreeMap<usize, (usize, String, String)> {
+    let last_number = chapter_number.saturating_add(ROLLING_OUTLINE_LOOKAHEAD_CHAPTERS);
+    let mut future = BTreeMap::new();
+    for boundary_pointer in [
+        "/authority/working_context/rolling_outline_window",
+        "/authority/working_context/next_chapter_boundary",
+    ] {
+        let Some(boundaries) = payload.pointer(boundary_pointer).and_then(Value::as_array) else {
+            continue;
+        };
+        for (index, boundary) in boundaries.iter().enumerate() {
+            let Some(number) = boundary
+                .get("number")
+                .or_else(|| boundary.get("chapter_number"))
+                .and_then(Value::as_u64)
+                .and_then(|number| usize::try_from(number).ok())
+                .filter(|number| *number > chapter_number && *number <= last_number)
+            else {
+                continue;
+            };
+            let seed = ["goal", "expected_turn", "moves_toward_ending"]
+                .into_iter()
+                .filter_map(|key| boundary.get(key).and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("；");
+            if !seed.is_empty() {
+                // The rolling window is visited first and is therefore the
+                // preferred sealed source when both records contain a
+                // chapter. The next-boundary source only fills a missing key.
+                future
+                    .entry(number)
+                    .or_insert_with(|| (number, seed, format!("{boundary_pointer}/{index}")));
+            }
+        }
+    }
+    future
 }
 
 pub(crate) fn unresolved_character_request_ids(
@@ -1871,6 +1962,10 @@ mod tests {
             "working_context": {
                 "next_chapter_boundary": [
                     {"number": 3, "goal": "未来章揭示"}
+                ],
+                "rolling_outline_window": [
+                    {"number": 3, "goal": "未来章揭示"},
+                    {"number": 4, "goal": "更远未来冲突"}
                 ]
             },
             "chapter_architecture": {
@@ -1909,6 +2004,44 @@ mod tests {
                 .pointer("/authority/working_context/next_chapter_boundary/0/number")
                 .and_then(Value::as_u64),
             Some(3)
+        );
+        assert_eq!(
+            projection
+                .pointer("/authority/working_context/rolling_outline_window")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn future_seed_window_fills_sparse_rolling_window_from_next_boundary() {
+        let payload = json!({
+            "authority": {
+                "working_context": {
+                    "rolling_outline_window": [
+                        {"number": 4, "goal": "第四章转折"}
+                    ],
+                    "next_chapter_boundary": [
+                        {"number": 2, "goal": "第二章承接"},
+                        {"number": 4, "goal": "旧的第四章描述"}
+                    ]
+                }
+            }
+        });
+
+        let seeds = future_chapter_seeds_from_projection(&payload, 1);
+
+        assert_eq!(seeds.keys().copied().collect::<Vec<_>>(), vec![2, 4]);
+        assert_eq!(seeds[&2].1, "第二章承接");
+        assert_eq!(
+            seeds[&2].2,
+            "/authority/working_context/next_chapter_boundary/0"
+        );
+        assert_eq!(seeds[&4].1, "第四章转折");
+        assert_eq!(
+            seeds[&4].2,
+            "/authority/working_context/rolling_outline_window/0"
         );
     }
 
@@ -1972,6 +2105,18 @@ mod tests {
         assert!(
             final_body_future_consumption_evidence(intent, current, next, true, &[]).is_none(),
             "purpose and future-intent clauses must not be treated as completed outcomes"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_ignores_modal_plan_for_next_stage() {
+        let current = "姜谨澜提交水道文化价值证据并引发规划方案辩论；规划方案开始面临修正压力";
+        let next = "唐听朔在进度压力与文化保护之间做出权衡并调整技术方案；规划方案进入修正阶段";
+        let body = "这个麻烦可能会让原本已经定稿的规划方案，不得不进入一个非常棘手的修正阶段。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
+            "a possible or compelled next-stage plan is not evidence that the next chapter stage completed"
         );
     }
 
@@ -2132,6 +2277,18 @@ mod tests {
         assert_eq!(
             final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_does_not_reuse_a_current_process_as_a_future_outcome() {
+        let current = "岑清澜发现平衡重建后的规则变化，开始寻找重夺青莲控制权的新手段；岑清澜与南泊原展开新一轮的法则博弈";
+        let next = "南泊原发现重塑循环后带来的副作用，准备迎接最终的结局挑战；南泊原彻底完成从散修到守望者的转变";
+        let body = "南泊原需要强行引导那股新生的、有序的灵气进入已经变得松散的筑基根基，生命精元的流失速度在重塑循环的过程中被放大了数倍。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
+            "a shared phrase such as 重塑循环 describes the current process, not completion of the later副作用 outcome"
         );
     }
 

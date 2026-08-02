@@ -55,40 +55,43 @@ fn inject_sealed_future_boundary_finding(
     write_result: &mut Value,
     language: &str,
 ) -> bool {
-    let Some((current_seed, next_seed, next_path)) =
-        governance::sealed_current_and_next_chapter_seeds(authority)
+    let Some((current_seed, future_boundaries)) =
+        governance::sealed_current_and_future_chapter_seeds(authority)
     else {
         return false;
     };
     let cjk = language_looks_cjk(language);
-    let required_character_anchors = governance::distinct_future_boundary_character_anchors(
-        authority,
-        &current_seed,
-        &next_seed,
-    );
-    let Some((excerpt, source)) = sealed_future_boundary_evidence(
-        body,
-        &observation.future_boundary_evidence,
-        &current_seed,
-        &next_seed,
-        cjk,
-        &required_character_anchors,
-    ) else {
+    let findings = future_boundaries
+        .into_iter()
+        .filter_map(|(future_number, future_seed, future_path)| {
+            let required_character_anchors = governance::distinct_future_boundary_character_anchors(
+                authority,
+                &current_seed,
+                &future_seed,
+            );
+            let (excerpt, source) = sealed_future_boundary_evidence(
+                body,
+                &observation.future_boundary_evidence,
+                &current_seed,
+                &future_seed,
+                cjk,
+                &required_character_anchors,
+            )?;
+            chapter_quality::future_chapter_consumed_finding(
+                authority.chapter_number,
+                future_number,
+                future_path,
+                future_seed,
+                excerpt,
+                source,
+                &authority.authority_root_fingerprint,
+                body,
+            )
+        })
+        .collect::<Vec<_>>();
+    if findings.is_empty() {
         return false;
-    };
-    let next_number = authority.chapter_number.saturating_add(1);
-    let Some(finding) = chapter_quality::future_chapter_consumed_finding(
-        authority.chapter_number,
-        next_number,
-        next_path,
-        next_seed,
-        excerpt,
-        source,
-        &authority.authority_root_fingerprint,
-        body,
-    ) else {
-        return false;
-    };
+    }
     let Some(gate_value) = write_result.get_mut("quality_gate") else {
         return false;
     };
@@ -97,7 +100,7 @@ fn inject_sealed_future_boundary_finding(
     else {
         return false;
     };
-    gate.extend_findings(vec![finding]);
+    gate.extend_findings(findings);
     let Ok(serialized) = serde_json::to_value(gate) else {
         return false;
     };
@@ -109,7 +112,7 @@ fn sealed_future_boundary_evidence(
     body: &str,
     observer_evidence: &str,
     current_seed: &str,
-    next_seed: &str,
+    future_seed: &str,
     cjk: bool,
     required_character_anchors: &[String],
 ) -> Option<(String, &'static str)> {
@@ -117,23 +120,26 @@ fn sealed_future_boundary_evidence(
         body,
         observer_evidence,
         current_seed,
-        next_seed,
+        future_seed,
         cjk,
         required_character_anchors,
     ) {
-        return Some((excerpt, "final_body_observer+sealed_next_chapter_boundary"));
+        return Some((
+            excerpt,
+            "final_body_observer+sealed_future_chapter_boundary",
+        ));
     }
     governance::final_body_future_consumption_evidence(
         body,
         current_seed,
-        next_seed,
+        future_seed,
         cjk,
         required_character_anchors,
     )
     .map(|excerpt| {
         (
             excerpt,
-            "final_body_completed_event+sealed_next_chapter_boundary",
+            "final_body_completed_event+sealed_future_chapter_boundary",
         )
     })
 }
@@ -2286,7 +2292,7 @@ mod tests {
         assert_eq!(excerpt, body);
         assert_eq!(
             source,
-            "final_body_completed_event+sealed_next_chapter_boundary"
+            "final_body_completed_event+sealed_future_chapter_boundary"
         );
     }
 }

@@ -46,20 +46,6 @@ pub(super) fn sanitize_saved_prose_report(content: &str) -> text_sanitizer::Sani
         .with_removed_lines(removed_lines)
 }
 
-#[allow(dead_code)]
-pub(super) fn sanitize_chinese_script_noise_report(
-    manifest: &NovelProjectManifest,
-    content: &str,
-) -> text_sanitizer::SanitizeReport {
-    let cleaned = sanitize_chinese_script_noise(manifest, content);
-    let note = if is_chinese_language(&manifest.language) {
-        "chinese_script_noise"
-    } else {
-        "script_noise_skipped_non_chinese"
-    };
-    text_sanitizer::SanitizeReport::from_text(content, cleaned).note(note)
-}
-
 pub(super) fn sanitize_chinese_script_noise(
     manifest: &NovelProjectManifest,
     content: &str,
@@ -70,7 +56,7 @@ pub(super) fn sanitize_chinese_script_noise(
     let content = normalize_chinese_surface_punctuation(content);
     let content = surface_sanitizer::strip_inline_cjk_markup_noise(&content);
     let content = strip_embedded_structured_field_residue_from_chinese_prose(&content);
-    let content = collapse_excessive_repeated_cjk_chars(&content);
+    let content = surface_sanitizer::collapse_excessive_repeated_cjk_chars(&content);
     let content = strip_adjacent_foreign_alpha_runs_from_chinese_text(&content);
     let content = strip_spurious_escape_markers_near_chinese_text(&content);
     let content = strip_short_escape_residue_near_chinese_text(&content);
@@ -116,25 +102,6 @@ pub(super) fn strip_embedded_structured_field_residue_from_chinese_prose(content
         return content.to_string();
     }
     content[..index].trim_end().to_string()
-}
-
-pub(super) fn collapse_excessive_repeated_cjk_chars(content: &str) -> String {
-    let mut out = String::with_capacity(content.len());
-    let mut prev: Option<char> = None;
-    let mut run_len = 0usize;
-    for ch in content.chars() {
-        if Some(ch) == prev {
-            run_len += 1;
-        } else {
-            prev = Some(ch);
-            run_len = 1;
-        }
-        if is_cjk_unified(ch) && run_len > 3 {
-            continue;
-        }
-        out.push(ch);
-    }
-    out
 }
 
 fn normalize_unbalanced_quote_pair(content: String, open: char, close: char) -> String {

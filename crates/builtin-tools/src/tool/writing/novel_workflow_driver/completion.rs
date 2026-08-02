@@ -141,6 +141,16 @@ pub(super) fn finale_execution_directive(
 }
 
 pub(super) fn task_requests_complete_narrative(task: &str) -> bool {
+    // The typed execution scope is the authoritative result of contract
+    // stabilization.  Use it here as well as in planning so the completion
+    // gate cannot silently fall back to a lexical one-chapter decision for an
+    // all-remaining request.
+    if let Some(scope) = super::planning::task_creation_execution_scope(task) {
+        return matches!(
+            scope,
+            super::super::creation_contract::CreationDraftTurnScope::AllRemaining
+        );
+    }
     task_intent_surfaces(task)
         .iter()
         .any(|surface| surface_requests_complete_narrative(surface))
@@ -213,5 +223,19 @@ mod tests {
             state_completion_debt_ids(&state),
             vec!["ending-must-resolve-0001".to_string()]
         );
+    }
+
+    #[test]
+    fn typed_all_remaining_scope_allows_elastic_completion() {
+        let task = "__creation_execution_scope:all_remaining\n合同已确认，开始写作。";
+
+        assert!(task_requests_complete_narrative(task));
+    }
+
+    #[test]
+    fn typed_first_unit_scope_overrides_completion_words_in_prompt_prose() {
+        let task = "__creation_execution_scope:first_unit\n请先写完完整结局前的第一章。";
+
+        assert!(!task_requests_complete_narrative(task));
     }
 }

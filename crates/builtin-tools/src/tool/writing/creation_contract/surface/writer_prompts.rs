@@ -21,6 +21,8 @@ pub fn final_prompt_from_approved_creation_draft(
     } else {
         approval_scope
     };
+    let execution_scope_note =
+        creation_execution_scope_note_for_scope(turn_scope).unwrap_or_default();
     let is_followup_continuation = creation_draft_message_requests_continuation_generation(
         approval_message,
         &approval_message.to_ascii_lowercase(),
@@ -63,6 +65,7 @@ pub fn final_prompt_from_approved_creation_draft(
             CreationDraftTurnScope::ExplicitUnits(value) => {
                 return format!(
                     "{DIRECT_WRITER_CONTINUATION_MARKER}\n\
+{execution_scope_note}\n\
 用户已经在多轮对话中确认小说创作草案，请不要继续追问，直接通过 writer worker 使用 novel_studio 继续正式写作。\n\
 project_path: {project_path}\n\
 {title_line}\n语言：{}\n题材/方向：{}\n简述：{}\n角色权威表：{}\n总目标字数：{}\n每章目标字数档位：{}（合同只接受用户明确选择的 {} 档位）\n每轮最多章节：{}\n导出格式：{}\n\
@@ -101,6 +104,7 @@ project_path: {project_path}\n\
         };
         format!(
             "{DIRECT_WRITER_CONTINUATION_MARKER}\n\
+{execution_scope_note}\n\
 用户已经在多轮对话中确认小说创作草案，请不要继续追问，直接通过 writer worker 使用 novel_studio 继续正式写作。\n\
 project_path: {project_path}\n\
 {title_line}\n语言：{}\n题材/方向：{}\n简述：{}\n角色权威表：{}\n总目标字数：{}\n每章目标字数档位：{}（合同只接受用户明确选择的 {} 档位）\n每轮最多章节：{}\n导出格式：{}\n\
@@ -132,6 +136,7 @@ project_path: {project_path}\n\
     } else {
         format!(
             "{DIRECT_WRITER_CONTINUATION_MARKER}\n\
+{execution_scope_note}\n\
 用户已经在多轮对话中确认写作文档草案，请不要继续追问，直接通过 writer worker 使用 writing_studio 继续正式写作。\n\
 project_path: {project_path}\n\
 标题：{}\n类型：{}\n语言：{}\n主题/论点：{}\n读者：{}\n用途：{}\n目标字数：{}\n导出格式：{}\n\
@@ -248,7 +253,7 @@ mod tests {
         let draft = build_initial_creation_draft(
             "writer-prompt-full-book-scope",
             "fiction",
-            "写一部10万字小说，每章2500字，每次只写一章，确认后自动连续写完整本。",
+            "写一本10万字的历史架空小说，每章2500字。",
         )
         .expect("draft");
         let prompt = final_prompt_from_approved_creation_draft(
@@ -262,5 +267,9 @@ mod tests {
             "{prompt}"
         );
         assert!(prompt.contains("每轮最多章节：全部剩余章节"), "{prompt}");
+        assert!(
+            prompt.contains("__creation_execution_scope:all_remaining"),
+            "{prompt}"
+        );
     }
 }

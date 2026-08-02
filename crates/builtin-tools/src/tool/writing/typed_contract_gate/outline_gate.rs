@@ -3,18 +3,28 @@ use crate::tool::writing::chapter_quality;
 use crate::tool::writing::creation_contract::issue::ContractIssueList;
 use crate::tool::writing::longform_policy;
 
-const TERMINAL_RESOLUTION_MARKERS: &[&str] = &[
-    "建立", "确立", "接受", "进入", "完成", "实现", "达成", "终结", "瓦解", "崩塌", "击败", "消灭",
-    "摧毁", "激活", "牺牲", "舍身", "献祭", "放弃", "公开", "切断", "关闭", "转为", "成为", "化身",
-    "化作", "重塑", "重建", "恢复", "复苏",
+const TERMINAL_RESOLUTION_STANDALONE_MARKERS: &[&str] = &[
+    "进入", "完成", "实现", "达成", "激活", "公开", "切断", "关闭",
 ];
 const TERMINAL_RESOLUTION_MARKER_GROUPS: &[&[&str]] = &[
     &["转为", "成为", "化身", "化作"],
     &["建立", "确立", "重塑", "重建"],
     &["恢复", "复苏"],
+    &["接受", "接纳"],
     &["牺牲", "舍身", "献祭", "放弃"],
     &["终结", "瓦解", "崩塌", "击败", "消灭", "摧毁"],
 ];
+
+fn terminal_resolution_markers() -> impl Iterator<Item = &'static str> {
+    TERMINAL_RESOLUTION_STANDALONE_MARKERS
+        .iter()
+        .copied()
+        .chain(
+            TERMINAL_RESOLUTION_MARKER_GROUPS
+                .iter()
+                .flat_map(|group| group.iter().copied()),
+        )
+}
 const DEFERRED_TERMINAL_MARKERS: &[&str] = &[
     "准备",
     "筹备",
@@ -841,9 +851,7 @@ fn clause_has_terminal_resolution_signal(value: &str) -> bool {
         ]
         .iter()
         .any(|marker| value.contains(marker));
-    let resolution = TERMINAL_RESOLUTION_MARKERS
-        .iter()
-        .any(|marker| value.contains(marker));
+    let resolution = terminal_resolution_markers().any(|marker| value.contains(marker));
     let process_only_terminal_reference = direct_terminal_conflict
         && !resolution
         && PROCESS_ONLY_TERMINAL_MARKERS
@@ -854,7 +862,7 @@ fn clause_has_terminal_resolution_signal(value: &str) -> bool {
 }
 
 fn clauses_share_terminal_resolution_marker(left: &str, right: &str) -> bool {
-    let exact_marker_match = TERMINAL_RESOLUTION_MARKERS.iter().any(|marker| {
+    let exact_marker_match = terminal_resolution_markers().any(|marker| {
         let Some((_, left_effect)) = left.split_once(marker) else {
             return false;
         };
@@ -870,6 +878,9 @@ fn clauses_share_terminal_resolution_marker(left: &str, right: &str) -> bool {
                     return false;
                 };
                 group.iter().any(|right_marker| {
+                    if left_marker == right_marker {
+                        return false;
+                    }
                     let Some((_, right_effect)) = right.split_once(right_marker) else {
                         return false;
                     };
@@ -2327,6 +2338,42 @@ mod tests {
                 .iter()
                 .any(|issue| issue.contains("非末卷提前完成权威终局")),
             "a completed protagonist identity arc belongs in the final volume: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn nonfinal_volume_cannot_complete_arc_with_synonymous_acceptance_language() {
+        let mut contract = NovelCreationContract::default();
+        contract.target_units = Some(100_000);
+        contract.chapter_unit_target = Some(2_500);
+        contract.protagonist_arc =
+            "从追求绝对精确的理性主义者，转变为能够接纳生活瑕疵的人".to_string();
+        contract.outline.volumes = vec![
+            VolumeContract {
+                title: "旧秩序".to_string(),
+                objective: "建立主要冲突".to_string(),
+                ending_change: "主角发现旧有原则正在失效".to_string(),
+            },
+            VolumeContract {
+                title: "裂隙".to_string(),
+                objective: "让主角在代价中重新审视原则".to_string(),
+                ending_change: "主角放弃对绝对精确的执念，接受生活中的瑕疵".to_string(),
+            },
+            VolumeContract {
+                title: "终局".to_string(),
+                objective: "处理此前选择的余波".to_string(),
+                ending_change: "故事在稳定生活中落幕".to_string(),
+            },
+        ];
+
+        let mut issues = ContractIssueList::default();
+        validate_longform_plan_position(&contract, &mut issues);
+
+        assert!(
+            issues
+                .iter()
+                .any(|issue| issue.contains("非末卷提前完成权威终局")),
+            "synonymous terminal-acceptance language must not evade the existing longform position gate: {issues:?}"
         );
     }
 

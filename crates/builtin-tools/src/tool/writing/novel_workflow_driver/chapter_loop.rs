@@ -596,6 +596,14 @@ pub(super) struct ChapterLoopDecisionInput<'a> {
 }
 
 pub(super) fn decide_chapter_loop_step(input: ChapterLoopDecisionInput<'_>) -> ChapterLoopDecision {
+    if value_has_hard_metadata_findings(input.write_result)
+        || value_has_hard_metadata_findings(input.audit)
+    {
+        // A deterministic metadata invariant is a concrete chapter blocker.
+        // It must not fall through the metadata-repair arm and then trigger a
+        // semantic body rewrite when no safe metadata repair is allowed.
+        return ChapterLoopDecision::BlockRevision;
+    }
     if metadata_gate_blocks(input.write_result)
         || !json_array_is_empty(input.write_result.pointer("/truth_validation/issues"))
     {
@@ -684,6 +692,88 @@ mod tests {
         assert_eq!(draft.summary, "新摘要");
         assert_eq!(draft.key_facts, ["新事实"]);
         assert_eq!(draft.continuity_updates, ["新连续性"]);
+    }
+
+    #[test]
+    fn quality_metadata_title_finding_uses_metadata_repair_before_body_revision() {
+        let write_result = serde_json::json!({
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "code": "metadata_invalid",
+                    "class": "metadata",
+                    "disposition": "deterministic_repair",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_title",
+                    "message": "chapter title is still the default chapter heading",
+                    "authority_evidence": [],
+                    "body_evidence": [],
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+        let audit = serde_json::json!({
+            "review": {"verdict": "passed", "locally_validated": true},
+            "findings": [],
+            "truth_validation": {"issues": []}
+        });
+
+        let decision = decide_chapter_loop_step(ChapterLoopDecisionInput {
+            write_result: &write_result,
+            audit: &audit,
+            body_fingerprint: 1,
+            last_cleanup_fingerprint: None,
+            attempted_tail_completion: false,
+            attempted_length_topup: false,
+            chapter_unit_target: Some(2500),
+            language: "zh-CN",
+        });
+
+        assert_eq!(decision, ChapterLoopDecision::MetadataRepair);
+    }
+
+    #[test]
+    fn quality_hard_metadata_finding_blocks_without_body_revision() {
+        let write_result = serde_json::json!({
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "code": "metadata_contract_conflict",
+                    "class": "metadata",
+                    "disposition": "hard_block",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_title",
+                    "message": "chapter title conflicts with the sealed contract",
+                    "authority_evidence": [],
+                    "body_evidence": [],
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+        let audit = serde_json::json!({
+            "review": {"verdict": "passed", "locally_validated": true},
+            "findings": [],
+            "truth_validation": {"issues": []}
+        });
+
+        let decision = decide_chapter_loop_step(ChapterLoopDecisionInput {
+            write_result: &write_result,
+            audit: &audit,
+            body_fingerprint: 1,
+            last_cleanup_fingerprint: None,
+            attempted_tail_completion: false,
+            attempted_length_topup: false,
+            chapter_unit_target: Some(2500),
+            language: "zh-CN",
+        });
+
+        assert_eq!(decision, ChapterLoopDecision::BlockRevision);
     }
 
     #[test]
@@ -976,6 +1066,45 @@ mod tests {
             write_result: &write_result,
             audit: &audit,
             body_fingerprint: 17,
+            last_cleanup_fingerprint: None,
+            attempted_tail_completion: false,
+            attempted_length_topup: false,
+            chapter_unit_target: Some(2500),
+            language: "zh-CN",
+        });
+
+        assert_eq!(decision, ChapterLoopDecision::LengthTopup);
+    }
+
+    #[test]
+    fn loop_tops_up_a_recoverable_draft_below_the_usable_floor() {
+        let write_result = json!({
+            "unit_count": 1977,
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "class": "body_integrity",
+                    "code": "length_below_usable_floor",
+                    "disposition": "hard_block",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_length",
+                    "message": "chapter body is below the usable floor",
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+        let audit = json!({
+            "review": {"verdict": "needs_revision", "findings": []},
+            "truth_validation": {"issues": []}
+        });
+
+        let decision = decide_chapter_loop_step(ChapterLoopDecisionInput {
+            write_result: &write_result,
+            audit: &audit,
+            body_fingerprint: 19,
             last_cleanup_fingerprint: None,
             attempted_tail_completion: false,
             attempted_length_topup: false,

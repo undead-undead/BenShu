@@ -1159,6 +1159,10 @@ fn local_cjk_surface_noise_repair_target(source: &str) -> Option<String> {
     if !local_repair_term_is_safe(source) {
         return None;
     }
+    let collapsed = surface_sanitizer::collapse_excessive_repeated_cjk_chars(source);
+    if collapsed != source {
+        return Some(collapsed);
+    }
     let target = if let Some(prefix) = source.strip_suffix("有直接回答") {
         format!("{prefix}没有直接回答")
     } else if let Some(prefix) = source.strip_suffix("有回答") {
@@ -2252,8 +2256,15 @@ pub(super) fn only_small_length_shortfall(
         .into_iter()
         .chain(typed_findings_in_value(audit));
     let mut hard_codes = BTreeSet::new();
+    let mut has_length_finding = false;
     let mut repair_codes = BTreeSet::new();
     for finding in findings {
+        if matches!(
+            finding.code.as_str(),
+            "length_below_target" | "length_below_usable_floor"
+        ) {
+            has_length_finding = true;
+        }
         if finding.hard_blocking() {
             hard_codes.insert(finding.code);
         } else if finding.disposition
@@ -2263,8 +2274,15 @@ pub(super) fn only_small_length_shortfall(
             repair_codes.insert(finding.code);
         }
     }
-    if !hard_codes.is_empty()
-        || !repair_codes.contains("length_below_target")
+    // The usable-floor finding is a deterministic length blocker, but it is
+    // still recoverable by the existing bounded length-top-up route when the
+    // remaining gap is within that route's limit. Treating it as an arbitrary
+    // semantic blocker sent a complete-but-short draft through repeated LLM
+    // rewrites until the revision budget was exhausted.
+    if hard_codes
+        .iter()
+        .any(|code| code != "length_below_usable_floor")
+        || !has_length_finding
         || repair_codes
             .iter()
             .any(|code| code != "length_below_target")
@@ -2371,11 +2389,6 @@ pub(super) fn govern_generated_execution_package(
             )
         })
     });
-    let next_seed = parsed_context.as_ref().and_then(|value| {
-        chapter_number
-            .checked_add(1)
-            .and_then(|number| fallback_chapter_seed_from_near_chapters(value, number))
-    });
     package.future_chapters = parsed_context
         .as_ref()
         .map(|value| {
@@ -2386,7 +2399,20 @@ pub(super) fn govern_generated_execution_package(
             )
         })
         .unwrap_or_default();
-    if let Some(next_seed) = next_seed.as_deref() {
+    let future_seeds = package
+        .future_chapters
+        .iter()
+        .map(|seed| {
+            [seed.goal.as_str(), seed.expected_turn.as_str()]
+                .into_iter()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("；")
+        })
+        .filter(|seed| !seed.is_empty())
+        .collect::<Vec<_>>();
+    if !future_seeds.is_empty() {
         let cjk = language_looks_cjk(language);
         let current_seed = current_seed.as_deref().unwrap_or_default();
         for field in [
@@ -2405,19 +2431,32 @@ pub(super) fn govern_generated_execution_package(
             &mut package.power_delta,
             &mut package.resource_delta,
         ] {
-            if governance::text_consumes_future_chapter(field, &current_seed, next_seed, cjk) {
+            if future_seeds.iter().any(|future_seed| {
+                governance::text_consumes_future_chapter(field, current_seed, future_seed, cjk)
+            }) {
                 field.clear();
             }
         }
         package.hook_opened.retain(|field| {
-            !governance::text_consumes_future_chapter(field, &current_seed, next_seed, cjk)
+            future_seeds.iter().all(|future_seed| {
+                !governance::text_consumes_future_chapter(field, current_seed, future_seed, cjk)
+            })
         });
         package.hook_paid_off.retain(|field| {
-            !governance::text_consumes_future_chapter(field, &current_seed, next_seed, cjk)
+            future_seeds.iter().all(|future_seed| {
+                !governance::text_consumes_future_chapter(field, current_seed, future_seed, cjk)
+            })
         });
         package.new_character_requests.retain(|request| {
             serde_json::to_string(request).ok().is_none_or(|field| {
-                !governance::text_consumes_future_chapter(&field, &current_seed, next_seed, cjk)
+                future_seeds.iter().all(|future_seed| {
+                    !governance::text_consumes_future_chapter(
+                        &field,
+                        current_seed,
+                        future_seed,
+                        cjk,
+                    )
+                })
             })
         });
     }
@@ -2856,7 +2895,7 @@ pub(super) fn fallback_chapter_seed_from_near_chapters(
     value: &Value,
     chapter_number: usize,
 ) -> Option<String> {
-    let item = fallback_chapter_item_from_near_chapters(value, chapter_number)?;
+    let item = chapter_seed_item_from_context(value, chapter_number, true, false)?;
     let parts = [
         "title",
         "goal",
@@ -2878,7 +2917,7 @@ fn fallback_chapter_end_state_from_near_chapters(
     value: &Value,
     chapter_number: usize,
 ) -> Option<String> {
-    let item = fallback_chapter_item_from_near_chapters(value, chapter_number)?;
+    let item = chapter_seed_item_from_context(value, chapter_number, true, false)?;
     ["expected_turn", "moves_toward_ending"]
         .into_iter()
         .find_map(|key| item.get(key).and_then(Value::as_str))
@@ -2888,30 +2927,34 @@ fn fallback_chapter_end_state_from_near_chapters(
         .filter(|value| !value.is_empty())
 }
 
-fn fallback_chapter_item_from_near_chapters<'a>(
+const CHAPTER_SEED_CONTEXT_POINTERS: &[&str] = &[
+    "/canonical_contract/outline/near_chapters",
+    "/authority/canonical_contract/outline/near_chapters",
+    "/current_chapter_goal",
+    "/authority/current_chapter_goal",
+    "/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
+    "/authority/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
+    "/project_context/story_bible/narrative_graph/chapter_goals",
+    "/story_bible/narrative_graph/chapter_goals",
+    "/narrative_graph/chapter_goals",
+    "/project_context/next_chapter_boundary",
+    "/next_chapter_boundary",
+    "/authority/working_context/next_chapter_boundary",
+    "/rolling_outline_window",
+    "/authority/rolling_outline_window",
+    "/project_context/contract/outline/near_chapters",
+    "/contract/outline/near_chapters",
+    "/outline/near_chapters",
+    "/creation_contract/outline/near_chapters",
+];
+
+fn chapter_seed_item_from_context<'a>(
     value: &'a Value,
     chapter_number: usize,
+    allow_unnumbered: bool,
+    require_complete: bool,
 ) -> Option<&'a Value> {
-    for pointer in [
-        "/canonical_contract/outline/near_chapters",
-        "/authority/canonical_contract/outline/near_chapters",
-        "/current_chapter_goal",
-        "/authority/current_chapter_goal",
-        "/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
-        "/authority/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
-        "/project_context/story_bible/narrative_graph/chapter_goals",
-        "/story_bible/narrative_graph/chapter_goals",
-        "/narrative_graph/chapter_goals",
-        "/project_context/next_chapter_boundary",
-        "/next_chapter_boundary",
-        "/authority/working_context/next_chapter_boundary",
-        "/rolling_outline_window",
-        "/authority/rolling_outline_window",
-        "/project_context/contract/outline/near_chapters",
-        "/contract/outline/near_chapters",
-        "/outline/near_chapters",
-        "/creation_contract/outline/near_chapters",
-    ] {
+    for pointer in CHAPTER_SEED_CONTEXT_POINTERS {
         let Some(items) = value.pointer(pointer).and_then(Value::as_array) else {
             continue;
         };
@@ -2921,25 +2964,26 @@ fn fallback_chapter_item_from_near_chapters<'a>(
                 .or_else(|| item.get("chapter_number"))
                 .and_then(Value::as_u64)
                 .and_then(|value| usize::try_from(value).ok());
-            if number.is_some_and(|number| number != chapter_number) {
+            if number.is_some_and(|number| number != chapter_number)
+                || number.is_none() && !allow_unnumbered
+            {
                 continue;
             }
-            if item.as_object().is_some_and(|item| {
-                [
-                    "title",
-                    "goal",
-                    "expected_turn",
-                    "moves_toward_ending",
-                    "objective",
-                    "summary",
-                ]
+            let goal = ["goal", "objective", "summary"]
                 .into_iter()
-                .any(|key| {
-                    item.get(key)
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| !value.trim().is_empty())
-                })
-            }) {
+                .find_map(|key| item.get(key).and_then(Value::as_str))
+                .is_some_and(|value| !value.trim().is_empty());
+            let expected_turn = ["expected_turn", "moves_toward_ending"]
+                .into_iter()
+                .find_map(|key| item.get(key).and_then(Value::as_str))
+                .is_some_and(|value| !value.trim().is_empty());
+            let any_seed_text = goal
+                || expected_turn
+                || item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| !value.trim().is_empty());
+            if (require_complete && goal && expected_turn) || (!require_complete && any_seed_text) {
                 return Some(item);
             }
         }
@@ -2982,60 +3026,22 @@ fn chapter_seed_contract_from_context(
     value: &Value,
     chapter_number: usize,
 ) -> Option<crate::tool::writing::creation_contract_model::ChapterSeedContract> {
-    for pointer in [
-        "/canonical_contract/outline/near_chapters",
-        "/authority/canonical_contract/outline/near_chapters",
-        "/current_chapter_goal",
-        "/authority/current_chapter_goal",
-        "/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
-        "/authority/truth_as_of_chapter/story_state/narrative_graph/chapter_goals",
-        "/project_context/story_bible/narrative_graph/chapter_goals",
-        "/story_bible/narrative_graph/chapter_goals",
-        "/narrative_graph/chapter_goals",
-        "/project_context/next_chapter_boundary",
-        "/next_chapter_boundary",
-        "/authority/working_context/next_chapter_boundary",
-        "/rolling_outline_window",
-        "/authority/rolling_outline_window",
-        "/project_context/contract/outline/near_chapters",
-        "/contract/outline/near_chapters",
-        "/outline/near_chapters",
-        "/creation_contract/outline/near_chapters",
-    ] {
-        let Some(items) = value.pointer(pointer).and_then(Value::as_array) else {
-            continue;
-        };
-        for item in items {
-            let number = item
-                .get("number")
-                .or_else(|| item.get("chapter_number"))
-                .and_then(Value::as_u64)
-                .and_then(|value| usize::try_from(value).ok());
-            if number != Some(chapter_number) {
-                continue;
-            }
-            let goal = ["goal", "objective", "summary"]
-                .into_iter()
-                .find_map(|key| item.get(key).and_then(Value::as_str))
-                .map(str::trim)
-                .unwrap_or_default();
-            let expected_turn = ["expected_turn", "moves_toward_ending"]
-                .into_iter()
-                .find_map(|key| item.get(key).and_then(Value::as_str))
-                .map(str::trim)
-                .unwrap_or_default();
-            if !goal.is_empty() && !expected_turn.is_empty() {
-                return Some(
-                    crate::tool::writing::creation_contract_model::ChapterSeedContract {
-                        number: Some(chapter_number),
-                        goal: goal.to_string(),
-                        expected_turn: expected_turn.to_string(),
-                    },
-                );
-            }
-        }
-    }
-    None
+    let item = chapter_seed_item_from_context(value, chapter_number, false, true)?;
+    let goal = ["goal", "objective", "summary"]
+        .into_iter()
+        .find_map(|key| item.get(key).and_then(Value::as_str))?
+        .trim();
+    let expected_turn = ["expected_turn", "moves_toward_ending"]
+        .into_iter()
+        .find_map(|key| item.get(key).and_then(Value::as_str))?
+        .trim();
+    Some(
+        crate::tool::writing::creation_contract_model::ChapterSeedContract {
+            number: Some(chapter_number),
+            goal: goal.to_string(),
+            expected_turn: expected_turn.to_string(),
+        },
+    )
 }
 
 fn govern_rolling_future_chapters(
@@ -5368,6 +5374,17 @@ mod tests {
     }
 
     #[test]
+    fn local_revision_reuses_shared_excessive_cjk_run_cleanup() {
+        let content = "警报声变成虚虚虚虚虚的长鸣。";
+        let issue = "quality gate: chapter body contains likely malformed CJK prose: repeated character insertion: 虚虚虚虚";
+
+        assert_eq!(
+            apply_local_revision_suggestions(content, &[issue.to_string()]),
+            "警报声变成虚虚虚的长鸣。"
+        );
+    }
+
+    #[test]
     fn local_revision_repairs_embedded_lexical_glue_without_rewriting_chapter() {
         let issue = "存在明显的文本重复与冗余插入：'惊雷！秦望澜大喝一声音穿透雨幕。'中'大喝'与'声音'语义重复且句式杂糅，应为'大喝一声'或'声音穿透雨幕'。";
         let content = "雨水砸在戏台上。惊雷！秦望澜大喝一声音穿透雨幕。台下骤然安静。";
@@ -5831,6 +5848,71 @@ mod tests {
         assert!(governed.architecture.contains("下一章边界"));
         assert!(governed.architecture.contains("模型给出的五个具体场景"));
         assert_eq!(governed.new_state_after_chapter, "找到尚未熄灭的阵眼");
+    }
+
+    #[test]
+    fn generated_execution_package_removes_events_from_later_rolling_boundaries() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "premise": "修仙界的灵气由众生因果凝结。",
+                "outline": {
+                    "near_chapters": [
+                        {
+                            "number": 1,
+                            "goal": "谢栖禾发现灵气消耗异象",
+                            "expected_turn": "谢栖禾吸收第一缕因果灵气"
+                        },
+                        {
+                            "number": 2,
+                            "goal": "秦星朔发现宗门灵泉枯竭",
+                            "expected_turn": "秦星朔强行抽取灵气后修为跌落"
+                        },
+                        {
+                            "number": 3,
+                            "goal": "钟予原降临寒潭镇",
+                            "expected_turn": "谢栖禾发现体内因果债正加速增长"
+                        }
+                    ]
+                }
+            },
+            "next_chapter_boundary": [{
+                "number": 2,
+                "goal": "秦星朔发现宗门灵泉枯竭",
+                "expected_turn": "秦星朔强行抽取灵气后修为跌落"
+            }],
+            "rolling_outline_window": [
+                {
+                    "number": 2,
+                    "goal": "秦星朔发现宗门灵泉枯竭",
+                    "expected_turn": "秦星朔强行抽取灵气后修为跌落"
+                },
+                {
+                    "number": 3,
+                    "goal": "钟予原降临寒潭镇",
+                    "expected_turn": "谢栖禾发现体内因果债正加速增长"
+                }
+            ]
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "重塑灵气法则", 1, &context, false, None);
+        package.architecture =
+            "谢栖禾意识到体内因果债正加速增长，并把这一变化记录下来。".to_string();
+        package.character_change = "谢栖禾发现体内因果债正加速增长".to_string();
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "重塑灵气法则",
+            1,
+            &context,
+            false,
+            None,
+        );
+
+        assert!(!governed.architecture.contains("因果债正加速增长"));
+        assert!(governed.character_change.is_empty());
+        assert!(governed.architecture.contains("下一章边界"));
     }
 
     #[test]

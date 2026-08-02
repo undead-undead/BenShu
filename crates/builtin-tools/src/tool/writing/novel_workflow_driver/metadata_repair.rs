@@ -12,6 +12,7 @@ pub(super) fn metadata_gate_needs_repair(write_result: &Value) -> bool {
     }
     metadata_gate_blocks(write_result)
         || !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
+        || value_has_metadata_repair_findings(write_result)
         || !json_array_is_empty(write_result.pointer("/truth_validation/issues"))
 }
 
@@ -28,6 +29,29 @@ pub(super) fn metadata_gate_has_repairable(write_result: &Value) -> bool {
         return false;
     }
     !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
+        || value_has_metadata_repair_findings(write_result)
+}
+
+/// Reuse the typed finding classification emitted by the studio quality gate.
+/// Metadata findings may be carried in `quality_gate.findings` (for example when
+/// a title was normalized after body write), so the workflow must not route them
+/// into a body revision merely because `/metadata_gate` is empty.
+pub(super) fn value_has_metadata_repair_findings(value: &Value) -> bool {
+    typed_findings_in_value(value).into_iter().any(|finding| {
+        finding.class == chapter_quality::ChapterFindingClass::Metadata
+            && finding.disposition
+                == chapter_quality::ChapterFindingDisposition::DeterministicRepair
+    })
+}
+
+/// A typed hard metadata finding is a concrete invariant failure, not a
+/// candidate for prose revision.  Keep this classification beside the
+/// existing metadata-repair predicate so the loop has one source of truth for
+/// the distinction.
+pub(super) fn value_has_hard_metadata_findings(value: &Value) -> bool {
+    typed_findings_in_value(value).into_iter().any(|finding| {
+        finding.class == chapter_quality::ChapterFindingClass::Metadata && finding.hard_blocking()
+    })
 }
 
 pub(super) fn metadata_issue_summary(write_result: &Value) -> String {
@@ -41,6 +65,14 @@ pub(super) fn metadata_issue_summary(write_result: &Value) -> String {
         write_result.pointer("/truth_validation/issues"),
         &mut issues,
     );
+    issues.extend(
+        typed_findings_in_value(write_result)
+            .into_iter()
+            .filter(|finding| finding.class == chapter_quality::ChapterFindingClass::Metadata)
+            .map(|finding| finding.message),
+    );
+    issues.sort();
+    issues.dedup();
     if issues.is_empty() {
         "metadata gate did not provide issues".to_string()
     } else {
@@ -319,5 +351,61 @@ mod tests {
         );
 
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn quality_gate_metadata_findings_route_to_existing_metadata_repair() {
+        let write_result = serde_json::json!({
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "code": "metadata_invalid",
+                    "class": "metadata",
+                    "disposition": "deterministic_repair",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_title",
+                    "message": "chapter title is still the default chapter heading",
+                    "authority_evidence": [],
+                    "body_evidence": [],
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+
+        assert!(value_has_metadata_repair_findings(&write_result));
+        assert!(metadata_gate_needs_repair(&write_result));
+        assert!(metadata_gate_has_repairable(&write_result));
+        assert!(metadata_issue_summary(&write_result).contains("default chapter heading"));
+    }
+
+    #[test]
+    fn hard_metadata_findings_are_not_marked_as_repairable() {
+        let write_result = serde_json::json!({
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "code": "metadata_contract_conflict",
+                    "class": "metadata",
+                    "disposition": "hard_block",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_title",
+                    "message": "chapter title conflicts with the sealed contract",
+                    "authority_evidence": [],
+                    "body_evidence": [],
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+
+        assert!(!value_has_metadata_repair_findings(&write_result));
+        assert!(!metadata_gate_needs_repair(&write_result));
+        assert!(!metadata_gate_has_repairable(&write_result));
+        assert!(value_has_hard_metadata_findings(&write_result));
     }
 }

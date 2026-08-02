@@ -475,7 +475,10 @@ fn chapter_length_findings(
             authority_fingerprint,
             content,
         ));
-    } else if measured_units < target {
+    } else if measured_units < target
+        && target.saturating_sub(measured_units)
+            > longform_policy::soft_chapter_shortfall_tolerance(target)
+    {
         findings.push(chapter_quality::ChapterFinding::local(
             "length_below_target",
             chapter_quality::ChapterFindingClass::Length,

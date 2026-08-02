@@ -42,8 +42,16 @@ fn message_requests_incremental_full_run(message: &str, artifact_kind: &str) -> 
             "一次只写一章",
             "逐章",
             "一章一章",
+            "持续创作",
+            "持续写作",
+            "连续创作",
+            "连续写作",
+            "一直创作",
+            "一直写作",
             "one chapter at a time",
             "chapter by chapter",
+            "write continuously",
+            "continue writing",
         ][..]
     } else {
         &[
@@ -93,7 +101,11 @@ fn message_requests_incremental_full_run(message: &str, artifact_kind: &str) -> 
 }
 
 pub fn creation_execution_scope_note(message: &str, artifact_kind: &str) -> Option<String> {
-    match creation_draft_turn_scope(message, artifact_kind) {
+    creation_execution_scope_note_for_scope(creation_draft_turn_scope(message, artifact_kind))
+}
+
+pub fn creation_execution_scope_note_for_scope(scope: CreationDraftTurnScope) -> Option<String> {
+    match scope {
         CreationDraftTurnScope::FirstUnit => {
             Some(format!("{CREATION_EXECUTION_SCOPE_NOTE_PREFIX}first_unit"))
         }
@@ -386,6 +398,17 @@ pub fn creation_draft_requests_all_remaining(message: &str, artifact_kind: &str)
         "完整结局",
         "完整结尾",
         "真正结尾",
+        "直到达到总字数",
+        "直到达到目标字数",
+        "直到总字数目标",
+        "自然完结",
+        "自然完本",
+        "持续创作",
+        "持续写作",
+        "连续创作",
+        "连续写作",
+        "一直创作",
+        "一直写作",
         "写到结尾",
         "直到结尾",
         "自然结尾",
@@ -405,6 +428,11 @@ pub fn creation_draft_requests_all_remaining(message: &str, artifact_kind: &str)
     {
         return true;
     }
+    if requested_total_unit_target(message).is_some()
+        && requests_creation_of_whole_artifact(message, &lowered, artifact_kind)
+    {
+        return true;
+    }
     if requests_complete_whole_artifact(message, artifact_kind) {
         return true;
     }
@@ -417,6 +445,36 @@ pub fn creation_draft_requests_all_remaining(message: &str, artifact_kind: &str)
             .iter()
             .any(|term| message_contains_positive_operation_term(message, &lowered, term))
     }
+}
+
+fn requests_creation_of_whole_artifact(message: &str, lowered: &str, artifact_kind: &str) -> bool {
+    let terms: &[&str] = if artifact_kind == "fiction" {
+        &[
+            "写一本",
+            "创作一本",
+            "生成一本",
+            "写一部",
+            "创作一部",
+            "生成一部",
+            "write a novel",
+            "write a book",
+            "create a novel",
+        ]
+    } else {
+        &[
+            "写一篇",
+            "创作一篇",
+            "生成一篇",
+            "写一份",
+            "生成一份",
+            "write an article",
+            "write a report",
+            "write a paper",
+        ]
+    };
+    terms
+        .iter()
+        .any(|term| message_contains_positive_operation_term(message, lowered, term))
 }
 
 fn requests_complete_whole_artifact(message: &str, artifact_kind: &str) -> bool {
@@ -518,6 +576,42 @@ mod tests {
         assert_eq!(
             creation_draft_turn_scope(message, "fiction"),
             CreationDraftTurnScope::AllRemaining
+        );
+    }
+
+    #[test]
+    fn natural_continuous_creation_until_target_is_full_book_scope() {
+        let message = "确认合同后请从第一章开始持续创作，直到达到总字数目标并自然完结。";
+
+        assert_eq!(
+            creation_draft_turn_scope(message, "fiction"),
+            CreationDraftTurnScope::AllRemaining
+        );
+    }
+
+    #[test]
+    fn natural_sized_book_request_persists_full_book_scope() {
+        let message = "写一本10万字的历史架空小说，每章2500字。";
+
+        assert_eq!(
+            creation_draft_turn_scope(message, "fiction"),
+            CreationDraftTurnScope::AllRemaining
+        );
+        let note = creation_execution_scope_note(message, "fiction").expect("scope note");
+        assert_eq!(
+            persisted_creation_execution_scope(&[note]),
+            Some(CreationDraftTurnScope::AllRemaining)
+        );
+    }
+
+    #[test]
+    fn explicit_small_batch_still_overrides_natural_sized_book_scope() {
+        assert_eq!(
+            creation_draft_turn_scope(
+                "写一本10万字的历史架空小说，每章2500字，先写两章。",
+                "fiction",
+            ),
+            CreationDraftTurnScope::ExplicitUnits(2)
         );
     }
 }

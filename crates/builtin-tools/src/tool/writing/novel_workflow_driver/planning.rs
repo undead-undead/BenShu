@@ -148,6 +148,13 @@ pub(super) fn expand_chapter_count_to_explicit_target(
 }
 
 pub(super) fn task_requests_single_chapter_turn(task: &str) -> bool {
+    if let Some(scope) = task_creation_execution_scope(task) {
+        return matches!(
+            scope,
+            super::super::creation_contract::CreationDraftTurnScope::FirstUnit
+                | super::super::creation_contract::CreationDraftTurnScope::ExplicitUnits(1)
+        );
+    }
     if task_requests_complete_narrative(task) || task_requests_project_scale_generation(task) {
         return false;
     }
@@ -160,8 +167,10 @@ pub(super) fn task_requests_single_chapter_turn(task: &str) -> bool {
 }
 
 pub(super) fn task_requests_project_scale_generation(task: &str) -> bool {
+    if let Some(scope) = task_creation_execution_scope(task) {
+        return scope == super::super::creation_contract::CreationDraftTurnScope::AllRemaining;
+    }
     task_intent_surfaces(task).iter().any(|surface| {
-        let lowered = surface.to_ascii_lowercase();
         if super::super::creation_contract::creation_draft_requests_all_remaining(
             surface, "fiction",
         ) {
@@ -173,27 +182,22 @@ pub(super) fn task_requests_project_scale_generation(task: &str) -> bool {
         {
             return true;
         }
-        [
-            "全部写完",
-            "完整写完",
-            "写完整本",
-            "写完全文",
-            "写到结尾",
-            "完成整本",
-            "整本",
-            "全书",
-            "全部生成",
-            "continue until complete",
-            "finish the book",
-            "finish the whole",
-            "write all",
-        ]
-        .iter()
-        .any(|term| {
-            let matched = surface.contains(term) || lowered.contains(term);
-            matched && !project_scale_match_is_negated(surface, term)
-        })
+        false
     })
+}
+
+pub(super) fn task_creation_execution_scope(
+    task: &str,
+) -> Option<super::super::creation_contract::CreationDraftTurnScope> {
+    let notes = task
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            line.starts_with(super::super::creation_contract::CREATION_EXECUTION_SCOPE_NOTE_PREFIX)
+        })
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    super::super::creation_contract::persisted_creation_execution_scope(&notes)
 }
 
 fn surface_requests_single_chapter_turn(surface: &str) -> bool {
@@ -234,17 +238,6 @@ pub(super) fn task_intent_surfaces(task: &str) -> Vec<String> {
     } else {
         marked
     }
-}
-
-fn project_scale_match_is_negated(surface: &str, term: &str) -> bool {
-    let Some(idx) = surface.find(term).or_else(|| {
-        surface
-            .to_ascii_lowercase()
-            .find(&term.to_ascii_lowercase())
-    }) else {
-        return false;
-    };
-    super::super::creation_contract::operation_term_is_negated(surface, idx)
 }
 
 pub(super) fn extract_marked_line(task: &str, marker: &str) -> Option<String> {
@@ -351,11 +344,27 @@ project_path: /home/user/benshu/data/generated/novels/demo\n\
     #[test]
     fn project_scale_generation_reads_authoritative_turn_scope_after_short_approval() {
         let task = "用户已经确认小说创作草案。\n\
+__creation_execution_scope:all_remaining\n\
 用户最新要求：确认合同，开始写作。\n\
 本轮范围：用户本轮要求直接生成完剩余内容；从当前项目进度继续，按已确认总目标推进到完成。";
 
         assert!(super::task_requests_project_scale_generation(task));
         assert!(!super::task_requests_single_chapter_turn(task));
+    }
+
+    #[test]
+    fn typed_turn_scope_wins_over_conflicting_prompt_prose() {
+        let bounded = "__creation_execution_scope:first_unit\n\
+用户最新要求：写完整本小说。\n\
+本轮范围：用户本轮要求直接生成完剩余内容。";
+        assert!(!super::task_requests_project_scale_generation(bounded));
+        assert!(super::task_requests_single_chapter_turn(bounded));
+
+        let complete = "__creation_execution_scope:all_remaining\n\
+用户最新要求：只写下一章。\n\
+本轮范围：本轮默认只推进下一章。";
+        assert!(super::task_requests_project_scale_generation(complete));
+        assert!(!super::task_requests_single_chapter_turn(complete));
     }
 
     #[test]

@@ -449,6 +449,33 @@ fn contains_lettered_role_placeholder(text: &str) -> bool {
 }
 
 pub(crate) fn contains_excessive_repeated_cjk_surface_noise(text: &str) -> bool {
+    repeated_cjk_surface_noise_fragment(text).is_some()
+}
+
+const MAX_CONSECUTIVE_CJK_CHARACTERS: usize = 3;
+
+fn repeated_cjk_surface_noise_fragment(text: &str) -> Option<String> {
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut previous = None;
+    let mut run_len = 0usize;
+    let mut run_start = 0usize;
+    for (index, ch) in chars.iter().copied().enumerate() {
+        if Some(ch) == previous {
+            run_len += 1;
+        } else {
+            previous = Some(ch);
+            run_len = 1;
+            run_start = index;
+        }
+        if is_cjk_unified(ch) && run_len > MAX_CONSECUTIVE_CJK_CHARACTERS {
+            return Some(chars[run_start..=index].iter().collect());
+        }
+    }
+    None
+}
+
+pub(crate) fn collapse_excessive_repeated_cjk_chars(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
     let mut previous = None;
     let mut run_len = 0usize;
     for ch in text.chars() {
@@ -458,11 +485,12 @@ pub(crate) fn contains_excessive_repeated_cjk_surface_noise(text: &str) -> bool 
             previous = Some(ch);
             run_len = 1;
         }
-        if is_cjk_unified(ch) && run_len > 3 {
-            return true;
+        if is_cjk_unified(ch) && run_len > MAX_CONSECUTIVE_CJK_CHARACTERS {
+            continue;
         }
+        out.push(ch);
     }
-    false
+    out
 }
 
 /// Detects only surface corruption that can be established without interpreting
@@ -492,8 +520,8 @@ pub(crate) fn high_confidence_surface_issue(text: &str) -> Option<String> {
             ));
         }
     }
-    if contains_excessive_repeated_cjk_surface_noise(text) {
-        return Some("excessive repeated CJK character run".to_string());
+    if let Some(fragment) = repeated_cjk_surface_noise_fragment(text) {
+        return Some(format!("repeated character insertion: {fragment}"));
     }
     None
 }
@@ -1006,6 +1034,20 @@ mod tests {
         assert!(!contains_excessive_repeated_cjk_surface_noise(
             "他摆摆手说：行行行，我马上去。"
         ));
+        assert!(!contains_excessive_repeated_cjk_surface_noise(
+            "不是一堆堆堆在城门前的尸体"
+        ));
+        assert!(!contains_excessive_repeated_cjk_surface_noise(
+            "窗外落下一阵阵阵雨"
+        ));
+        assert!(!contains_excessive_repeated_cjk_surface_noise(
+            "他连喊三声：哈哈哈！"
+        ));
+        assert!(high_confidence_surface_issue("不是一堆堆堆在城门前的尸体").is_none());
+        assert_eq!(
+            collapse_excessive_repeated_cjk_chars("警报声变成虚虚虚虚虚的长鸣"),
+            "警报声变成虚虚虚的长鸣"
+        );
     }
 
     #[test]
