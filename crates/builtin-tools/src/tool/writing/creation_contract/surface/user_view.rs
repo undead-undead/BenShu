@@ -109,7 +109,7 @@ pub fn creation_draft_planning_response_text(
     if draft.artifact_kind == "fiction" {
         let next_action = creation_draft_next_action_text(draft, ready_to_start);
         format!(
-            "可以，我还没有开始写正文；我先把小说方向自动整理成待确认、可修改草案。这个草案不算正文，后续你可以继续修改。\n\n当前草案：\n{status}{outline_payload}\n\n我会自动补齐书名、角色、结局、分卷/阶段和近期章节包。你不需要填写字段，只要像聊天一样说“更热血一点”“主角换成女性”“每章改成5000档”就行。小说每章字数支持 {}，非档位会自动归一到最近档位。\n\n{next_action}",
+            "可以，我还没有开始写正文；我先把小说方向自动整理成待确认、可修改草案。这个草案不算正文，后续你可以继续修改。\n\n当前草案：\n{status}{outline_payload}\n\n我会自动补齐书名、角色、结局、分卷/阶段和近期章节包。你不需要填写字段，只要像聊天一样说“更热血一点”“主角换成女性”“每章改成5000档”就行。小说每章字数只支持 {}；如果输入其他数值，我会请你明确选择其中一档。\n\n{next_action}",
             longform_policy::novel_chapter_unit_band_label()
         )
     } else {

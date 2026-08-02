@@ -134,6 +134,7 @@ impl NovelStudioTool {
             review_cycles: Vec::new(),
             truth_validations: Vec::new(),
             hook_debt_reports: Vec::new(),
+            delivery_advisory_windows: Vec::new(),
             truth_files: Vec::new(),
             archives: Vec::new(),
             contract: None,

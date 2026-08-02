@@ -22,7 +22,7 @@ use benshu_brain::runtime::continuous_task::{
 };
 use benshu_compression::preview_text;
 use benshu_infra::Tool;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -834,6 +834,21 @@ struct RawAuthorityConflict {
     body_excerpt: String,
     #[serde(default)]
     message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+struct RawDeliveryAdvisory {
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    message: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+struct RawDeliveryAdvisoryWindow {
+    #[serde(default)]
+    advisories: Vec<RawDeliveryAdvisory>,
+    score: Option<u8>,
 }
 
 #[async_trait]

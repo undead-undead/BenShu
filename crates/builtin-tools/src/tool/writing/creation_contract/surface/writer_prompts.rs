@@ -65,7 +65,7 @@ pub fn final_prompt_from_approved_creation_draft(
                     "{DIRECT_WRITER_CONTINUATION_MARKER}\n\
 用户已经在多轮对话中确认小说创作草案，请不要继续追问，直接通过 writer worker 使用 novel_studio 继续正式写作。\n\
 project_path: {project_path}\n\
-{title_line}\n语言：{}\n题材/方向：{}\n简述：{}\n角色权威表：{}\n总目标字数：{}\n每章目标字数档位：{}（小说仅支持 {}；非档位表述已归一到最近档位）\n每轮最多章节：{}\n导出格式：{}\n\
+{title_line}\n语言：{}\n题材/方向：{}\n简述：{}\n角色权威表：{}\n总目标字数：{}\n每章目标字数档位：{}（合同只接受用户明确选择的 {} 档位）\n每轮最多章节：{}\n导出格式：{}\n\
 已确认规划要点：{}\n\
 用户最新要求：{}\n\
 本轮范围：用户本轮明确要求生成 {value} 章；从当前项目进度连续写满 {value} 章后返回进度，不要继续越界生成，也不要因为总目标字数存在而生成全书。\n\
@@ -103,7 +103,7 @@ project_path: {project_path}\n\
             "{DIRECT_WRITER_CONTINUATION_MARKER}\n\
 用户已经在多轮对话中确认小说创作草案，请不要继续追问，直接通过 writer worker 使用 novel_studio 继续正式写作。\n\
 project_path: {project_path}\n\
-{title_line}\n语言：{}\n题材/方向：{}\n简述：{}\n角色权威表：{}\n总目标字数：{}\n每章目标字数档位：{}（小说仅支持 {}；非档位表述已归一到最近档位）\n每轮最多章节：{}\n导出格式：{}\n\
+{title_line}\n语言：{}\n题材/方向：{}\n简述：{}\n角色权威表：{}\n总目标字数：{}\n每章目标字数档位：{}（合同只接受用户明确选择的 {} 档位）\n每轮最多章节：{}\n导出格式：{}\n\
 已确认规划要点：{}\n\
 用户最新要求：{}\n\
 {turn_scope_text}\n\

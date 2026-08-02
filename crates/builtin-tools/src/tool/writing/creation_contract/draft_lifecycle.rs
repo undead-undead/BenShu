@@ -49,7 +49,8 @@ pub fn build_initial_creation_draft(
     let language = resolve_language_contract(message).artifact_language;
     let target_units = requested_total_unit_target(message);
     let raw_chapter_unit_target = requested_raw_chapter_unit_target(message);
-    let chapter_unit_target = raw_chapter_unit_target.map(nearest_novel_chapter_unit_band);
+    let chapter_unit_target =
+        raw_chapter_unit_target.and_then(longform_policy::exact_novel_chapter_unit_band);
     let section_unit_target = requested_section_unit_target(message);
     let export_format = requested_export_format(message).unwrap_or_else(|| "txt".to_string());
     let title = requested_title(message).unwrap_or_default();
@@ -112,7 +113,7 @@ pub fn build_initial_creation_draft(
         target_units,
         target_units_user_specified: target_units.is_some(),
         chapter_unit_target,
-        chapter_unit_target_user_specified: raw_chapter_unit_target.is_some(),
+        chapter_unit_target_user_specified: chapter_unit_target.is_some(),
         chapter_unit_target_user_authority: chapter_unit_target,
         section_unit_target,
         max_chapters_per_turn: requested_max_chapters_per_turn(message),
@@ -167,11 +168,6 @@ pub fn build_initial_creation_draft(
             .as_str()
             .to_string(),
     };
-    record_chapter_unit_band_normalization_note(
-        &mut draft,
-        raw_chapter_unit_target,
-        chapter_unit_target,
-    );
     sanitize_creation_draft_control_noise(&mut draft);
     Some(draft)
 }
@@ -221,11 +217,12 @@ pub fn apply_message_to_creation_draft(draft: &mut SessionCreationDraftState, me
         draft.target_units_user_specified = true;
     }
     let raw_chapter_unit_target = requested_raw_chapter_unit_target(message);
-    if let Some(target) = raw_chapter_unit_target.map(nearest_novel_chapter_unit_band) {
+    if let Some(target) =
+        raw_chapter_unit_target.and_then(longform_policy::exact_novel_chapter_unit_band)
+    {
         draft.chapter_unit_target = Some(target);
         draft.chapter_unit_target_user_specified = true;
         draft.chapter_unit_target_user_authority = Some(target);
-        record_chapter_unit_band_normalization_note(draft, raw_chapter_unit_target, Some(target));
     }
     if let Some(target) = requested_section_unit_target(message) {
         draft.section_unit_target = Some(target);

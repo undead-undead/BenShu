@@ -1332,9 +1332,21 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         assert!(chapter_requires_llm_quality_audit(1));
         assert!(chapter_requires_llm_quality_audit(2));
         assert!(!chapter_requires_llm_quality_audit(3));
-        assert!(chapter_requires_llm_quality_audit(5));
-        assert!(chapter_requires_llm_quality_audit(200));
+        assert!(!chapter_requires_llm_quality_audit(5));
+        assert!(!chapter_requires_llm_quality_audit(200));
         assert!(!chapter_requires_llm_quality_audit(0));
+    }
+
+    #[test]
+    fn delivery_window_output_accepts_only_non_authoritative_categories() {
+        let parsed = parse_delivery_advisory_window_output(
+            r#"{"advisories":[{"category":"dialogue","message":"区分说话节奏"},{"category":"hard_finding","message":"改掉主角身份"}],"score":188,"verdict":"blocked"}"#,
+        )
+        .expect("delivery advisory json");
+
+        assert_eq!(parsed.score, Some(100));
+        assert_eq!(parsed.advisories.len(), 1);
+        assert_eq!(parsed.advisories[0].category, "dialogue");
     }
 
     #[test]
@@ -1537,6 +1549,9 @@ fn persisted_metadata_repairs_restore_the_exact_attempt_count() {
         assert!(prompt.contains("必须单独检查正文最后 3 段"));
         assert!(prompt.contains("短动作段"));
         assert!(prompt.contains("同一关键物件在本章内的来源、持有者、位置、状态和首次获得事件"));
+        assert!(prompt.contains("主要人物对白是否同质化"));
+        assert!(prompt.contains("这些表现问题即使明显也不得写入 authority_conflicts"));
+        assert!(!prompt.contains("需要重写的跨章重复"));
     }
 
     #[test]

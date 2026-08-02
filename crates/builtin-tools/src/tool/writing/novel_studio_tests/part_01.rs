@@ -1722,6 +1722,7 @@ fn test_manifest_with_primary_character() -> NovelProjectManifest {
         review_cycles: Vec::new(),
         truth_validations: Vec::new(),
         hook_debt_reports: Vec::new(),
+        delivery_advisory_windows: Vec::new(),
         truth_files: Vec::new(),
         archives: Vec::new(),
         contract: Some(StoryContract {
@@ -4235,6 +4236,7 @@ fn manifest_character_anchors_do_not_promote_unregistered_chapter_metadata() {
         review_cycles: Vec::new(),
         truth_validations: Vec::new(),
         hook_debt_reports: Vec::new(),
+        delivery_advisory_windows: Vec::new(),
         truth_files: Vec::new(),
         archives: Vec::new(),
         contract: Some(StoryContract {
@@ -4492,6 +4494,7 @@ fn manifest_character_anchors_prefer_story_bible_ledger() {
         review_cycles: Vec::new(),
         truth_validations: Vec::new(),
         hook_debt_reports: Vec::new(),
+        delivery_advisory_windows: Vec::new(),
         truth_files: Vec::new(),
         archives: Vec::new(),
         contract: Some(StoryContract {
@@ -4560,6 +4563,7 @@ fn manifest_character_anchors_use_registered_contract_authority_only() {
         review_cycles: Vec::new(),
         truth_validations: Vec::new(),
         hook_debt_reports: Vec::new(),
+        delivery_advisory_windows: Vec::new(),
         truth_files: Vec::new(),
         archives: Vec::new(),
         contract: Some(StoryContract {
@@ -5014,9 +5018,15 @@ fn prompt_story_bible_keeps_only_the_current_chapter_goal() {
 
     let filtered = context_packaging::relevant_story_bible_view(
         value,
-        1,
-        &BTreeSet::new(),
-        &BTreeSet::new(),
+        &NovelContractV2::default(),
+        &context_packaging::ChapterRelevanceSelection {
+            chapter_number: 1,
+            names: BTreeSet::new(),
+            ids: BTreeSet::new(),
+            evidence: "核对异常记录".to_string(),
+            current_volume_id: String::new(),
+            current_volume_title: String::new(),
+        },
     );
     let serialized = serde_json::to_string(&filtered).expect("story bible prompt view");
 
@@ -5026,6 +5036,124 @@ fn prompt_story_bible_keeps_only_the_current_chapter_goal() {
     assert!(!serialized.contains("与维修师相遇"));
     assert!(!serialized.contains("第五章才揭示的证人"));
     assert!(!serialized.contains("未来总变化"));
+}
+
+#[test]
+fn current_chapter_projection_keeps_relevant_tail_entries_in_both_work_views() {
+    use crate::tool::writing::creation_contract_model::{
+        ChapterSeedContract, CharacterContract,
+    };
+    use crate::tool::writing::novel_contract_v2::{
+        AgeProgressionState, ArtifactLedgerEntry, CharacterProgressionState,
+        CharacterVoiceProfile, EmotionalStateLedgerEntry, PayoffMatrixEntry,
+        RelationshipInteractionQuota, RevealScheduleEntry,
+    };
+
+    let mut manifest = test_manifest_with_primary_character();
+    let mut authority = NovelCreationContract::default();
+    authority.characters = (1..=12)
+        .map(|index| CharacterContract {
+            character_id: format!("character-{index}"),
+            canonical_name: format!("角色{index}"),
+            role: if index == 1 {
+                "主角".to_string()
+            } else {
+                "配角".to_string()
+            },
+            planned_entry: if index == 10 {
+                "第1章".to_string()
+            } else {
+                "第20章".to_string()
+            },
+            ..CharacterContract::default()
+        })
+        .collect();
+    authority.outline.near_chapters = vec![ChapterSeedContract {
+        number: Some(1),
+        goal: "角色10携带物件10核对秘密10".to_string(),
+        expected_turn: "角色10决定当面作证".to_string(),
+    }];
+    let mut structured = NovelContractV2::default();
+    for index in 1..=12 {
+        let name = format!("角色{index}");
+        structured.character_voice_ledger.push(CharacterVoiceProfile {
+            character: name.clone(),
+            voice_style: format!("声音{index}"),
+            ..Default::default()
+        });
+        structured
+            .emotional_state_ledger
+            .push(EmotionalStateLedgerEntry {
+                character: name.clone(),
+                current_emotion: format!("情绪{index}"),
+                ..Default::default()
+            });
+        structured
+            .power_progression
+            .character_current_levels
+            .push(CharacterProgressionState {
+                character: name.clone(),
+                level: format!("层级{index}"),
+                ..Default::default()
+            });
+        structured.time_model.age_progression.push(AgeProgressionState {
+            character: name.clone(),
+            current_age: index.to_string(),
+            ..Default::default()
+        });
+        structured
+            .relationship_interaction_quotas
+            .push(RelationshipInteractionQuota {
+                relationship: format!("关系{index}"),
+                characters: vec![name],
+                ..Default::default()
+            });
+        structured.artifact_ledger.push(ArtifactLedgerEntry {
+            name: format!("物件{index}"),
+            owner: format!("角色{index}"),
+            status: "active".to_string(),
+            ..Default::default()
+        });
+        structured.payoff_matrix.push(PayoffMatrixEntry {
+            promise: format!("承诺{index}"),
+            introduced_chapter: (index == 10).then_some(1),
+            payoff_chapter: (index == 10).then_some(1),
+            ..Default::default()
+        });
+        structured.reveal_schedule.push(RevealScheduleEntry {
+            secret: format!("秘密{index}"),
+            reveal_window: if index == 10 {
+                "第1章".to_string()
+            } else {
+                "第20章".to_string()
+            },
+            status: "planned".to_string(),
+            ..Default::default()
+        });
+    }
+    let contract = manifest.contract.as_mut().expect("contract");
+    contract.characters = authority
+        .characters
+        .iter()
+        .map(CharacterContract::to_draft_line)
+        .collect();
+    contract.authority_contract = Some(authority);
+    contract.structured_contract_v2 = structured.clone();
+    manifest.structured_contract_v2 = structured;
+    ensure_character_authority_ledger(&mut manifest);
+    ensure_story_bible_from_manifest(&mut manifest);
+
+    let payload = build_minimal_context_payload(&manifest, 1);
+    let serialized = serde_json::to_string(&payload).expect("payload");
+    assert!(serialized.contains("声音10"));
+    assert!(serialized.contains("情绪10"));
+    assert!(serialized.contains("层级10"));
+    assert!(serialized.contains("物件10"));
+    assert!(serialized.contains("秘密10"));
+    assert!(!serialized.contains("声音9"));
+    assert!(!serialized.contains("秘密9"));
+    assert!(payload.pointer("/contract/structured_contract_v2/character_voice_ledger").is_some());
+    assert!(payload.pointer("/story_bible/structured_contract_v2/character_voice_ledger").is_some());
 }
 
 #[test]

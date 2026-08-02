@@ -599,6 +599,49 @@ mod tests {
     }
 
     #[test]
+    fn opening_and_prose_guidance_distinguish_first_and_later_chapters() {
+        let first_execution = chapter_execution_prompt("zh-CN", "照夜录", 1, "{}", None);
+        let later_execution = chapter_execution_prompt("zh-CN", "照夜录", 2, "{}", None);
+        assert!(first_execution.contains("reader_promise.core_hook"));
+        assert!(first_execution.contains("第一章开篇架构指导"));
+        assert!(!later_execution.contains("第一章开篇架构指导"));
+        assert!(later_execution.contains("上一批准状态"));
+        assert!(later_execution.contains("next_chapter_boundary"));
+
+        let memo = ChapterMemo {
+            goal: "推进任务".to_string(),
+            body: "## 当前任务\n推进任务".to_string(),
+            sections: Vec::new(),
+        };
+        let authority = test_authority("闻庭安", &["闻庭安"]);
+        let first_writer = writer_prompt(
+            "zh-CN",
+            "照夜录",
+            1,
+            Some(2500),
+            &memo,
+            "架构",
+            "{}",
+            &authority,
+        );
+        let later_writer = writer_prompt(
+            "zh-CN",
+            "照夜录",
+            2,
+            Some(2500),
+            &memo,
+            "架构",
+            "{}",
+            &authority,
+        );
+        assert!(first_writer.contains("前两三段尽快兑现"));
+        assert!(first_writer.contains("character_voice_ledger"));
+        assert!(first_writer.contains("对话至少承担"));
+        assert!(!later_writer.contains("三个候选开篇"));
+        assert!(later_writer.contains("不得把下一章边界"));
+    }
+
+    #[test]
     fn writer_prompt_uses_panel_target_as_first_draft_output_contract() {
         let memo = ChapterMemo {
             goal: "推进第一章".to_string(),

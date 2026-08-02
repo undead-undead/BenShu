@@ -35,24 +35,6 @@ use generated_gate::contract_gate_from_findings;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 
-fn record_chapter_unit_band_normalization_note(
-    draft: &mut SessionCreationDraftState,
-    raw: Option<usize>,
-    normalized: Option<usize>,
-) {
-    let (Some(raw), Some(normalized)) = (raw, normalized) else {
-        return;
-    };
-    if raw == normalized {
-        return;
-    }
-    let note = format!(
-        "用户请求每章约 {raw} 字；小说每章字数仅支持 {}，已自动归一到 {normalized}。",
-        longform_policy::novel_chapter_unit_band_label()
-    );
-    draft.planning_notes = merge_list(&draft.planning_notes, &[note]);
-}
-
 pub const CREATION_PLANNING_DIALOGUE_MARKER: &str = "[BENSHU_CREATION_PLANNING_DIALOGUE]";
 pub const NOVEL_CONTENT_OPERATION_MARKER: &str = "[BENSHU_NOVEL_CONTENT_OPERATION]";
 pub const DIRECT_WRITER_CONTINUATION_MARKER: &str = "[BENSHU_DIRECT_WRITER_CONTINUATION]";
@@ -186,10 +168,11 @@ pub fn apply_continuation_controls_to_creation_draft(
         draft.target_units = Some(target);
     }
     let raw_chapter_unit_target = requested_raw_chapter_unit_target(message);
-    if let Some(target) = raw_chapter_unit_target.map(nearest_novel_chapter_unit_band) {
+    if let Some(target) =
+        raw_chapter_unit_target.and_then(longform_policy::exact_novel_chapter_unit_band)
+    {
         draft.chapter_unit_target = Some(target);
         draft.chapter_unit_target_user_authority = Some(target);
-        record_chapter_unit_band_normalization_note(draft, raw_chapter_unit_target, Some(target));
     }
     if let Some(target) = requested_section_unit_target(message) {
         draft.section_unit_target = Some(target);

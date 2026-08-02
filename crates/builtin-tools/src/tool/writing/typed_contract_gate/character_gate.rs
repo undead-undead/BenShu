@@ -1320,6 +1320,11 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
         "隐瞒",
         "揭露",
         "调查",
+        "躲避",
+        "收集",
+        "修复",
+        "寻找",
+        "看到",
         "返回",
         "失踪",
         "遇难",
@@ -1930,33 +1935,59 @@ pub(super) fn replace_character_anchor_reference(
     }
     if reference.chars().count() == 1 {
         if reference.chars().all(surface_gate::is_cjk_unified) {
-            return replace_quoted_single_character_reference(text, &reference, replacement);
+            return replace_governed_single_cjk_character_reference(text, &reference, replacement);
         }
         return replace_single_ascii_character_reference(text, &reference, replacement);
     }
     text.replace(&reference, replacement)
 }
 
-fn replace_quoted_single_character_reference(
+fn replace_governed_single_cjk_character_reference(
     text: &str,
     reference: &str,
     replacement: &str,
 ) -> String {
-    let mut rewritten = text.to_string();
-    for (opening, closing) in [
-        ('“', '”'),
-        ('‘', '’'),
-        ('"', '"'),
-        ('\'', '\''),
-        ('「', '」'),
-        ('『', '』'),
-        ('《', '》'),
-    ] {
-        let source = format!("{opening}{reference}{closing}");
-        let target = format!("{opening}{replacement}{closing}");
-        rewritten = rewritten.replace(&source, &target);
+    let Some(target) = reference.chars().next() else {
+        return text.to_string();
+    };
+    let mut rewritten = String::with_capacity(text.len());
+    for (index, ch) in text.char_indices() {
+        if ch != target {
+            rewritten.push(ch);
+            continue;
+        }
+        let before = &text[..index];
+        let after = &text[index + ch.len_utf8()..];
+        if single_cjk_character_reference_is_explicit_person(before, after) {
+            rewritten.push_str(replacement);
+        } else {
+            rewritten.push(ch);
+        }
     }
     rewritten
+}
+
+fn single_cjk_character_reference_is_explicit_person(before: &str, after: &str) -> bool {
+    let before = before.trim_end_matches(char::is_whitespace);
+    let after = after.trim_start_matches(char::is_whitespace);
+    let quoted = before
+        .chars()
+        .last()
+        .is_some_and(|ch| matches!(ch, '“' | '‘' | '"' | '\'' | '「' | '『' | '《'))
+        && after
+            .chars()
+            .next()
+            .is_some_and(|ch| matches!(ch, '”' | '’' | '"' | '\'' | '」' | '』' | '》'));
+    quoted
+        || text_before_reference_has_role_marker(before)
+        || after.starts_with('的')
+        || text_after_reference_has_person_action_context(after)
+        || after.chars().next().is_some_and(|ch| {
+            matches!(
+                ch,
+                '，' | ',' | '。' | '.' | '；' | ';' | '：' | ':' | '！' | '!' | '？' | '?'
+            )
+        })
 }
 
 fn replace_single_ascii_character_reference(

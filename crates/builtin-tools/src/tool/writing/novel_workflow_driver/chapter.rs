@@ -468,7 +468,15 @@ impl NovelChapterRunner {
         self.ensure_not_cancelled().await?;
         let chapter_number = request.step.index;
         let chapter_started_at = Instant::now();
+        if let Some(previous_chapter) = chapter_number.checked_sub(1) {
+            self.ensure_delivery_advisory_window(previous_chapter)
+                .await?;
+        }
         if self.chapter_already_approved(chapter_number).await? {
+            // If the process crashed after the approval transaction committed
+            // but before its post-approval delivery review was recorded, the
+            // same fingerprint-bound helper repairs that missing window here.
+            self.ensure_delivery_advisory_window(chapter_number).await?;
             record_workflow_checkpoint(
                 &self.runtime,
                 chapter_number as u32,
@@ -1770,7 +1778,7 @@ impl NovelChapterRunner {
         _write_result: &mut Value,
         _audit: &mut Value,
     ) -> anyhow::Result<Value> {
-        call_novel_studio_json_raw(
+        let approval = call_novel_studio_json_raw(
             &self.tool,
             json!({
                 "action": "approve_chapter",
@@ -1778,7 +1786,11 @@ impl NovelChapterRunner {
                 "chapter_number": chapter_number
             }),
         )
-        .await
+        .await?;
+        if approval_result_is_approved(&approval) {
+            self.ensure_delivery_advisory_window(chapter_number).await?;
+        }
+        Ok(approval)
     }
 
     async fn chapter_already_approved(&self, chapter_number: usize) -> anyhow::Result<bool> {

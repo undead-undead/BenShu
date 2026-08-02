@@ -207,6 +207,7 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
         "章节字数",
         "正文目标",
         "正文字数",
+        "章节档位",
         "字档位",
         "字档",
         "chapter target",
@@ -214,6 +215,41 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
     .into_iter()
     .chain(body_is_chapter_scoped.then_some("正文"));
     for marker in markers {
+        let marker_is_setting_prefix = [
+            "本章目标",
+            "本章字数",
+            "章节目标",
+            "章节字数",
+            "正文目标",
+            "正文字数",
+            "章节档位",
+            "字档位",
+            "chapter target",
+        ]
+        .contains(&marker);
+        if marker_is_setting_prefix {
+            if let Some(segment) = requested_unit_segment_after_marker(
+                message,
+                marker,
+                &[
+                    "一共",
+                    "总共",
+                    "总计",
+                    "总目标",
+                    "全文",
+                    "全书",
+                    "整部",
+                    "整体",
+                    "总字数",
+                    "target",
+                    "total",
+                ],
+            ) {
+                if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
+                    return Some(value);
+                }
+            }
+        }
         if let Some(segment) = requested_unit_segment_before_marker(message, marker) {
             let segment = if matches!(marker, "字档" | "字档位") {
                 segment
@@ -232,25 +268,27 @@ pub fn requested_raw_chapter_unit_target(message: &str) -> Option<usize> {
         // “每章” belongs to the project total, not the chapter band.  The
         // after-marker path remains a fallback for forms such as “每章目标
         // 2500字” where no useful quantity precedes the marker.
-        if let Some(segment) = requested_unit_segment_after_marker(
-            message,
-            marker,
-            &[
-                "一共",
-                "总共",
-                "总计",
-                "总目标",
-                "全文",
-                "全书",
-                "整部",
-                "整体",
-                "总字数",
-                "target",
-                "total",
-            ],
-        ) {
-            if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
-                return Some(value);
+        if !marker_is_setting_prefix {
+            if let Some(segment) = requested_unit_segment_after_marker(
+                message,
+                marker,
+                &[
+                    "一共",
+                    "总共",
+                    "总计",
+                    "总目标",
+                    "全文",
+                    "全书",
+                    "整部",
+                    "整体",
+                    "总字数",
+                    "target",
+                    "total",
+                ],
+            ) {
+                if let Some(value) = requested_semantically_scoped_unit_chars(&segment) {
+                    return Some(value);
+                }
             }
         }
     }
@@ -315,6 +353,7 @@ pub fn requested_total_unit_target(message: &str) -> Option<usize> {
         "章节字数",
         "正文目标",
         "正文字数",
+        "章节档位",
         "字档位",
         "字档",
         "每节",
@@ -509,14 +548,16 @@ pub fn infer_fiction_genre(message: &str) -> Option<String> {
         if let Some((left, _)) = compact.split_once(surface) {
             let cleaned = strip_creation_prefix(left);
             let cleaned = sanitize_creation_genre_value(&cleaned);
+            let cleaned = strip_leading_creation_scale_phrase(&cleaned);
             if !cleaned.is_empty()
+                && !creation_parameter_control_clause(&cleaned)
                 && cleaned.chars().count() <= 32
                 && (longform_policy::looks_like_fiction_genre_surface(&cleaned)
                     || cleaned.contains('的')
                     || arbitrary_fiction_genre_surface_looks_usable(&cleaned))
                 && !text_has_any(&cleaned, &["展示", "当前", "合同", "大纲", "章节"])
             {
-                return Some(cleaned);
+                return Some(cleaned.to_string());
             }
         }
     }
@@ -653,11 +694,29 @@ fn arbitrary_fiction_genre_surface_looks_usable(value: &str) -> bool {
         .any(|ch| !ch.is_ascii() && !ch.is_ascii_punctuation())
 }
 
+fn strip_leading_creation_scale_phrase(value: &str) -> &str {
+    let text = value.trim();
+    let Some((unit_prefix, genre)) = text.split_once("字的") else {
+        return text;
+    };
+    let genre = genre.trim();
+    if genre.is_empty() {
+        return text;
+    }
+    let unit_phrase = format!("{unit_prefix}字");
+    if DelegateTool::requested_text_target_chars(&unit_phrase).is_some() {
+        genre
+    } else {
+        text
+    }
+}
+
 pub fn creation_brief(message: &str, artifact_kind: &str) -> String {
     let mut brief = sanitize_creation_brief_value(message.trim());
     brief = strip_creation_prefix(&brief);
     if artifact_kind == "fiction" {
         brief = brief.replace("小说", "").replace("故事", "");
+        brief = strip_leading_creation_scale_phrase(&brief).to_string();
     }
     sanitize_creation_brief_value(
         &brief
@@ -1654,6 +1713,18 @@ mod tests {
         let genre = infer_fiction_genre("帮我写一部完整小说，每章2500字，一共5万字。");
 
         assert_eq!(genre, None);
+        assert_eq!(
+            infer_fiction_genre("写一本总字数10万字的小说，每章2500字。"),
+            None
+        );
+        assert_eq!(
+            infer_fiction_genre("写一本10万字的都市悬疑小说，每章2500字。").as_deref(),
+            Some("都市悬疑")
+        );
+        assert_eq!(
+            creation_brief("写一本10万字的都市悬疑小说，每章2500字。", "fiction"),
+            "都市悬疑"
+        );
     }
 
     #[test]
@@ -1808,6 +1879,18 @@ mod tests {
         );
         assert_eq!(
             requested_raw_chapter_unit_target(
+                "请从零开始创作一部赛博朋克小说，总字数10万字，章节档位选择2500字。"
+            ),
+            Some(2500)
+        );
+        assert_eq!(
+            requested_total_unit_target(
+                "请从零开始创作一部赛博朋克小说，总字数10万字，章节档位选择2500字。"
+            ),
+            Some(100_000)
+        );
+        assert_eq!(
+            requested_raw_chapter_unit_target(
                 "请从零创建并自动写完一部全新的赛博朋克题材小说，总字数10万字，每章使用2500字档。"
             ),
             Some(2500)
@@ -1836,6 +1919,13 @@ mod tests {
             ),
             Some(50_000)
         );
+    }
+
+    #[test]
+    fn chapter_band_prefix_uses_the_following_value_not_an_earlier_total() {
+        let request = "总字数10万字，章节档位5000字。";
+        assert_eq!(requested_total_unit_target(request), Some(100_000));
+        assert_eq!(requested_raw_chapter_unit_target(request), Some(5_000));
     }
 
     #[test]

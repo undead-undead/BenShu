@@ -1329,6 +1329,6 @@ USER REQUEST\n\
         assert!(write_result_is_clean_for_rule_audit(&clean));
         assert!(write_result_is_clean_for_rule_audit(&warning));
         assert!(!write_result_is_clean_for_rule_audit(&truth_issue));
-        assert!(!chapter_requires_periodic_full_audit(4));
-        assert!(chapter_requires_periodic_full_audit(5));
+        assert!(!chapter_completes_delivery_review_window(4));
+        assert!(chapter_completes_delivery_review_window(5));
     }

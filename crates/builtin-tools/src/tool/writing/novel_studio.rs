@@ -96,11 +96,11 @@ use creation_draft::{
 use manifest::*;
 use model::{
     ApprovalJournal, ApprovalJournalState, ApprovalReceipt, ChapterPlanRecord,
-    CharacterAuthorityRecord, ContextPackageRecord, HookDebtReportRecord, LongformArchiveRecord,
-    NovelCreationDraft, NovelProjectManifest, NovelStudioArgs, ReviewCycleRecord, ReviewReceipt,
-    SettlementOutput, SnapshotRecord, SourceRecord, StateSettlementDisposition,
-    StateValidationOutput, StyleProfileRecord, TitleState, TruthFileRecord, TruthValidationRecord,
-    VolumeRecord, VolumeSummaryRecord,
+    CharacterAuthorityRecord, ContextPackageRecord, DeliveryAdvisory, DeliveryAdvisoryWindowRecord,
+    HookDebtReportRecord, LongformArchiveRecord, NovelCreationDraft, NovelProjectManifest,
+    NovelStudioArgs, ReviewCycleRecord, ReviewReceipt, SettlementOutput, SnapshotRecord,
+    SourceRecord, StateSettlementDisposition, StateValidationOutput, StyleProfileRecord,
+    TitleState, TruthFileRecord, TruthValidationRecord, VolumeRecord, VolumeSummaryRecord,
 };
 pub(crate) use model::{ChapterArchitectureRecord, ChapterContractRecord, ChapterRecord};
 pub(crate) use novel_bible::StoryContract;
@@ -374,6 +374,12 @@ impl Tool for NovelStudioTool {
             "audit_chapter" => run_action!(self.audit_chapter(&args)),
             "record_candidate_decision" => {
                 run_action!(self.record_candidate_decision(&args))
+            }
+            "prepare_delivery_advisory_window" => {
+                run_action!(self.prepare_delivery_advisory_window(&args))
+            }
+            "commit_delivery_advisory_window" => {
+                run_action!(self.commit_delivery_advisory_window(&args))
             }
             "repair_chapter_metadata" => run_action!(self.repair_latest_chapter_metadata(&args)),
             "revise_draft" => run_action!(self.revise_chapter(&args)),

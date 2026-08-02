@@ -7,6 +7,16 @@ const SOURCE_CONTEXT_EXCERPT_CHARS: usize = 3_000;
 const SOURCE_CONTEXT_PAYLOAD_CHARS: usize = 1_600;
 const PROMPT_CONTEXT_TOTAL_CHARS: usize = 36_000;
 
+#[derive(Debug, Clone)]
+pub(super) struct ChapterRelevanceSelection {
+    pub(super) chapter_number: usize,
+    pub(super) names: BTreeSet<String>,
+    pub(super) ids: BTreeSet<String>,
+    pub(super) evidence: String,
+    pub(super) current_volume_id: String,
+    pub(super) current_volume_title: String,
+}
+
 pub(super) fn protected_prompt_context_char_limit() -> usize {
     PROMPT_CONTEXT_TOTAL_CHARS
 }
@@ -148,15 +158,21 @@ pub(super) async fn build_context_payload(
             "excerpt": preview_chars(&content, ARCHIVE_EXCERPT_CHARS)
         }));
     }
-    let relevant_characters = relevant_character_subgraph(manifest, chapter_number, plan.as_ref());
-    let relevant_names = relevant_characters
-        .iter()
-        .map(|character| character.canonical_name.clone())
-        .collect::<BTreeSet<_>>();
-    let relevant_ids = relevant_characters
-        .iter()
-        .map(|character| character.id.clone())
-        .collect::<BTreeSet<_>>();
+    let approved_state_evidence =
+        serde_json::to_string(&recent_chapters).unwrap_or_else(|_| "[]".to_string());
+    let relevant_characters = relevant_character_subgraph_with_evidence(
+        manifest,
+        chapter_number,
+        plan.as_ref(),
+        &approved_state_evidence,
+    );
+    let relevance = chapter_relevance_selection(
+        manifest,
+        chapter_number,
+        plan.as_ref(),
+        &relevant_characters,
+        &approved_state_evidence,
+    );
     let relevant_anchor_names = relevant_characters
         .iter()
         .map(|character| character.canonical_name.clone())
@@ -166,17 +182,22 @@ pub(super) async fn build_context_payload(
         .filter(|character| character_role_is_primary(&character.role))
         .map(|character| character.canonical_name.clone())
         .collect::<Vec<_>>();
-    let relevant_contract =
-        relevant_contract_view(manifest, chapter_number, &relevant_names, &relevant_ids);
+    let relevant_contract = relevant_contract_view(manifest, &relevance);
+    let relevance_projection = structured_relevance_projection_trace(manifest, &relevance);
     let relevant_story_bible = manifest
         .story_bible
         .as_ref()
-        .map(novel_bible::story_bible_prompt_view)
-        .map(|value| {
-            relevant_story_bible_view(value, chapter_number, &relevant_names, &relevant_ids)
+        .map(|bible| {
+            relevant_story_bible_view(
+                novel_bible::story_bible_prompt_view(bible),
+                &bible.structured_contract_v2,
+                &relevance,
+            )
         })
         .map(|value| sanitize_prompt_json_text_fields(value, manifest));
     let narrative_progress = narrative_progress_contract(manifest, chapter_number);
+    let delivery_advisory =
+        current_delivery_advisory_context(project_dir, manifest, chapter_number).await?;
     Ok(json!({
         "project": {
             "title": manifest.title,
@@ -208,6 +229,8 @@ pub(super) async fn build_context_payload(
             "rule": "Preserve these authoritative identities only if the current chapter requires them; do not introduce a listed character merely because the name is present."
         },
         "story_bible": relevant_story_bible,
+        "relevance_projection": relevance_projection,
+        "delivery_advisory": delivery_advisory,
         "narrative_progress": narrative_progress,
         "next_chapter_boundary": next_chapter_boundary_view(manifest, chapter_number),
         "plan": plan.as_ref().map(current_chapter_plan_view),
@@ -234,14 +257,8 @@ pub(super) fn build_minimal_context_payload(
         .iter()
         .find(|plan| plan.number == chapter_number);
     let relevant_characters = relevant_character_subgraph(manifest, chapter_number, plan);
-    let relevant_names = relevant_characters
-        .iter()
-        .map(|character| character.canonical_name.clone())
-        .collect::<BTreeSet<_>>();
-    let relevant_ids = relevant_characters
-        .iter()
-        .map(|character| character.id.clone())
-        .collect::<BTreeSet<_>>();
+    let relevance =
+        chapter_relevance_selection(manifest, chapter_number, plan, &relevant_characters, "");
     let relevant_anchor_names = relevant_characters
         .iter()
         .map(|character| character.canonical_name.clone())
@@ -275,12 +292,7 @@ pub(super) fn build_minimal_context_payload(
             "current_volume": volume_for_chapter(manifest, chapter_number)
         },
         "chapter_number": chapter_number,
-        "contract": relevant_contract_view(
-            manifest,
-            chapter_number,
-            &relevant_names,
-            &relevant_ids,
-        ),
+        "contract": relevant_contract_view(manifest, &relevance),
         "character_ledger": relevant_characters,
         "continuity_anchors": {
             "primary_characters": relevant_primary_names,
@@ -291,11 +303,15 @@ pub(super) fn build_minimal_context_payload(
         "story_bible": manifest
             .story_bible
             .as_ref()
-            .map(novel_bible::story_bible_prompt_view)
-            .map(|value| {
-                relevant_story_bible_view(value, chapter_number, &relevant_names, &relevant_ids)
+            .map(|bible| {
+                relevant_story_bible_view(
+                    novel_bible::story_bible_prompt_view(bible),
+                    &bible.structured_contract_v2,
+                    &relevance,
+                )
             })
             .map(|value| sanitize_prompt_json_text_fields(value, manifest)),
+        "relevance_projection": structured_relevance_projection_trace(manifest, &relevance),
         "narrative_progress": narrative_progress_contract(manifest, chapter_number),
         "next_chapter_boundary": next_chapter_boundary_view(manifest, chapter_number),
         "plan": plan.map(current_chapter_plan_view),
@@ -441,39 +457,17 @@ pub(super) fn relevant_character_subgraph(
     chapter_number: usize,
     plan: Option<&ChapterPlanRecord>,
 ) -> Vec<CharacterAuthorityRecord> {
-    let evidence = [
-        chapter_boundary_seed_view(manifest, chapter_number)
-            .map(|seed| [seed.goal, seed.expected_turn].join("\n"))
-            .unwrap_or_default(),
-        plan.map(|value| current_chapter_authority_text(&value.plan))
-            .unwrap_or_default(),
-        manifest
-            .chapter_contracts
-            .iter()
-            .find(|item| item.number == chapter_number)
-            .map(|value| {
-                [
-                    value.goal.as_str(),
-                    value.scene_goal.as_str(),
-                    value.conflict.as_str(),
-                    value.choice.as_str(),
-                    value.cost.as_str(),
-                    value.reveal.as_str(),
-                    value.emotional_beat.as_str(),
-                    value.relationship_delta.as_str(),
-                    value.character_change.as_str(),
-                ]
-                .join("\n")
-            })
-            .unwrap_or_default(),
-        manifest
-            .chapter_architectures
-            .iter()
-            .find(|item| item.number == chapter_number)
-            .map(|value| current_chapter_authority_text(&value.architecture))
-            .unwrap_or_default(),
-    ]
-    .join("\n");
+    relevant_character_subgraph_with_evidence(manifest, chapter_number, plan, "")
+}
+
+fn relevant_character_subgraph_with_evidence(
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+    plan: Option<&ChapterPlanRecord>,
+    approved_state_evidence: &str,
+) -> Vec<CharacterAuthorityRecord> {
+    let evidence =
+        chapter_relevance_evidence(manifest, chapter_number, plan, approved_state_evidence);
 
     let mut selected_names = manifest
         .character_ledger
@@ -514,6 +508,101 @@ pub(super) fn relevant_character_subgraph(
     });
     records.truncate(12);
     records
+}
+
+fn chapter_relevance_evidence(
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+    plan: Option<&ChapterPlanRecord>,
+    approved_state_evidence: &str,
+) -> String {
+    let mut evidence = vec![
+        chapter_boundary_seed_view(manifest, chapter_number)
+            .map(|seed| [seed.goal, seed.expected_turn].join("\n"))
+            .unwrap_or_default(),
+        plan.map(|value| current_chapter_authority_text(&value.plan))
+            .unwrap_or_default(),
+        manifest
+            .chapter_contracts
+            .iter()
+            .find(|item| item.number == chapter_number)
+            .map(|value| {
+                [
+                    value.goal.as_str(),
+                    value.scene_goal.as_str(),
+                    value.conflict.as_str(),
+                    value.choice.as_str(),
+                    value.cost.as_str(),
+                    value.reveal.as_str(),
+                    value.emotional_beat.as_str(),
+                    value.relationship_delta.as_str(),
+                    value.character_change.as_str(),
+                ]
+                .join("\n")
+            })
+            .unwrap_or_default(),
+        manifest
+            .chapter_architectures
+            .iter()
+            .find(|item| item.number == chapter_number)
+            .map(|value| current_chapter_authority_text(&value.architecture))
+            .unwrap_or_default(),
+    ];
+    if let Some(volume) = volume_for_chapter(manifest, chapter_number) {
+        evidence.extend([
+            volume.id.clone(),
+            volume.title.clone(),
+            volume.objective.clone(),
+            volume.ending_change.clone(),
+            volume.must_open.join("\n"),
+            volume.must_payoff.join("\n"),
+        ]);
+    }
+    for chapter in approved_prior_chapters(manifest, chapter_number)
+        .rev()
+        .take(2)
+    {
+        evidence.push(chapter.summary.clone());
+        evidence.extend(chapter.key_facts.clone());
+        evidence.extend(chapter.continuity_updates.clone());
+    }
+    if !approved_state_evidence.trim().is_empty() {
+        evidence.push(approved_state_evidence.to_string());
+    }
+    evidence.join("\n")
+}
+
+fn chapter_relevance_selection(
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+    plan: Option<&ChapterPlanRecord>,
+    relevant_characters: &[CharacterAuthorityRecord],
+    approved_state_evidence: &str,
+) -> ChapterRelevanceSelection {
+    let current_volume = volume_for_chapter(manifest, chapter_number);
+    ChapterRelevanceSelection {
+        chapter_number,
+        names: relevant_characters
+            .iter()
+            .map(|character| character.canonical_name.clone())
+            .collect(),
+        ids: relevant_characters
+            .iter()
+            .map(|character| character.id.clone())
+            .collect(),
+        evidence: chapter_relevance_evidence(
+            manifest,
+            chapter_number,
+            plan,
+            approved_state_evidence,
+        ),
+        current_volume_id: current_volume
+            .map(|volume| volume.id.clone())
+            .unwrap_or_default(),
+        current_volume_title: current_volume
+            .map(|volume| volume.title.clone())
+            .unwrap_or_default(),
+    }
 }
 
 fn current_chapter_authority_text(value: &str) -> String {
@@ -578,9 +667,7 @@ fn planned_character_entry_matches(
 
 fn relevant_contract_view(
     manifest: &NovelProjectManifest,
-    chapter_number: usize,
-    relevant_names: &BTreeSet<String>,
-    relevant_ids: &BTreeSet<String>,
+    relevance: &ChapterRelevanceSelection,
 ) -> Option<StoryContract> {
     let mut contract = manifest.contract.clone()?;
     contract.characters = contract
@@ -589,8 +676,8 @@ fn relevant_contract_view(
         .filter_map(|line| {
             let mut character =
                 super::super::creation_contract::draft_character_line_to_contract(&line);
-            if !relevant_names.contains(&character.canonical_name)
-                && !relevant_ids.contains(&character.character_id)
+            if !relevance.names.contains(&character.canonical_name)
+                && !relevance.ids.contains(&character.character_id)
             {
                 return None;
             }
@@ -600,8 +687,8 @@ fn relevant_contract_view(
         .collect();
     if let Some(authority) = contract.authority_contract.as_mut() {
         authority.characters.retain(|character| {
-            relevant_names.contains(&character.canonical_name)
-                || relevant_ids.contains(&character.character_id)
+            relevance.names.contains(&character.canonical_name)
+                || relevance.ids.contains(&character.character_id)
         });
         for character in &mut authority.characters {
             character.previous_names.clear();
@@ -609,13 +696,13 @@ fn relevant_contract_view(
         authority
             .outline
             .near_chapters
-            .retain(|chapter| chapter.number == Some(chapter_number));
+            .retain(|chapter| chapter.number == Some(relevance.chapter_number));
         authority.outline.raw_outline.clear();
     }
     contract.outline = manifest
         .chapter_contracts
         .iter()
-        .find(|chapter| chapter.number == chapter_number)
+        .find(|chapter| chapter.number == relevance.chapter_number)
         .map(|chapter| {
             [
                 chapter.goal.as_str(),
@@ -631,20 +718,14 @@ fn relevant_contract_view(
             .join("\n")
         })
         .unwrap_or_default();
-    contract
-        .structured_contract_v2
-        .relationship_ledger
-        .retain(|relation| {
-            relationship_intersects_subgraph(relation, relevant_names, relevant_ids)
-        });
+    project_structured_contract_v2(&mut contract.structured_contract_v2, relevance);
     Some(contract)
 }
 
 pub(super) fn relevant_story_bible_view(
     mut value: serde_json::Value,
-    chapter_number: usize,
-    relevant_names: &BTreeSet<String>,
-    relevant_ids: &BTreeSet<String>,
+    source_structured: &NovelContractV2,
+    relevance: &ChapterRelevanceSelection,
 ) -> serde_json::Value {
     if let Some(characters) = value
         .get_mut("character_ledger")
@@ -654,24 +735,24 @@ pub(super) fn relevant_story_bible_view(
             character
                 .get("name")
                 .and_then(serde_json::Value::as_str)
-                .is_some_and(|name| relevant_names.contains(name))
+                .is_some_and(|name| relevance.names.contains(name))
                 || character
                     .get("id")
                     .and_then(serde_json::Value::as_str)
-                    .is_some_and(|id| relevant_ids.contains(id))
+                    .is_some_and(|id| relevance.ids.contains(id))
         });
     }
-    if let Some(relations) = value
-        .pointer_mut("/structured_contract_v2/relationship_ledger")
-        .and_then(serde_json::Value::as_array_mut)
-    {
-        relations.retain(|relation| {
-            serde_json::from_value::<RelationshipLedgerEntry>(relation.clone())
-                .ok()
-                .is_some_and(|relation| {
-                    relationship_intersects_subgraph(&relation, relevant_names, relevant_ids)
-                })
-        });
+    let mut structured = source_structured.clone();
+    project_structured_contract_v2(&mut structured, relevance);
+    if let Ok(mut structured_value) = serde_json::to_value(structured) {
+        if let Some(summary) = value.pointer("/structured_contract_v2/summary").cloned() {
+            if let Some(object) = structured_value.as_object_mut() {
+                object.insert("summary".to_string(), summary);
+            }
+        }
+        if let Some(slot) = value.pointer_mut("/structured_contract_v2") {
+            *slot = structured_value;
+        }
     }
     for pointer in [
         "/narrative_graph/chapter_goals",
@@ -685,7 +766,7 @@ pub(super) fn relevant_story_bible_view(
                 goal.get("chapter_number")
                     .or_else(|| goal.get("number"))
                     .and_then(serde_json::Value::as_u64)
-                    .is_some_and(|number| number == chapter_number as u64)
+                    .is_some_and(|number| number == relevance.chapter_number as u64)
             });
         }
     }
@@ -701,8 +782,8 @@ pub(super) fn relevant_story_bible_view(
                 let payoff = item
                     .get("payoff_chapter")
                     .and_then(serde_json::Value::as_u64);
-                introduced.is_some_and(|number| number <= chapter_number as u64)
-                    || payoff == Some(chapter_number as u64)
+                introduced.is_some_and(|number| number <= relevance.chapter_number as u64)
+                    || payoff == Some(relevance.chapter_number as u64)
             });
         }
     }
@@ -719,17 +800,155 @@ pub(super) fn relevant_story_bible_view(
 
 fn relationship_intersects_subgraph(
     relationship: &RelationshipLedgerEntry,
-    relevant_names: &BTreeSet<String>,
-    relevant_ids: &BTreeSet<String>,
+    relevance: &ChapterRelevanceSelection,
 ) -> bool {
     relationship
         .characters
         .iter()
-        .any(|name| relevant_names.contains(name))
+        .any(|name| relevance.names.contains(name))
         || relationship
             .character_ids
             .iter()
-            .any(|id| relevant_ids.contains(id))
+            .any(|id| relevance.ids.contains(id))
+}
+
+fn project_structured_contract_v2(
+    structured: &mut NovelContractV2,
+    relevance: &ChapterRelevanceSelection,
+) {
+    structured
+        .emotional_state_ledger
+        .retain(|entry| relevance.names.contains(&entry.character));
+    structured
+        .relationship_ledger
+        .retain(|entry| relationship_intersects_subgraph(entry, relevance));
+    structured
+        .character_voice_ledger
+        .retain(|entry| relevance.names.contains(&entry.character));
+    structured.relationship_interaction_quotas.retain(|entry| {
+        entry
+            .characters
+            .iter()
+            .any(|name| relevance.names.contains(name))
+    });
+    structured
+        .power_progression
+        .character_current_levels
+        .retain(|entry| relevance.names.contains(&entry.character));
+    structured
+        .time_model
+        .age_progression
+        .retain(|entry| relevance.names.contains(&entry.character));
+
+    structured.artifact_ledger.retain(|entry| {
+        relevance.names.contains(&entry.owner)
+            || relevance.references(&entry.name)
+            || (!status_is_closed(&entry.status)
+                && entry
+                    .last_seen_chapter
+                    .is_some_and(|chapter| chapter <= relevance.chapter_number))
+    });
+    structured.artifact_ledger.sort_by_key(|entry| {
+        !(relevance.names.contains(&entry.owner) || relevance.references(&entry.name))
+    });
+    structured
+        .antagonist_pressure
+        .antagonists
+        .retain(|entry| relevance.names.contains(&entry.name) || relevance.references(&entry.name));
+    structured.payoff_matrix.retain(|entry| {
+        entry
+            .introduced_chapter
+            .is_some_and(|chapter| chapter <= relevance.chapter_number)
+            || entry.payoff_chapter == Some(relevance.chapter_number)
+            || relevance.references(&entry.promise)
+    });
+    structured.payoff_matrix.sort_by_key(|entry| {
+        !(entry.payoff_chapter == Some(relevance.chapter_number)
+            || relevance.references(&entry.promise))
+    });
+    structured
+        .motif_ledger
+        .sort_by_key(|entry| !relevance.references(&entry.motif));
+    structured.reveal_schedule.retain(|entry| {
+        !status_is_closed(&entry.status)
+            && (relevance.references(&entry.secret)
+                || entry.reveal_window.trim().is_empty()
+                || relevance.window_matches(&entry.reveal_window))
+    });
+    structured.reveal_schedule.sort_by_key(|entry| {
+        !(relevance.references(&entry.secret) || relevance.window_matches(&entry.reveal_window))
+    });
+}
+
+impl ChapterRelevanceSelection {
+    fn references(&self, value: &str) -> bool {
+        let value = value.trim();
+        !value.is_empty() && self.evidence.contains(value)
+    }
+
+    fn window_matches(&self, value: &str) -> bool {
+        let value = value.trim();
+        if value.is_empty() {
+            return false;
+        }
+        let lowered = value.to_ascii_lowercase();
+        value.contains(&format!("第{}章", self.chapter_number))
+            || lowered.contains(&format!("chapter {}", self.chapter_number))
+            || (!self.current_volume_id.is_empty() && value.contains(&self.current_volume_id))
+            || (!self.current_volume_title.is_empty() && value.contains(&self.current_volume_title))
+    }
+}
+
+fn status_is_closed(status: &str) -> bool {
+    let lowered = status.trim().to_ascii_lowercase();
+    [
+        "resolved",
+        "closed",
+        "paid",
+        "revealed",
+        "completed",
+        "已解决",
+        "已回收",
+        "已揭示",
+        "已完成",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
+}
+
+fn structured_relevance_projection_trace(
+    manifest: &NovelProjectManifest,
+    relevance: &ChapterRelevanceSelection,
+) -> serde_json::Value {
+    let source = manifest
+        .contract
+        .as_ref()
+        .map(|contract| &contract.structured_contract_v2)
+        .unwrap_or(&manifest.structured_contract_v2);
+    let mut projected = source.clone();
+    project_structured_contract_v2(&mut projected, relevance);
+    json!({
+        "schema": "benshu.chapter_relevance_projection.v1",
+        "chapter_number": relevance.chapter_number,
+        "selected_characters": &relevance.names,
+        "selection_reasons": {
+            "characters": "primary, explicitly referenced by current chapter authority, or planned to enter now",
+            "entities": "explicit current-chapter/volume reference, current owner/status, or due schedule",
+            "compression_order": "deterministic relevance selection and stable priority precede generic array truncation"
+        },
+        "counts": {
+            "character_voice_ledger": {"before": source.character_voice_ledger.len(), "after": projected.character_voice_ledger.len()},
+            "emotional_state_ledger": {"before": source.emotional_state_ledger.len(), "after": projected.emotional_state_ledger.len()},
+            "relationship_interaction_quotas": {"before": source.relationship_interaction_quotas.len(), "after": projected.relationship_interaction_quotas.len()},
+            "power_progression.character_current_levels": {"before": source.power_progression.character_current_levels.len(), "after": projected.power_progression.character_current_levels.len()},
+            "time_model.age_progression": {"before": source.time_model.age_progression.len(), "after": projected.time_model.age_progression.len()},
+            "artifact_ledger": {"before": source.artifact_ledger.len(), "after": projected.artifact_ledger.len()},
+            "antagonist_pressure.antagonists": {"before": source.antagonist_pressure.antagonists.len(), "after": projected.antagonist_pressure.antagonists.len()},
+            "payoff_matrix": {"before": source.payoff_matrix.len(), "after": projected.payoff_matrix.len()},
+            "motif_ledger": {"before": source.motif_ledger.len(), "after": projected.motif_ledger.len()},
+            "reveal_schedule": {"before": source.reveal_schedule.len(), "after": projected.reveal_schedule.len()}
+        }
+    })
 }
 
 pub(super) fn sanitize_prompt_json_text_fields(
@@ -838,6 +1057,7 @@ pub(super) fn build_prompt_context_payload(context: &serde_json::Value) -> serde
         "/character_ledger",
         "/continuity_anchors",
         "/story_bible",
+        "/relevance_projection",
         "/narrative_progress",
         "/next_chapter_boundary",
         "/plan",
@@ -845,7 +1065,12 @@ pub(super) fn build_prompt_context_payload(context: &serde_json::Value) -> serde
         "/chapter_architecture",
         "/truth_files",
     ];
-    let compressible_paths = ["/recent_chapters", "/archives", "/sources"];
+    let compressible_paths = [
+        "/delivery_advisory",
+        "/recent_chapters",
+        "/archives",
+        "/sources",
+    ];
     let protected_chars = context_paths_chars(&prompt_context, &protected_paths);
     let compressible_chars = context_paths_chars(&prompt_context, &compressible_paths);
     let total_chars = serde_json::to_string(&prompt_context)
@@ -909,7 +1134,12 @@ fn shrink_compressible_context_to_budget(
         if current_chars <= total_budget_chars {
             break;
         }
-        for key in ["sources", "archives", "recent_chapters"] {
+        for key in [
+            "delivery_advisory",
+            "sources",
+            "archives",
+            "recent_chapters",
+        ] {
             if let Some(value) = prompt_context.get_mut(key) {
                 compact_json_prompt_view(value, max_string_chars, CONTEXT_RECENT_CHAPTER_LIMIT);
             }

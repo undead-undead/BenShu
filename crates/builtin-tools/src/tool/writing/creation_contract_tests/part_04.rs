@@ -60,7 +60,7 @@ async fn viewing_current_contract_is_read_only() {
 }
 
 #[test]
-fn non_band_chapter_unit_is_normalized_and_visible_to_user() {
+fn non_band_chapter_unit_is_not_promoted_to_user_authority() {
     let draft = super::super::build_initial_creation_draft(
         "session-normalized-band",
         "fiction",
@@ -68,13 +68,11 @@ fn non_band_chapter_unit_is_normalized_and_visible_to_user() {
     )
     .expect("draft");
 
-    assert_eq!(draft.chapter_unit_target, Some(2500));
+    assert_eq!(draft.chapter_unit_target, None);
+    assert!(!draft.chapter_unit_target_user_specified);
+    assert_eq!(draft.chapter_unit_target_user_authority, None);
     let status = super::super::render_creation_draft_compact_status(&draft);
-    assert!(status.contains("已自动归一到 2500"), "{status}");
-    assert!(
-        status.contains("小说每章字数仅支持 2500 / 5000"),
-        "{status}"
-    );
+    assert!(!status.contains("已自动归一"), "{status}");
 }
 
 #[test]

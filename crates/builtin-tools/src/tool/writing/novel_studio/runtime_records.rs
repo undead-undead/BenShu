@@ -2,6 +2,228 @@ use super::storage::atomic_write_file;
 use super::*;
 use sha2::{Digest, Sha256};
 
+const DELIVERY_REVIEW_WINDOW_SIZE: usize = 5;
+const DELIVERY_REVIEW_SAMPLE_EDGE_CHARS: usize = 800;
+const DELIVERY_REVIEW_SAMPLE_MIDDLE_CHARS: usize = 600;
+const DELIVERY_REVIEW_ADVISORY_LIMIT: usize = 6;
+const DELIVERY_REVIEW_ADVISORY_CHARS: usize = 360;
+
+#[derive(Debug)]
+pub(super) struct DeliveryWindowSnapshot {
+    pub(super) range_start: usize,
+    pub(super) range_end: usize,
+    pub(super) approval_fingerprint: String,
+    pub(super) body_fingerprint: String,
+    pub(super) authority_fingerprint: String,
+    pub(super) aggregate_fingerprint: String,
+    pub(super) prompt_payload: serde_json::Value,
+}
+
+fn bounded_middle_sample(value: &str, max_chars: usize) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    if chars.len() <= max_chars {
+        return chars.into_iter().collect();
+    }
+    let start = chars.len().saturating_sub(max_chars) / 2;
+    chars[start..start + max_chars].iter().collect()
+}
+
+fn bounded_end_sample(value: &str, max_chars: usize) -> String {
+    let chars = value.chars().collect::<Vec<_>>();
+    let start = chars.len().saturating_sub(max_chars);
+    chars[start..].iter().collect()
+}
+
+fn normalize_delivery_advisories(values: &[DeliveryAdvisory]) -> Vec<DeliveryAdvisory> {
+    const ALLOWED: [&str; 6] = [
+        "opening",
+        "ending",
+        "dialogue",
+        "scene_mix",
+        "rhythm",
+        "reader_promise",
+    ];
+    let mut normalized = values
+        .iter()
+        .filter_map(|item| {
+            let category = item.category.trim().to_ascii_lowercase();
+            let message = item.message.trim();
+            (ALLOWED.contains(&category.as_str()) && !message.is_empty()).then(|| {
+                DeliveryAdvisory {
+                    category,
+                    message: preview_chars(message, DELIVERY_REVIEW_ADVISORY_CHARS),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    normalized.sort_by(|left, right| {
+        (left.category.as_str(), left.message.as_str())
+            .cmp(&(right.category.as_str(), right.message.as_str()))
+    });
+    normalized.dedup();
+    normalized.truncate(DELIVERY_REVIEW_ADVISORY_LIMIT);
+    normalized
+}
+
+pub(super) async fn load_delivery_window_snapshot(
+    project_dir: &Path,
+    manifest: &NovelProjectManifest,
+    range_end: usize,
+) -> anyhow::Result<Option<DeliveryWindowSnapshot>> {
+    if range_end == 0 || range_end % DELIVERY_REVIEW_WINDOW_SIZE != 0 {
+        return Ok(None);
+    }
+    let progress = durable_chapter_progress(project_dir, manifest).await;
+    if progress.approved_prefix_chapters < range_end {
+        return Ok(None);
+    }
+    let range_start = range_end + 1 - DELIVERY_REVIEW_WINDOW_SIZE;
+    let mut approval_fingerprints = Vec::with_capacity(DELIVERY_REVIEW_WINDOW_SIZE);
+    let mut body_fingerprints = Vec::with_capacity(DELIVERY_REVIEW_WINDOW_SIZE);
+    let mut authority_fingerprints = Vec::with_capacity(DELIVERY_REVIEW_WINDOW_SIZE);
+    let mut chapters = Vec::with_capacity(DELIVERY_REVIEW_WINDOW_SIZE);
+    for chapter_number in range_start..=range_end {
+        let Some(chapter) = manifest
+            .chapters
+            .iter()
+            .find(|chapter| chapter.number == chapter_number && chapter_is_approved(chapter))
+        else {
+            return Ok(None);
+        };
+        let relative_path = Path::new(&chapter.path);
+        if relative_path.is_absolute()
+            || relative_path
+                .components()
+                .any(|part| matches!(part, std::path::Component::ParentDir))
+        {
+            return Ok(None);
+        }
+        let raw = tokio::fs::read_to_string(project_dir.join(relative_path)).await?;
+        let body = normalize_chapter_body_for_record(&strip_frontmatter(&raw), &chapter.title);
+        let Some(receipt) = read_approval_receipt(project_dir, chapter_number).await? else {
+            return Ok(None);
+        };
+        let Some(settlement) = read_approved_settlement(project_dir, chapter_number).await? else {
+            return Ok(None);
+        };
+        let body_fingerprint = chapter_quality::chapter_body_fingerprint(&body);
+        if receipt.legacy
+            || receipt.body_fingerprint != body_fingerprint
+            || settlement.body_fingerprint != body_fingerprint
+            || receipt.authority_fingerprint != settlement.authority_fingerprint
+            || receipt.settlement_fingerprint != governance::authority_fingerprint(&settlement)
+        {
+            return Ok(None);
+        }
+        let review_advisories = manifest
+            .reviews
+            .iter()
+            .rev()
+            .find(|review| {
+                review.chapter_number == chapter_number
+                    && review.verdict == "passed"
+                    && review.locally_validated
+                    && review.chapter_fingerprint == body_fingerprint
+                    && review.authority_fingerprint == receipt.authority_fingerprint
+                    && review
+                        .findings
+                        .iter()
+                        .all(|finding| !finding.hard_blocking())
+                    && governance::authority_fingerprint(review) == receipt.review_fingerprint
+            })
+            .map(|review| review.advisories.clone())
+            .unwrap_or_default();
+        let hook_debt = manifest
+            .hook_debt_reports
+            .iter()
+            .rev()
+            .find(|report| report.chapter_number == chapter_number)
+            .map(|report| report.debts.clone())
+            .unwrap_or_default();
+        approval_fingerprints.push(governance::authority_fingerprint(&receipt));
+        body_fingerprints.push(body_fingerprint.clone());
+        authority_fingerprints.push(receipt.authority_fingerprint.clone());
+        chapters.push(json!({
+            "number": chapter_number,
+            "title": chapter.title,
+            "body_fingerprint": body_fingerprint,
+            "authority_fingerprint": receipt.authority_fingerprint,
+            "settlement": {
+                "chapter_summary": settlement.chapter_summary,
+                "current_state": settlement.current_state,
+                "pending_hooks": settlement.pending_hooks,
+                "state_changes": settlement.state_changes,
+                "resolved_hooks": settlement.resolved_hooks,
+            },
+            "body_samples": {
+                "opening": preview_chars(&body, DELIVERY_REVIEW_SAMPLE_EDGE_CHARS),
+                "middle": bounded_middle_sample(&body, DELIVERY_REVIEW_SAMPLE_MIDDLE_CHARS),
+                "ending": bounded_end_sample(&body, DELIVERY_REVIEW_SAMPLE_EDGE_CHARS),
+            },
+            "review_advisories": review_advisories,
+            "hook_debt": hook_debt,
+        }));
+    }
+    let approval_fingerprint = governance::authority_fingerprint(&approval_fingerprints);
+    let body_fingerprint = governance::authority_fingerprint(&body_fingerprints);
+    let authority_fingerprint = governance::authority_fingerprint(&authority_fingerprints);
+    let aggregate_fingerprint = governance::authority_fingerprint(&json!({
+        "range_start": range_start,
+        "range_end": range_end,
+        "approval_fingerprint": approval_fingerprint,
+        "body_fingerprint": body_fingerprint,
+        "authority_fingerprint": authority_fingerprint,
+    }));
+    Ok(Some(DeliveryWindowSnapshot {
+        range_start,
+        range_end,
+        approval_fingerprint,
+        body_fingerprint,
+        authority_fingerprint,
+        aggregate_fingerprint,
+        prompt_payload: json!({
+            "schema_version": "benshu.delivery_advisory_input.v1",
+            "authority": false,
+            "scope": "delivery",
+            "range_start": range_start,
+            "range_end": range_end,
+            "chapters": chapters,
+        }),
+    }))
+}
+
+pub(super) async fn current_delivery_advisory_context(
+    project_dir: &Path,
+    manifest: &NovelProjectManifest,
+    chapter_number: usize,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    for record in manifest
+        .delivery_advisory_windows
+        .iter()
+        .rev()
+        .filter(|record| record.status == "completed" && record.range_end < chapter_number)
+    {
+        let Some(snapshot) =
+            load_delivery_window_snapshot(project_dir, manifest, record.range_end).await?
+        else {
+            continue;
+        };
+        if snapshot.aggregate_fingerprint != record.aggregate_fingerprint {
+            continue;
+        }
+        return Ok(Some(json!({
+            "authority": false,
+            "scope": "delivery",
+            "range_start": record.range_start,
+            "range_end": record.range_end,
+            "advisories": normalize_delivery_advisories(&record.advisories),
+            "score": record.score,
+            "rule": "These bounded suggestions may change delivery form only. They cannot change story facts, identities, world rules, hooks, or ending authority."
+        })));
+    }
+    Ok(None)
+}
+
 pub(super) async fn accepted_best_candidate_matches(
     project_dir: &Path,
     chapter_number: usize,
@@ -82,6 +304,132 @@ impl NovelStudioTool {
             "success": true,
             "runtime_effect": "artifact.checkpointed",
             "review_cycle": record
+        }))
+    }
+
+    pub(in crate::tool::writing::novel_studio) async fn prepare_delivery_advisory_window(
+        &self,
+        args: &NovelStudioArgs,
+    ) -> anyhow::Result<serde_json::Value> {
+        let project_dir = self.require_project_path(args)?;
+        let range_end = args
+            .chapter_number
+            .ok_or_else(|| anyhow::anyhow!("chapter_number is required"))?;
+        let manifest = self.read_manifest(&project_dir).await?;
+        let Some(snapshot) =
+            load_delivery_window_snapshot(&project_dir, &manifest, range_end).await?
+        else {
+            return Ok(json!({
+                "success": true,
+                "ready": false,
+                "already_recorded": false,
+                "chapter_number": range_end,
+                "reason": "delivery review requires a complete, receipt-backed contiguous approved five-chapter window"
+            }));
+        };
+        if let Some(record) = manifest.delivery_advisory_windows.iter().find(|record| {
+            record.range_start == snapshot.range_start
+                && record.range_end == snapshot.range_end
+                && record.aggregate_fingerprint == snapshot.aggregate_fingerprint
+                && matches!(record.status.as_str(), "completed" | "terminal_degraded")
+        }) {
+            return Ok(json!({
+                "success": true,
+                "ready": true,
+                "already_recorded": true,
+                "aggregate_fingerprint": snapshot.aggregate_fingerprint,
+                "record": record
+            }));
+        }
+        Ok(json!({
+            "success": true,
+            "ready": true,
+            "already_recorded": false,
+            "aggregate_fingerprint": snapshot.aggregate_fingerprint,
+            "window": snapshot.prompt_payload
+        }))
+    }
+
+    pub(in crate::tool::writing::novel_studio) async fn commit_delivery_advisory_window(
+        &self,
+        args: &NovelStudioArgs,
+    ) -> anyhow::Result<serde_json::Value> {
+        let project_dir = self.require_project_path(args)?;
+        let range_end = args
+            .chapter_number
+            .ok_or_else(|| anyhow::anyhow!("chapter_number is required"))?;
+        let mut manifest = self.read_manifest(&project_dir).await?;
+        let snapshot = load_delivery_window_snapshot(&project_dir, &manifest, range_end)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("delivery advisory window is no longer current"))?;
+        if args.candidate_fingerprint.trim() != snapshot.aggregate_fingerprint {
+            anyhow::bail!("delivery advisory window changed before commit");
+        }
+        if let Some(record) = manifest.delivery_advisory_windows.iter().find(|record| {
+            record.range_start == snapshot.range_start
+                && record.range_end == snapshot.range_end
+                && record.aggregate_fingerprint == snapshot.aggregate_fingerprint
+                && matches!(record.status.as_str(), "completed" | "terminal_degraded")
+        }) {
+            return Ok(json!({
+                "success": true,
+                "already_recorded": true,
+                "runtime_effect": "artifact.unchanged",
+                "record": record
+            }));
+        }
+        let status = match args.status.trim() {
+            "completed" => "completed",
+            "terminal_degraded" => "terminal_degraded",
+            _ => anyhow::bail!("delivery advisory status must be completed or terminal_degraded"),
+        };
+        let advisories = if status == "completed" {
+            normalize_delivery_advisories(&args.delivery_advisories)
+        } else {
+            Vec::new()
+        };
+        let score = (status == "completed").then_some(args.score).flatten();
+        let artifact_path = format!(
+            "reviews/delivery/window-{:04}-{:04}.json",
+            snapshot.range_start, snapshot.range_end
+        );
+        let record = DeliveryAdvisoryWindowRecord {
+            range_start: snapshot.range_start,
+            range_end: snapshot.range_end,
+            approval_fingerprint: snapshot.approval_fingerprint,
+            body_fingerprint: snapshot.body_fingerprint,
+            authority_fingerprint: snapshot.authority_fingerprint,
+            aggregate_fingerprint: snapshot.aggregate_fingerprint,
+            advisories,
+            score,
+            artifact_path: artifact_path.clone(),
+            status: status.to_string(),
+            degraded_reason: if status == "terminal_degraded" {
+                preview_chars(args.feedback.trim(), DELIVERY_REVIEW_ADVISORY_CHARS)
+            } else {
+                String::new()
+            },
+            created_at: now_iso(),
+        };
+        atomic_write_file(
+            project_dir.join(&artifact_path),
+            serde_json::to_string_pretty(&record)?,
+        )
+        .await?;
+        manifest.delivery_advisory_windows.retain(|existing| {
+            existing.range_start != record.range_start || existing.range_end != record.range_end
+        });
+        manifest.delivery_advisory_windows.push(record.clone());
+        manifest
+            .delivery_advisory_windows
+            .sort_by_key(|record| (record.range_start, record.range_end));
+        manifest.updated_at = now_iso();
+        self.write_manifest(&project_dir, &manifest).await?;
+        Ok(json!({
+            "success": true,
+            "already_recorded": false,
+            "runtime_effect": "artifact.written",
+            "record": record
         }))
     }
 }

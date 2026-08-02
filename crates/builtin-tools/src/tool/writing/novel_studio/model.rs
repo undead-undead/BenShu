@@ -251,6 +251,10 @@ pub(super) struct NovelStudioArgs {
     pub(super) findings: Vec<chapter_quality::ChapterFinding>,
     #[serde(default)]
     pub(super) advisories: Vec<String>,
+    /// Internal typed output for the post-approval delivery review. This is
+    /// intentionally absent from the public tool schema.
+    #[serde(default)]
+    pub(super) delivery_advisories: Vec<DeliveryAdvisory>,
     #[serde(default)]
     pub(super) score: Option<u8>,
     #[serde(default)]
@@ -322,6 +326,8 @@ pub(super) struct NovelProjectManifest {
     pub(super) truth_validations: Vec<TruthValidationRecord>,
     #[serde(default)]
     pub(super) hook_debt_reports: Vec<HookDebtReportRecord>,
+    #[serde(default)]
+    pub(super) delivery_advisory_windows: Vec<DeliveryAdvisoryWindowRecord>,
     #[serde(default)]
     pub(super) truth_files: Vec<TruthFileRecord>,
     #[serde(default)]
@@ -659,6 +665,31 @@ pub(super) struct HookDebtReportRecord {
     pub(super) chapter_number: usize,
     pub(super) path: String,
     pub(super) debts: Vec<String>,
+    pub(super) created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct DeliveryAdvisory {
+    pub(super) category: String,
+    pub(super) message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct DeliveryAdvisoryWindowRecord {
+    pub(super) range_start: usize,
+    pub(super) range_end: usize,
+    pub(super) approval_fingerprint: String,
+    pub(super) body_fingerprint: String,
+    pub(super) authority_fingerprint: String,
+    pub(super) aggregate_fingerprint: String,
+    #[serde(default)]
+    pub(super) advisories: Vec<DeliveryAdvisory>,
+    #[serde(default)]
+    pub(super) score: Option<u8>,
+    pub(super) artifact_path: String,
+    pub(super) status: String,
+    #[serde(default)]
+    pub(super) degraded_reason: String,
     pub(super) created_at: String,
 }
 

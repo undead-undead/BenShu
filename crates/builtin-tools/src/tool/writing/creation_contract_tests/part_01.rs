@@ -311,7 +311,7 @@
     }
 
     #[tokio::test]
-    async fn thin_fiction_opening_only_returns_intake_response() {
+    async fn thin_fiction_opening_creates_draft_and_asks_only_for_required_inputs() {
         let mut runtime = MockCreationDraftRuntime {
             draft: None,
             recovered_draft: None,
@@ -332,9 +332,160 @@
 
         assert_eq!(response.chat_route, "coordinator::creation_intake");
         assert_eq!(response.tool_surface_mode, "fiction");
-        assert!(response.response.contains("你来定"));
-        assert!(runtime.draft.is_none());
-        assert_eq!(runtime.saved, 0);
+        assert!(response.response.contains("小说题材"));
+        assert!(response.response.contains("小说总字数"));
+        assert!(response.response.contains("2500 或 5000"));
+        assert!(!response.response.contains("你来定"));
+        assert!(runtime.draft.is_some());
+        assert_eq!(runtime.saved, 1);
+    }
+
+    #[tokio::test]
+    async fn complete_minimal_fiction_request_starts_contract_generation_without_questionnaire() {
+        let mut runtime = MockCreationDraftRuntime {
+            draft: None,
+            recovered_draft: None,
+            continuation_project_path: None,
+            project_path: "data/generated/novels/test-project".to_string(),
+            saved: 0,
+            approved: 0,
+        };
+
+        let outcome = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-a",
+            "写一本10万字的修仙小说，每章2500字。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::ContinueWithMessage(prompt) = outcome else {
+            panic!("three required inputs should start the existing contract generator");
+        };
+
+        assert!(prompt.contains(super::super::CREATION_PLANNING_DIALOGUE_MARKER));
+        let draft = runtime.draft.expect("saved draft");
+        assert_eq!(draft.target_units, Some(100_000));
+        assert_eq!(draft.user_chapter_unit_target(), Some(2500));
+        assert!(!draft.genre.trim().is_empty());
+    }
+
+    #[tokio::test]
+    async fn unsupported_new_fiction_tier_is_not_silently_normalized() {
+        let mut runtime = MockCreationDraftRuntime {
+            draft: None,
+            recovered_draft: None,
+            continuation_project_path: None,
+            project_path: "data/generated/novels/test-project".to_string(),
+            saved: 0,
+            approved: 0,
+        };
+
+        let outcome = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-a",
+            "写一本10万字的都市小说，每章3000字。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::Respond(response) = outcome else {
+            panic!("unsupported tier must stay in the visible intake flow");
+        };
+
+        assert!(response.response.contains("不会自动改成临近值"));
+        assert!(response.response.contains("2500 或 5000"));
+        let draft = runtime.draft.expect("saved draft");
+        assert_eq!(draft.chapter_unit_target, None);
+        assert!(!draft.chapter_unit_target_user_specified);
+        assert_eq!(draft.chapter_unit_target_user_authority, None);
+    }
+
+    #[tokio::test]
+    async fn missing_fiction_inputs_accumulate_and_start_contract_once_complete() {
+        let mut runtime = MockCreationDraftRuntime {
+            draft: None,
+            recovered_draft: None,
+            continuation_project_path: None,
+            project_path: "data/generated/novels/test-project".to_string(),
+            saved: 0,
+            approved: 0,
+        };
+
+        let first = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-a",
+            "我想写一本修仙小说。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::Respond(first) = first else {
+            panic!("missing total and tier should remain in intake");
+        };
+        assert!(!first.response.contains("小说题材"));
+        assert!(first.response.contains("小说总字数"));
+        assert!(first.response.contains("2500 或 5000"));
+
+        let second = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-a",
+            "总字数10万字，章节档位5000字。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::ContinueWithMessage(prompt) = second else {
+            panic!("completing the three inputs should start contract generation");
+        };
+        assert!(prompt.contains(super::super::CREATION_PLANNING_DIALOGUE_MARKER));
+        let draft = runtime.draft.expect("saved draft");
+        assert_eq!(draft.target_units, Some(100_000));
+        assert_eq!(draft.user_chapter_unit_target(), Some(5000));
+        assert!(draft.genre.contains("修仙"));
+    }
+
+    #[tokio::test]
+    async fn missing_genre_reply_completes_the_same_saved_fiction_draft() {
+        let mut runtime = MockCreationDraftRuntime {
+            draft: None,
+            recovered_draft: None,
+            continuation_project_path: None,
+            project_path: "data/generated/novels/test-project".to_string(),
+            saved: 0,
+            approved: 0,
+        };
+
+        let first = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-genre-followup",
+            "写一本总字数10万字的小说，每章2500字。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::Respond(first) = first else {
+            panic!("missing genre should remain in intake");
+        };
+        assert!(first.response.contains("小说题材"));
+        assert!(!first.response.contains("小说总字数"));
+
+        let second = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-genre-followup",
+            "题材是悬疑推理。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::ContinueWithMessage(prompt) = second else {
+            panic!("genre reply should start the existing contract generator");
+        };
+        assert!(prompt.contains(super::super::CREATION_PLANNING_DIALOGUE_MARKER));
+        let draft = runtime.draft.expect("saved draft");
+        assert_eq!(draft.target_units, Some(100_000));
+        assert_eq!(draft.user_chapter_unit_target(), Some(2500));
+        assert!(draft.genre.contains("悬疑"));
     }
 
     #[tokio::test]
@@ -815,8 +966,10 @@
             panic!("incomplete contract should be blocked in chat, not converted into repair");
         };
 
-        assert!(response.response.contains("当前写作合同还不能进入正文写作"));
-        assert!(response.response.contains("需要补齐"));
+        assert!(response.response.contains("生成完整小说合同前"));
+        assert!(response.response.contains("小说题材"));
+        assert!(response.response.contains("小说总字数"));
+        assert!(response.response.contains("2500 或 5000"));
         assert!(!response
             .response
             .contains(super::super::CREATION_PLANNING_DIALOGUE_MARKER));
@@ -1000,7 +1153,8 @@
 
         assert!(draft.genre.contains("玄幻") || draft.brief.contains("玄幻"));
         assert_eq!(draft.target_units, None);
-        assert_eq!(draft.chapter_unit_target, Some(5000));
+        assert_eq!(draft.chapter_unit_target, None);
+        assert!(!draft.chapter_unit_target_user_specified);
         assert_eq!(draft.max_chapters_per_turn, Some(1));
         assert_eq!(draft.export_format, "txt");
 
@@ -1010,7 +1164,7 @@
         );
 
         assert_eq!(draft.target_units, Some(100000));
-        assert_eq!(draft.chapter_unit_target, Some(2500));
+        assert_eq!(draft.chapter_unit_target, None);
 
         super::super::apply_message_to_creation_draft(
             &mut draft,
@@ -1351,7 +1505,7 @@
     }
 
     #[test]
-    fn creation_draft_separates_total_and_chapter_unit_targets() {
+    fn creation_draft_keeps_total_exact_and_rejects_unsupported_new_chapter_tiers() {
         let draft = super::super::build_initial_creation_draft(
             "session-a",
             "fiction",
@@ -1360,7 +1514,8 @@
         .expect("draft");
 
         assert_eq!(draft.target_units, Some(500000));
-        assert_eq!(draft.chapter_unit_target, Some(2500));
+        assert_eq!(draft.chapter_unit_target, None);
+        assert!(!draft.chapter_unit_target_user_specified);
 
         let draft = super::super::build_initial_creation_draft(
             "session-b",
@@ -1370,7 +1525,8 @@
         .expect("draft");
 
         assert_eq!(draft.target_units, Some(500000));
-        assert_eq!(draft.chapter_unit_target, Some(5000));
+        assert_eq!(draft.chapter_unit_target, None);
+        assert!(!draft.chapter_unit_target_user_specified);
 
         let draft = super::super::build_initial_creation_draft(
             "session-c",

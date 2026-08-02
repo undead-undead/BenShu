@@ -8,13 +8,61 @@ mod revision_prompt;
 pub(super) use issue_classification::*;
 pub(super) use revision_prompt::*;
 
-pub(super) fn chapter_requires_periodic_full_audit(chapter_number: usize) -> bool {
+pub(super) fn chapter_completes_delivery_review_window(chapter_number: usize) -> bool {
     chapter_number > 0 && chapter_number % 5 == 0
 }
 
 pub(super) fn chapter_requires_llm_quality_audit(chapter_number: usize) -> bool {
-    chapter_number > 0
-        && (chapter_number <= 2 || chapter_requires_periodic_full_audit(chapter_number))
+    chapter_number > 0 && chapter_number <= 2
+}
+
+pub(super) fn delivery_advisory_window_prompt(language: &str, window: &Value) -> String {
+    let window = serde_json::to_string(window).unwrap_or_else(|_| "{}".to_string());
+    if language_looks_cjk(language) {
+        return format!(
+            "你是小说交付表现观察员。下面是五个连续、已批准章节的受控只读样本与最终正文状态结算。只比较这五章的交付表现，不改写正文，不新增剧情事实，不修改人物身份、世界规则、伏笔状态、终局或合同。\n\
+             观察开篇和章尾是否重复、主要人物对白是否同质、场景类型是否偏科、句段节奏是否长期单一，以及读者承诺是否持续得到可见兑现。因果、关系、情绪或伏笔问题只能转写为下一阶段的表达/交付建议，不能宣称新的故事事实。\n\
+             只返回 JSON：{{\"advisories\":[{{\"category\":\"opening|ending|dialogue|scene_mix|rhythm|reader_promise\",\"message\":\"简短、可执行且不改变故事事实的建议\"}}],\"score\":0-100}}。最多 6 条；没有可靠建议时返回空数组。不要输出 verdict、finding、blocker、next_action、Markdown 或解释。score 仅用于观测。\n\n五章窗口：\n{window}"
+        );
+    }
+    format!(
+        "You observe delivery patterns across five contiguous approved fiction chapters. The bounded read-only samples and final-body settlements follow. Compare delivery only: opening and ending repetition, homogeneous character voices, scene mix, sentence/paragraph rhythm, and visible fulfillment of the reader promise. Do not rewrite prose or invent/alter story facts, identities, world rules, hook state, ending, or contract. Any causal, relationship, emotional, or hook concern must be phrased only as a delivery suggestion for the next window.\n\
+         Return JSON only: {{\"advisories\":[{{\"category\":\"opening|ending|dialogue|scene_mix|rhythm|reader_promise\",\"message\":\"short actionable advice that changes no story fact\"}}],\"score\":0-100}}. At most 6 items; use an empty array when evidence is insufficient. Never output verdict, finding, blocker, next_action, Markdown, or explanation. Score is telemetry only.\n\nFive-chapter window:\n{window}"
+    )
+}
+
+pub(super) fn parse_delivery_advisory_window_output(
+    raw: &str,
+) -> Option<RawDeliveryAdvisoryWindow> {
+    const ALLOWED: [&str; 6] = [
+        "opening",
+        "ending",
+        "dialogue",
+        "scene_mix",
+        "rhythm",
+        "reader_promise",
+    ];
+    let cleaned = clean_model_output(raw);
+    let json = novel_runner::extract_json(&cleaned)?;
+    let mut output = serde_json::from_str::<RawDeliveryAdvisoryWindow>(&json).ok()?;
+    output.advisories = output
+        .advisories
+        .into_iter()
+        .filter_map(|mut advisory| {
+            advisory.category = advisory.category.trim().to_ascii_lowercase();
+            advisory.message = advisory.message.trim().to_string();
+            (ALLOWED.contains(&advisory.category.as_str()) && !advisory.message.is_empty())
+                .then_some(advisory)
+        })
+        .collect();
+    output.advisories.sort_by(|left, right| {
+        (left.category.as_str(), left.message.as_str())
+            .cmp(&(right.category.as_str(), right.message.as_str()))
+    });
+    output.advisories.dedup_by(|left, right| left == right);
+    output.advisories.truncate(6);
+    output.score = output.score.map(|score| score.min(100));
+    Some(output)
 }
 
 pub(super) async fn read_chapter_body_from_write_result(value: &Value) -> Option<String> {
@@ -62,10 +110,10 @@ pub(super) fn llm_quality_audit_prompt(
         return format!(
             "你是小说章节的质量审稿人，只审稿，不改写。请检查第 {chapter_number} 章《{title}》是否适合进入正式章节。\n\
              重点检查：中文是否通顺；是否有乱码、外文残片、公式残片、JSON/工具回执；是否有明显错字残字、词语拼接错误、重复插入字符；是否不符合已给人物和情节合同；是否像摘要/大纲而不是正文；是否复述本章前文或上一段而没有新事件；是否只围绕设定加字、没有具体行动/代价/关系变化；新势力、新设定或关键帮助是否缺少铺垫和风险。必须单独检查正文最后 3 段：如果本章已经自然收束，后面却又追加一个没有完成动作闭环、因果后果或新收束的短动作段，属于正文截断/拼接残片，必须重写，不能因最后一句有句号就放行。\n\
-             必须以“项目与大纲权威”、“当前章节合同”和“上一批准状态”为权威：检查正文是否完成本章目标、是否提前消费未来章节事件、是否让角色弧线提前完成、是否改变既定时间线。还必须逐项核对正文新声明的主角身份、过去经历、知识或能力来源是否已存在于合同或批准状态；凭空增加的背景或知识来源会改变故事前提，属于必须重写的合同漂移。逐项核对同一关键物件在本章内的来源、持有者、位置、状态和首次获得事件；不能先写角色已经持有某物，后面又把同名或同描述物件当作首次获得，除非正文明确区分为两个物件且合同允许。章尾必须让下一大纲节点仍能自然发生；若地点、任务、人物状态或因果方向被改成与下一节点冲突，属于必须重写的合同漂移。未经大纲或既有伏笔支持的新主线、新谜团、新关键物件，若取代本章目标或把故事引向另一任务，也属于硬错误。对照近期章尾，若当前章再次使用高度相似的套话、悬念句或同一种收束动作，视为需要重写的跨章重复。若合同明确了时代或技术边界，还要检查正文用语、器物和人物认知是否明显越界。\n\
+             必须以“项目与大纲权威”、“当前章节合同”和“上一批准状态”为权威：检查正文是否完成本章目标、是否提前消费未来章节事件、是否让角色弧线提前完成、是否改变既定时间线。还必须逐项核对正文新声明的主角身份、过去经历、知识或能力来源是否已存在于合同或批准状态；凭空增加的背景或知识来源会改变故事前提，属于必须重写的合同漂移。逐项核对同一关键物件在本章内的来源、持有者、位置、状态和首次获得事件；不能先写角色已经持有某物，后面又把同名或同描述物件当作首次获得，除非正文明确区分为两个物件且合同允许。章尾必须让下一大纲节点仍能自然发生；若地点、任务、人物状态或因果方向被改成与下一节点冲突，属于必须重写的合同漂移。未经大纲或既有伏笔支持的新主线、新谜团、新关键物件，若取代本章目标或把故事引向另一任务，也属于硬错误。若合同明确了时代或技术边界，还要检查正文用语、器物和人物认知是否明显越界。\n\
              “下一大纲节点”只表示未来禁区：本章没有完成或提及它是正确状态。绝不能因为下一章事件尚未发生而判错，包括人物、相遇、决定、揭示、冲突或转折尚未出现；也绝不能在 issues 或 feedback 中建议提前补入，若正文已经提前写入，才应指出并要求删除。\n\
              人物/术语是否漂移以确定性检查问题为准；如果确定性检查没有指出人物漂移，不要因为正文里同时出现多个角色名就判定主角改名。\n\
-             只把有精确权威引用和正文引用的合同/连续性冲突写入 authority_conflicts。每项必须包含 kind、authority_path（JSON Pointer）、authority_excerpt、body_excerpt、message。章节标题、摘要、关键事实、连续性记录、审美偏好、措辞、节奏和主观评分只能写入 advisories。\n\
+             只把有精确权威引用和正文引用的合同/连续性冲突写入 authority_conflicts。每项必须包含 kind、authority_path（JSON Pointer）、authority_excerpt、body_excerpt、message。章节标题、摘要、关键事实、连续性记录、审美偏好、措辞、节奏和主观评分只能写入 advisories。请在 advisories 中补充观察：前两三段是否建立本章具体问题，主要人物对白是否同质化或只在解释设定，关键行动/代价/关系变化是否被总结取代，修饰语是否遮蔽主体行动，句段节奏是否长期单一，以及近章开头/章尾形态是否重复。这些表现问题即使明显也不得写入 authority_conflicts，不得要求重写。\n\
              只返回 JSON，不要 Markdown，不要解释。JSON 字段：authority_conflicts(array object), advisories(array string), score(0-100)。score 只用于观测，不能决定是否重写。\n\n\
              确定性检查问题：\n- {deterministic}\n\n合同与连续性权威：\n{authority_context}\n\n正文：\n{content}"
         );
@@ -73,10 +121,10 @@ pub(super) fn llm_quality_audit_prompt(
     format!(
         "You are a fiction chapter quality auditor. Audit chapter {chapter_number}, \"{title}\", without rewriting it.\n\
          Check prose fluency, mojibake/foreign-script/math/JSON/tool receipt residue, obvious typo fragments or spliced words, contract drift, whether the text is actual prose rather than outline/summary, whether it repeats earlier prose without a new event, whether it only expands setting terms without concrete action/cost/relationship change, and whether new factions/rules/help arrive without setup or risk. Inspect the final three paragraphs separately: if a natural chapter landing is followed by a short action paragraph that does not complete its action-cause-consequence beat or reach a new landing, treat it as a truncated/spliced body fragment even when its final sentence has terminal punctuation.\n\
-         Treat the project/outline authority, current chapter contract, and previous approved state as authority. Check whether the chapter fulfills its own goal without consuming future chapter events, prematurely completing a character arc, changing the established timeline, repeating a recent chapter ending pattern, or violating an explicit period/technology boundary. Explicitly compare every newly asserted protagonist identity, prior history, knowledge source, or ability source against that authority; an unsupported source changes the story premise and is hard contract drift. Track each key object's origin, holder, location, state, and first-acquisition event within this chapter. Do not accept prose that says a character already holds an object and later presents an identically named or described object as a first acquisition unless the prose clearly distinguishes two objects and the contract permits both. The ending must leave the next outline node naturally reachable; a location, task, character state, or causal direction that conflicts with that node is hard contract drift. An unplanned main branch, mystery, or key object that replaces the chapter goal or diverts the story into another task is also a hard error.\n\
+         Treat the project/outline authority, current chapter contract, and previous approved state as authority. Check whether the chapter fulfills its own goal without consuming future chapter events, prematurely completing a character arc, changing the established timeline, or violating an explicit period/technology boundary. Explicitly compare every newly asserted protagonist identity, prior history, knowledge source, or ability source against that authority; an unsupported source changes the story premise and is hard contract drift. Track each key object's origin, holder, location, state, and first-acquisition event within this chapter. Do not accept prose that says a character already holds an object and later presents an identically named or described object as a first acquisition unless the prose clearly distinguishes two objects and the contract permits both. The ending must leave the next outline node naturally reachable; a location, task, character state, or causal direction that conflicts with that node is hard contract drift. An unplanned main branch, mystery, or key object that replaces the chapter goal or diverts the story into another task is also a hard error.\n\
          The next outline node is a future exclusion boundary. Its absence and non-mention in the current chapter are correct. Never fail the chapter for not completing or mentioning that future node, and never recommend moving its character, meeting, decision, reveal, conflict, or turn into the current chapter. Only fail when prose has already consumed it early, and then require removal.\n\
          Treat character/proper-noun drift as authoritative only when the deterministic issues list reports it; do not infer protagonist renaming merely because multiple character names appear in the prose.\n\
-         Put only contract or continuity conflicts with exact authority and body citations in authority_conflicts. Every item must contain kind, authority_path (JSON Pointer), authority_excerpt, body_excerpt, and message. Titles, summaries, key facts, continuity metadata, aesthetics, wording, pacing, and subjective scores belong only in advisories.\n\
+         Put only contract or continuity conflicts with exact authority and body citations in authority_conflicts. Every item must contain kind, authority_path (JSON Pointer), authority_excerpt, body_excerpt, and message. Titles, summaries, key facts, continuity metadata, aesthetics, wording, pacing, and subjective scores belong only in advisories. Use advisories to note whether the first few paragraphs establish a concrete chapter question; whether major voices are becoming homogeneous or dialogue merely explains the setting; whether summary replaces key action, cost, or relationship movement; whether modifiers obscure action; whether sentence/paragraph rhythm stays monotonous; and whether recent opening or ending forms repeat. These delivery observations must never enter authority_conflicts or demand a rewrite.\n\
          Return JSON only with authority_conflicts(array object), advisories(array string), and score(0-100). Score is telemetry and never decides revision.\n\n\
          Deterministic issues:\n- {deterministic}\n\nContract and continuity authority:\n{authority_context}\n\nProse:\n{content}"
     )

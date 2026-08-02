@@ -13,6 +13,10 @@ pub(crate) fn chapter_execution_prompt(
 ) -> String {
     let sections = required_memo_sections(language).join("\n- ");
     let rolling_lookahead = governance::ROLLING_OUTLINE_LOOKAHEAD_CHAPTERS;
+    let context_json = format!(
+        "{context_json}\n\n{}",
+        chapter_opening_architecture_instruction(language, chapter_number)
+    );
     let retry = previous_error
         .filter(|value| !value.trim().is_empty())
         .map(|value| {
@@ -43,6 +47,10 @@ pub(crate) fn writer_prompt(
     let output_contract = writer_output_contract_instruction(language, chapter_target, true);
     let stream_protocol = draft_stream_protocol_instruction(language);
     let anchors = contract_anchor_instruction(language, authority);
+    let context_json = format!(
+        "{context_json}\n\n{}",
+        prose_delivery_instruction(language, chapter_number)
+    );
     if is_chinese_language(language) {
         format!(
             "为《{title}》写第 {chapter_number} 章正文。\n\n{output_contract}\n\n{stream_protocol}\n\n{anchors}\n\n章节 memo：\n{}\n\n章节架构与执行合同：\n{architecture}\n\n上下文包：\n{context_json}\n\n标题必须根据本章执行合同里的 title_basis / irreversible_event / 大纲节点来取，不能复用近章标题，也不能堆叠与本章证据无关的抽象气氛词。标题和正文都必须使用中文；必须原样使用合同中的角色名和专有名，不要音译、翻译、改名或临时创造替代主角。同一关键物件的来源、持有者、位置、状态和首次获得事件必须前后一致；若正文存在两个相似物件，必须明确区分，不能把已经持有的物件再次写成首次获得。执行合同的 new_state_after_chapter 非空时，正文必须明确实现该章末变化；对应段落必须点名受影响的既有权威实体，并让一个完整句子、或同段最多三个相邻句子在不超过 320 个字符内足以证明变化已经发生。自然写入情节，不要照抄合同措辞，也不要提及证据或校验规则。正文中新写的数量可以作为场景细节，但同一对象的测量值、差值、比例、金额和时长必须算术一致，不能把小数点、单位或数量级改写成另一事实。正文必须完整，不要省略、不要占位、不要写内部说明。摘要、关键事实和连续性元数据由系统在最终正文之后结算，不要混入正文输出。",
@@ -54,6 +62,40 @@ pub(crate) fn writer_prompt(
             memo.body
         )
     }
+}
+
+fn chapter_opening_architecture_instruction(language: &str, chapter_number: usize) -> &'static str {
+    if is_chinese_language(language) {
+        if chapter_number == 1 {
+            "第一章开篇架构指导（非硬门）：第一个场景节点从 reader_promise.core_hook、第一章 goal/expected_turn 与主角起始状态或既有弧线张力共同推导；让前两三段尽快形成一个具体阅读问题。不要让纯世界观说明、天气、醒来、照镜子、人物履历或抽象感慨占满开头，也不要为此创造合同外人物、物件或主线。"
+        } else {
+            "普通章节开篇架构指导（非硬门）：第一个场景节点优先承接上一批准状态、当前章节目标或仍需推进的已有钩子；不得为追求刺激凭空制造新主线、新物件或新人物，也不得提前执行 next_chapter_boundary。缓冲、情绪或日常章节可以非冲突开头，但必须完成合同规定的场景功能。"
+        }
+    } else if chapter_number == 1 {
+        "Opening architecture guidance (advisory): derive the first beat from reader_promise.core_hook, chapter-one goal/expected_turn, and the protagonist's starting state or established arc tension. Establish a concrete reading question within the first few paragraphs without inventing an uncontracted person, object, or main plot. Do not spend the whole opening on exposition, weather, waking, mirrors, biography, or abstraction."
+    } else {
+        "Ordinary-chapter opening guidance (advisory): make the first beat carry forward the last approved state, current chapter goal, or an existing open hook. Do not invent a new main plot, object, or person for impact, and do not execute next_chapter_boundary early. A quiet, emotional, or everyday opening is valid when it performs the contracted scene function."
+    }
+}
+
+fn prose_delivery_instruction(language: &str, chapter_number: usize) -> String {
+    let opening = if is_chinese_language(language) {
+        if chapter_number == 1 {
+            "第一章前两三段尽快兑现执行包首场景所建立的具体阅读问题；不要另造三个候选开篇，也不规定固定字数或句式。"
+        } else {
+            "开头承接执行包首场景和上一批准状态；不得把下一章边界中的未来事件搬到本章开头。"
+        }
+    } else if chapter_number == 1 {
+        "Use the first few paragraphs to realize the concrete reading question in the first architecture beat. Do not create three candidate openings or impose a fixed length or sentence formula."
+    } else {
+        "Carry the first architecture beat and last approved state into the opening; never pull a future next-chapter-boundary event into this chapter."
+    };
+    let prose = if is_chinese_language(language) {
+        "每段主要对话至少承担行动推进、信息揭示、关系变化、冲突加压或人物暴露中的一项功能；遵守当前上下文投影的 character_voice_ledger，允许潜台词和动作反应，不要让人物把动机全部解释出来。用具体行动、感官和选择承载关键变化，避免连续抽象总结代替场景；长短句与段落密度服务当前场景，不强制禁用特定词语、插入金句或套用固定比例。"
+    } else {
+        "Each substantial exchange should advance action, reveal information, change a relationship, increase pressure, or expose character. Follow the projected character_voice_ledger; allow subtext and physical response instead of explaining every motive. Carry key changes through concrete action, perception, and choice rather than continuous abstract summary. Vary sentence and paragraph density to serve the scene without banned-word lists, forced quotable lines, or fixed ratios."
+    };
+    format!("{opening}\n{prose}")
 }
 
 fn draft_stream_protocol_instruction(language: &str) -> &'static str {

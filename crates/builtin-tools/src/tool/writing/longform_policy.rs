@@ -608,6 +608,16 @@ pub(crate) fn nearest_novel_chapter_unit_band(requested: usize) -> usize {
         .unwrap_or(step_target_chars())
 }
 
+/// Accepts a chapter tier only when the user selected one of the two public
+/// fiction bands exactly. Nearest-band normalization remains available below
+/// for generated candidates and migrated project data, but it must not turn a
+/// new user's unsupported request into explicit user authority.
+pub(crate) fn exact_novel_chapter_unit_band(requested: usize) -> Option<usize> {
+    novel_chapter_unit_bands()
+        .contains(&requested)
+        .then_some(requested)
+}
+
 pub(crate) fn normalize_user_chapter_unit_target(requested: Option<usize>) -> Option<usize> {
     requested
         .filter(|value| *value > 0)

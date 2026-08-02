@@ -39,6 +39,145 @@ fn final_observer_token_budget(required_changes: usize) -> u64 {
 }
 
 impl NovelChapterRunner {
+    pub(super) async fn ensure_delivery_advisory_window(
+        &self,
+        range_end: usize,
+    ) -> anyhow::Result<()> {
+        if !chapter_completes_delivery_review_window(range_end) {
+            return Ok(());
+        }
+        let preparation = match call_novel_studio_json_with_timeout(
+            &self.tool,
+            json!({
+                "action": "prepare_delivery_advisory_window",
+                "project_path": self.project_path,
+                "chapter_number": range_end
+            }),
+            local_tool_stage_timeout_secs(),
+            "prepare_delivery_advisory_window",
+        )
+        .await
+        {
+            Ok(value) => value,
+            Err(error) => {
+                record_workflow_checkpoint(
+                    &self.runtime,
+                    range_end as u32,
+                    "novel-delivery-review:prepare-degraded",
+                    format!("第 {range_end} 章交付窗口准备失败，已按非阻断策略继续：{error}"),
+                )
+                .await;
+                return Ok(());
+            }
+        };
+        if !preparation
+            .get("ready")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || preparation
+                .get("already_recorded")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        let aggregate_fingerprint = preparation
+            .get("aggregate_fingerprint")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        let window = preparation
+            .get("window")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let prompt = delivery_advisory_window_prompt(&self.language, &window);
+        let generated = tokio::time::timeout(
+            std::time::Duration::from_secs(90),
+            self.agent
+                .generate_text_only_with_max_tokens(&clean_provider_prompt(&prompt), Some(900)),
+        )
+        .await;
+        let (status, advisories, score, degraded_reason) = match generated {
+            Ok(Ok(raw)) => match parse_delivery_advisory_window_output(&raw) {
+                Some(output) => ("completed", output.advisories, output.score, String::new()),
+                None => (
+                    "terminal_degraded",
+                    Vec::new(),
+                    None,
+                    "delivery advisory output did not satisfy the typed schema".to_string(),
+                ),
+            },
+            Ok(Err(error)) => (
+                "terminal_degraded",
+                Vec::new(),
+                None,
+                format!("delivery advisory inference failed: {error}"),
+            ),
+            Err(_) => (
+                "terminal_degraded",
+                Vec::new(),
+                None,
+                "delivery advisory inference exceeded its bounded timeout".to_string(),
+            ),
+        };
+        let delivery_advisories = advisories
+            .into_iter()
+            .map(|item| {
+                json!({
+                    "category": item.category,
+                    "message": item.message
+                })
+            })
+            .collect::<Vec<_>>();
+        match call_novel_studio_json_with_timeout(
+            &self.tool,
+            json!({
+                "action": "commit_delivery_advisory_window",
+                "project_path": self.project_path,
+                "chapter_number": range_end,
+                "candidate_fingerprint": aggregate_fingerprint,
+                "delivery_advisories": delivery_advisories,
+                "score": score,
+                "status": status,
+                "feedback": degraded_reason
+            }),
+            local_tool_stage_timeout_secs(),
+            "commit_delivery_advisory_window",
+        )
+        .await
+        {
+            Ok(_) => {
+                record_workflow_checkpoint(
+                    &self.runtime,
+                    range_end as u32,
+                    if status == "completed" {
+                        "novel-delivery-review:completed"
+                    } else {
+                        "novel-delivery-review:terminal-degraded"
+                    },
+                    if status == "completed" {
+                        format!(
+                            "已完成截至第 {range_end} 章的五章交付复盘；建议仅影响后续表达方式。"
+                        )
+                    } else {
+                        format!("截至第 {range_end} 章的五章交付复盘已降级终止，不阻断下一章。")
+                    },
+                )
+                .await;
+            }
+            Err(error) => {
+                record_workflow_checkpoint(
+                    &self.runtime,
+                    range_end as u32,
+                    "novel-delivery-review:commit-degraded",
+                    format!("五章交付复盘记录提交失败，已按非阻断策略继续：{error}"),
+                )
+                .await;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) async fn observe_final_chapter_state(
         &self,
         chapter_number: usize,
@@ -180,9 +319,7 @@ impl NovelChapterRunner {
                 "read_only": true
             }));
         }
-        if write_result_is_clean_for_rule_audit(write_result)
-            && !chapter_requires_periodic_full_audit(chapter_number)
-        {
+        if write_result_is_clean_for_rule_audit(write_result) {
             return call_novel_studio_json(
                 &self.tool,
                 json!({

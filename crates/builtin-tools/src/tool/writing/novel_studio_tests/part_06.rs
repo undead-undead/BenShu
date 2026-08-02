@@ -126,6 +126,7 @@
             review_cycles: Vec::new(),
             truth_validations: Vec::new(),
             hook_debt_reports: Vec::new(),
+            delivery_advisory_windows: Vec::new(),
             truth_files: Vec::new(),
             archives: Vec::new(),
             contract: None,
@@ -177,6 +178,7 @@
             review_cycles: Vec::new(),
             truth_validations: Vec::new(),
             hook_debt_reports: Vec::new(),
+            delivery_advisory_windows: Vec::new(),
             truth_files: Vec::new(),
             archives: Vec::new(),
             contract: None,
@@ -235,6 +237,7 @@
             review_cycles: Vec::new(),
             truth_validations: Vec::new(),
             hook_debt_reports: Vec::new(),
+            delivery_advisory_windows: Vec::new(),
             truth_files: Vec::new(),
             archives: Vec::new(),
             contract: None,
@@ -1231,4 +1234,214 @@
             .is_some_and(|paths| paths
                 .iter()
                 .any(|path| path.as_str() == Some("/sources"))));
+        assert!(prompt
+            .pointer("/context_layers/compressible/paths")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|paths| paths
+                .iter()
+                .any(|path| path.as_str() == Some("/delivery_advisory"))));
+    }
+
+    async fn write_delivery_window_test_chapter(
+        project_dir: &std::path::Path,
+        manifest: &mut NovelProjectManifest,
+        chapter_number: usize,
+    ) {
+        tokio::fs::create_dir_all(project_dir.join("chapters"))
+            .await
+            .expect("chapter dir");
+        let title = format!("灯塔记录{chapter_number}");
+        let body = format!(
+            "守塔人沿着第{chapter_number}段石阶下行，核对潮汐刻度。他把这一夜发现的裂纹记进值守簿，又将信号灯调回安全频率。"
+        );
+        let path = format!("chapters/{chapter_number:04}.md");
+        tokio::fs::write(
+            project_dir.join(&path),
+            format!("# {title}\n\n{body}"),
+        )
+        .await
+        .expect("chapter body");
+        let body_fingerprint = chapter_quality::chapter_body_fingerprint(&body);
+        let authority_fingerprint = format!("authority-{chapter_number}");
+        let settlement = SettlementOutput {
+            chapter_fingerprint: body_fingerprint.clone(),
+            body_fingerprint: body_fingerprint.clone(),
+            authority_fingerprint: authority_fingerprint.clone(),
+            state_changes: Vec::new(),
+            degraded_reason: String::new(),
+            current_state: format!("第{chapter_number}段石阶的裂纹已记录。"),
+            pending_hooks: "灯塔底层的潮声来源仍待确认。".to_string(),
+            chapter_summary: format!("守塔人完成第{chapter_number}段石阶巡检。"),
+            continuity_updates: vec![format!("第{chapter_number}段石阶完成巡检")],
+            resolved_hooks: Vec::new(),
+        };
+        write_approved_settlement(project_dir, chapter_number, &settlement)
+            .await
+            .expect("settlement");
+        manifest.chapters.push(ChapterRecord {
+            number: chapter_number,
+            title,
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path,
+            summary: settlement.chapter_summary.clone(),
+            unit_count: body.chars().count(),
+            status: "approved".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: settlement.continuity_updates.clone(),
+            created_at: now_iso(),
+            updated_at: now_iso(),
+        });
+        let receipt = ApprovalReceipt {
+            transaction_id: format!("delivery-window-{chapter_number}"),
+            chapter_number,
+            body_fingerprint,
+            metadata_fingerprint: format!("metadata-{chapter_number}"),
+            authority_fingerprint,
+            review_fingerprint: format!("review-{chapter_number}"),
+            settlement_fingerprint: governance::authority_fingerprint(&settlement),
+            truth_fingerprint:
+                super::super::approval_transaction::approval_truth_fingerprint(manifest),
+            committed_at: now_iso(),
+            legacy: false,
+        };
+        write_approval_receipt(project_dir, &receipt)
+            .await
+            .expect("approval receipt");
+    }
+
+    #[tokio::test]
+    async fn delivery_review_requires_five_current_approved_receipts_and_invalidates_on_body_change()
+    {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut manifest = test_manifest_with_primary_character();
+        for chapter_number in 1..=4 {
+            write_delivery_window_test_chapter(dir.path(), &mut manifest, chapter_number).await;
+        }
+        assert!(load_delivery_window_snapshot(dir.path(), &manifest, 5)
+            .await
+            .expect("incomplete window")
+            .is_none());
+
+        write_delivery_window_test_chapter(dir.path(), &mut manifest, 5).await;
+        let snapshot = load_delivery_window_snapshot(dir.path(), &manifest, 5)
+            .await
+            .expect("complete window")
+            .expect("five approved chapters");
+        assert_eq!((snapshot.range_start, snapshot.range_end), (1, 5));
+        let review_count = manifest.reviews.len();
+        manifest.delivery_advisory_windows.push(DeliveryAdvisoryWindowRecord {
+            range_start: 1,
+            range_end: 5,
+            approval_fingerprint: snapshot.approval_fingerprint,
+            body_fingerprint: snapshot.body_fingerprint,
+            authority_fingerprint: snapshot.authority_fingerprint,
+            aggregate_fingerprint: snapshot.aggregate_fingerprint,
+            advisories: vec![DeliveryAdvisory {
+                category: "opening".to_string(),
+                message: "下一窗口避免连续使用巡检记录式开头。".to_string(),
+            }],
+            score: Some(80),
+            artifact_path: "reviews/delivery/window-0001-0005.json".to_string(),
+            status: "completed".to_string(),
+            degraded_reason: String::new(),
+            created_at: now_iso(),
+        });
+        let context = current_delivery_advisory_context(dir.path(), &manifest, 6)
+            .await
+            .expect("delivery context")
+            .expect("current advisory");
+        assert_eq!(context["authority"], false);
+        assert_eq!(context["scope"], "delivery");
+        assert_eq!(manifest.reviews.len(), review_count);
+
+        tokio::fs::write(
+            dir.path().join("chapters/0005.md"),
+            "# 灯塔记录5\n\n正文已经改变。",
+        )
+        .await
+        .expect("change approved body");
+        assert!(current_delivery_advisory_context(dir.path(), &manifest, 6)
+            .await
+            .expect("stale context")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn delivery_window_internal_commit_is_idempotent_and_does_not_touch_chapter_reviews() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project_dir = dir.path().join("delivery-project");
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .expect("project dir");
+        let tool = NovelStudioTool::new(dir.path().to_path_buf(), "tester");
+        let mut manifest = test_manifest_with_primary_character();
+        for chapter_number in 1..=5 {
+            write_delivery_window_test_chapter(&project_dir, &mut manifest, chapter_number).await;
+        }
+        tool.write_manifest(&project_dir, &manifest)
+            .await
+            .expect("manifest");
+        let prepare = tool
+            .call(
+                &json!({
+                    "action": "prepare_delivery_advisory_window",
+                    "project_path": project_dir,
+                    "chapter_number": 5
+                })
+                .to_string(),
+            )
+            .await
+            .expect("prepare delivery window");
+        let prepare: serde_json::Value =
+            serde_json::from_str(&prepare).expect("prepare json");
+        assert_eq!(prepare["ready"], true);
+        assert_eq!(prepare["already_recorded"], false);
+        let aggregate = prepare["aggregate_fingerprint"]
+            .as_str()
+            .expect("aggregate")
+            .to_string();
+        let commit_args = json!({
+            "action": "commit_delivery_advisory_window",
+            "project_path": project_dir,
+            "chapter_number": 5,
+            "candidate_fingerprint": aggregate,
+            "delivery_advisories": [{
+                "category": "dialogue",
+                "message": "下一窗口让主要人物用不同的行动目的组织对白。"
+            }, {
+                "category": "hard_finding",
+                "message": "这条必须被丢弃。"
+            }],
+            "score": 76,
+            "status": "completed"
+        });
+        let committed = tool
+            .call(&commit_args.to_string())
+            .await
+            .expect("commit delivery window");
+        let committed: serde_json::Value =
+            serde_json::from_str(&committed).expect("commit json");
+        assert_eq!(committed["success"], true);
+        assert_eq!(committed["already_recorded"], false);
+        assert_eq!(
+            committed["record"]["advisories"]
+                .as_array()
+                .map(Vec::len),
+            Some(1)
+        );
+
+        let replay = tool
+            .call(&commit_args.to_string())
+            .await
+            .expect("replay delivery window");
+        let replay: serde_json::Value = serde_json::from_str(&replay).expect("replay json");
+        assert_eq!(replay["already_recorded"], true);
+        let stored = tool
+            .read_manifest(&project_dir)
+            .await
+            .expect("stored manifest");
+        assert_eq!(stored.delivery_advisory_windows.len(), 1);
+        assert!(stored.reviews.is_empty());
+        assert!(stored.review_cycles.is_empty());
     }

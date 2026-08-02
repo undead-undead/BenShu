@@ -276,6 +276,51 @@ pub fn creation_intake_response(message: &str) -> Option<CreationDraftUserRespon
     ))
 }
 
+fn fiction_creation_required_input_response(
+    draft: &SessionCreationDraftState,
+    latest_user: &str,
+) -> Option<CreationDraftUserResponse> {
+    if draft.artifact_kind != "fiction" || draft.is_approved() {
+        return None;
+    }
+
+    let raw_chapter_target = requested_raw_chapter_unit_target(latest_user);
+    let unsupported_chapter_target = raw_chapter_target
+        .is_some_and(|target| longform_policy::exact_novel_chapter_unit_band(target).is_none());
+    let mut missing = Vec::new();
+    if draft.genre.trim().is_empty() {
+        missing.push("小说题材（可以是修仙、都市、悬疑、言情或其他自然语言题材）");
+    }
+    if !draft.target_units_user_specified || !draft.target_units.is_some_and(|target| target > 0) {
+        missing.push("小说总字数（可任意指定正整数）");
+    }
+    if !draft.chapter_unit_target_user_specified
+        || !draft
+            .user_chapter_unit_target()
+            .is_some_and(|target| longform_policy::exact_novel_chapter_unit_band(target).is_some())
+    {
+        missing.push("章节字数档位（只能明确选择 2500 或 5000）");
+    }
+
+    if missing.is_empty() && !unsupported_chapter_target {
+        return None;
+    }
+
+    let mut response = if missing.is_empty() {
+        String::from("生成完整小说合同前，章节字数档位还没有有效更新。")
+    } else {
+        format!("生成完整小说合同前，还需要你明确：{}。", missing.join("、"))
+    };
+    if unsupported_chapter_target {
+        let requested = raw_chapter_target.unwrap_or_default();
+        response.push_str(&format!(
+            "你刚才填写的每章 {requested} 字不属于可选档位，我不会自动改成临近值；请选择 2500 或 5000。"
+        ));
+    }
+    response.push_str("其余书名、人物、世界观、主线、情绪、分卷、伏笔和结局由系统生成，合同展示后你仍可用自然语言修改。");
+    Some(CreationDraftUserResponse::new(response, "fiction"))
+}
+
 pub async fn handle_creation_draft_chat<R>(
     runtime: &mut R,
     session_id: &str,
@@ -294,6 +339,10 @@ where
             (!draft.project_path.trim().is_empty()).then_some(draft.project_path.as_str()),
             None,
         );
+        let supplies_missing_fiction_scale = draft.artifact_kind == "fiction"
+            && !draft.is_approved()
+            && (requested_total_unit_target(message).is_some()
+                || requested_raw_chapter_unit_target(message).is_some());
         if matches!(turn_intent, CreationDraftTurnIntent::Discard) {
             runtime.discard_draft(&draft).await?;
             runtime.clear_draft(session_id).await?;
@@ -306,6 +355,7 @@ where
         }
         if matches!(turn_intent, CreationDraftTurnIntent::ReadStatus)
             && !existing_work_continuation_for_status
+            && !supplies_missing_fiction_scale
         {
             return Ok(Some(CreationDraftTurnOutcome::Respond(
                 creation_draft_planning_response(&draft, message),
@@ -321,6 +371,11 @@ where
                 }),
             )));
         }
+
+        let fiction_creation_inputs_were_incomplete = draft.artifact_kind == "fiction"
+            && !draft.is_approved()
+            && draft.project_path.trim().is_empty()
+            && fiction_creation_required_input_response(&draft, "").is_some();
 
         let approval = matches!(turn_intent, CreationDraftTurnIntent::ApproveAndStart);
         let execution = creation_draft_execution_requested_for_intent(
@@ -370,11 +425,31 @@ where
         {
             return Ok(None);
         }
-        if !view_only && content_operation.is_none() && (modification || (!approval && !execution))
+        if !view_only
+            && content_operation.is_none()
+            && (fiction_creation_inputs_were_incomplete
+                || modification
+                || (!approval && !execution))
         {
             apply_message_to_creation_draft(&mut draft, message);
             runtime.update_draft(&draft).await?;
             draft.updated_at = chrono::Utc::now().to_rfc3339();
+        }
+
+        if !draft.is_approved()
+            && draft.project_path.trim().is_empty()
+            && !existing_work_continuation
+            && content_operation.is_none()
+        {
+            if let Some(response) = fiction_creation_required_input_response(&draft, message) {
+                runtime.save_draft(&draft).await?;
+                return Ok(Some(CreationDraftTurnOutcome::Respond(response)));
+            }
+            if fiction_creation_inputs_were_incomplete {
+                runtime.save_draft(&draft).await?;
+                let prompt = final_prompt_from_creation_framework_request(&draft, message);
+                return Ok(Some(CreationDraftTurnOutcome::ContinueWithMessage(prompt)));
+            }
         }
 
         if generated_title_revision
@@ -587,13 +662,18 @@ where
     }
 
     let decision = evaluate_creation_intake(message);
-    if decision.should_clarify() {
-        return Ok(creation_intake_response(message).map(CreationDraftTurnOutcome::Respond));
-    }
     let kind = decision
         .artifact_kind
         .clone()
         .or_else(|| detect_creation_artifact_kind(message));
+    if decision.should_clarify() {
+        if benshu_runtime_policy_core::creation_request_needs_adult_age_confirmation(message) {
+            return Ok(creation_intake_response(message).map(CreationDraftTurnOutcome::Respond));
+        }
+        if kind.as_deref() != Some("fiction") {
+            return Ok(creation_intake_response(message).map(CreationDraftTurnOutcome::Respond));
+        }
+    }
     if kind.is_none() && !decision.should_clarify() {
         return Ok(None);
     }
@@ -608,6 +688,9 @@ where
     runtime.save_draft(&draft).await?;
 
     if kind == "fiction" {
+        if let Some(response) = fiction_creation_required_input_response(&draft, message) {
+            return Ok(Some(CreationDraftTurnOutcome::Respond(response)));
+        }
         // Fresh fiction requests always enter the visible contract flow first.
         // Even "write directly" wording means "auto-complete the contract",
         // not "skip confirmation and start prose".

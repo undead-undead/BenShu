@@ -219,8 +219,16 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
         PROFILE_SPEED => 1536,
         _ => 2048,
     };
+    let recommended_ctx_size = auto_fit_context_size(
+        input,
+        model_weight_mb,
+        mmproj_weight_mb,
+        usable_vram_mb,
+        configured_ram_mb,
+        safety_margin_mb,
+    );
     let kv_cache_budget_mb =
-        estimate_kv_cache_budget_mb(input.ctx_size, &input.performance_profile);
+        estimate_kv_cache_budget_mb(recommended_ctx_size, &input.performance_profile);
     let runtime_overhead_mb = 1024;
     let available_for_weights = usable_vram_mb
         .saturating_sub(safety_margin_mb)
@@ -254,7 +262,6 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
         raw.clamp(profile_floor.min(total_layers), total_layers)
     };
 
-    let recommended_ctx_size = input.ctx_size;
     let recommended_batch_size = match normalized_profile(&input.performance_profile) {
         PROFILE_LOW_VRAM => 1024,
         PROFILE_SPEED => 2048,
@@ -353,12 +360,64 @@ pub fn recommend_llama_cpp_runtime(input: &LlamaCppRuntimeInput) -> LlamaCppRunt
             normalized_profile(&input.performance_profile),
             usable_vram_mb,
             model_weight_mb,
-            input.ctx_size,
+            recommended_ctx_size,
             total_layers,
             recommended_gpu_layers
         ),
         warnings,
     }
+}
+
+fn auto_fit_context_size(
+    input: &LlamaCppRuntimeInput,
+    model_weight_mb: u64,
+    mmproj_weight_mb: u64,
+    usable_vram_mb: u64,
+    configured_ram_mb: u64,
+    safety_margin_mb: u64,
+) -> u32 {
+    if model_weight_mb == 0
+        || usable_vram_mb == 0
+        || configured_ram_mb == 0
+        || input.ctx_size <= 4096
+    {
+        return input.ctx_size;
+    }
+
+    let requested_kv_mb = estimate_kv_cache_budget_mb(input.ctx_size, &input.performance_profile);
+    let runtime_overhead_mb = 1024;
+    let model_on_vram_with_requested_kv = model_weight_mb
+        .saturating_add(mmproj_weight_mb)
+        .saturating_add(requested_kv_mb)
+        .saturating_add(runtime_overhead_mb)
+        .saturating_add(safety_margin_mb);
+    let kv_in_ram_with_requested_ctx = model_weight_mb
+        .saturating_add(mmproj_weight_mb)
+        .saturating_add(requested_kv_mb)
+        .saturating_add(runtime_overhead_mb);
+    if model_on_vram_with_requested_kv <= usable_vram_mb
+        || kv_in_ram_with_requested_ctx <= configured_ram_mb
+    {
+        return input.ctx_size;
+    }
+
+    // Keep the largest standard context that leaves the complete model and its
+    // KV cache inside the detected VRAM budget. The automatic planner already
+    // uses the chosen context when deciding GPU layers, so this is a single
+    // resource decision rather than a second runtime fallback.
+    [131_072, 65_536, 32_768, 16_384, 8_192, 4_096]
+        .into_iter()
+        .filter(|candidate| *candidate <= input.ctx_size)
+        .find(|candidate| {
+            let kv_mb = estimate_kv_cache_budget_mb(*candidate, &input.performance_profile);
+            model_weight_mb
+                .saturating_add(mmproj_weight_mb)
+                .saturating_add(kv_mb)
+                .saturating_add(runtime_overhead_mb)
+                .saturating_add(safety_margin_mb)
+                <= usable_vram_mb
+        })
+        .unwrap_or(input.ctx_size)
 }
 
 pub fn build_effective_diagnostics(
@@ -736,7 +795,7 @@ mod tests {
     }
 
     #[test]
-    fn recommendation_does_not_move_kv_into_an_insufficient_ram_budget() {
+    fn recommendation_fits_context_when_vram_and_ram_cannot_hold_requested_kv() {
         let temp = tempfile::tempdir().expect("tempdir");
         let model_path = temp.path().join("gemma4-26b-q4_k_m.gguf");
         let model = std::fs::File::create(&model_path).expect("sparse model file");
@@ -762,9 +821,17 @@ mod tests {
 
         let recommendation = recommend_llama_cpp_runtime(&input);
 
+        assert_eq!(recommendation.recommended_ctx_size, 8192);
+        assert_eq!(recommendation.memory_plan.kv_cache_budget_mb, 3072);
+        assert_eq!(recommendation.recommended_gpu_layers, 64);
         assert!(recommendation.recommended_kv_offload);
-        assert!(recommendation.memory_plan.estimated_ram_mb < 24_576);
-        assert!(recommendation
+        assert!(
+            recommendation.memory_plan.estimated_vram_mb
+                + recommendation.memory_plan.safety_margin_mb
+                <= 24 * 1024
+        );
+        assert!(recommendation.memory_plan.estimated_ram_mb <= 4 * 1024);
+        assert!(!recommendation
             .warnings
             .iter()
             .any(|warning| warning.contains("kv_cache_has_no_budget_compliant_location")));

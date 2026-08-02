@@ -4529,6 +4529,26 @@ mod tests {
     }
 
     #[test]
+    fn authority_rewrite_replaces_governed_cjk_codename_without_touching_compounds() {
+        let replacements = BTreeMap::from([("零".to_string(), "唐维原".to_string())]);
+        let mut value =
+            "主角零在废料区收集记忆残片；秦予禾修复零的受损义体；零躲避企业巡逻队。零点信号和零件清单必须保留。"
+                .to_string();
+
+        rewrite_structured_character_references(&mut value, &replacements);
+
+        assert!(value.contains("主角唐维原在废料区"), "{value}");
+        assert!(value.contains("修复唐维原的受损义体"), "{value}");
+        assert!(value.contains("唐维原躲避企业巡逻队"), "{value}");
+        assert!(value.contains("零点信号"), "{value}");
+        assert!(value.contains("零件清单"), "{value}");
+        assert!(
+            !value.contains("主角零") && !value.contains("修复零的"),
+            "{value}"
+        );
+    }
+
+    #[test]
     fn authority_rewrite_replaces_stale_name_in_other_character_fields() {
         let mut contract = NovelCreationContract {
             characters: vec![
