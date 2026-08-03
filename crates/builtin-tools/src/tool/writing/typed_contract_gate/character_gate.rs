@@ -1066,6 +1066,11 @@ pub(super) fn reference_matches_authority_name_in_text(
         if known.is_empty() || reference == known {
             return false;
         }
+        if known.starts_with(reference)
+            && role_prefixed_reference_is_truncated_authority_surface(reference, known, text)
+        {
+            return true;
+        }
         let Some(tail) = reference.strip_prefix(known) else {
             return false;
         };
@@ -1085,6 +1090,39 @@ pub(super) fn reference_matches_authority_name_in_text(
         reference_has_authority_surface_context(reference, text)
             || authority_name_is_followed_by_grammar_phrase(reference, known, text)
     })
+}
+
+fn role_prefixed_reference_is_truncated_authority_surface(
+    reference: &str,
+    known: &str,
+    text: &str,
+) -> bool {
+    if reference.chars().count() < 2 || known.chars().count() <= reference.chars().count() {
+        return false;
+    }
+
+    let mut matched = false;
+    for marker in ROLE_REFERENCE_MARKERS {
+        let mut rest = text;
+        while let Some(index) = rest.find(marker) {
+            let after = &rest[index + marker.len()..];
+            if direct_role_reference_name(after).as_deref() == Some(reference) {
+                matched = true;
+                let surface = after
+                    .trim_start_matches(|ch: char| matches!(ch, '：' | ':' | ' ' | '\t'))
+                    .trim_start_matches('是');
+                if !surface.starts_with(known) {
+                    return false;
+                }
+            }
+            rest = &after[after
+                .char_indices()
+                .nth(1)
+                .map(|(idx, _)| idx)
+                .unwrap_or(after.len())..];
+        }
+    }
+    matched
 }
 
 fn authority_reference_tail_precedes_person_action(
@@ -1346,31 +1384,9 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
 
 fn text_before_reference_has_role_marker(before: &str) -> bool {
     let before = before.trim_end_matches(char::is_whitespace);
-    [
-        "主角",
-        "男主",
-        "女主",
-        "反派",
-        "对手",
-        "导师",
-        "盟友",
-        "同伴",
-        "关键角色",
-        "人物",
-        "角色",
-        "姐姐",
-        "妹妹",
-        "哥哥",
-        "弟弟",
-        "母亲",
-        "父亲",
-        "妻子",
-        "丈夫",
-        "女儿",
-        "儿子",
-    ]
-    .iter()
-    .any(|marker| before.ends_with(marker))
+    ROLE_REFERENCE_MARKERS
+        .iter()
+        .any(|marker| before.ends_with(marker))
 }
 
 fn reference_following_char_continues_compound_word(ch: char) -> bool {
@@ -1438,29 +1454,7 @@ fn reference_matches_non_character_term(reference: &str, non_character_terms: &[
 
 fn role_prefixed_character_references(text: &str) -> Vec<String> {
     let mut refs = Vec::new();
-    for marker in [
-        "主角",
-        "男主",
-        "女主",
-        "反派",
-        "对手",
-        "导师",
-        "盟友",
-        "同伴",
-        "关键角色",
-        "人物",
-        "角色",
-        "姐姐",
-        "妹妹",
-        "哥哥",
-        "弟弟",
-        "母亲",
-        "父亲",
-        "妻子",
-        "丈夫",
-        "女儿",
-        "儿子",
-    ] {
+    for marker in ROLE_REFERENCE_MARKERS {
         let mut rest = text;
         while let Some(index) = rest.find(marker) {
             let after = &rest[index + marker.len()..];
@@ -1478,6 +1472,30 @@ fn role_prefixed_character_references(text: &str) -> Vec<String> {
     }
     refs
 }
+
+const ROLE_REFERENCE_MARKERS: &[&str] = &[
+    "主角",
+    "男主",
+    "女主",
+    "反派",
+    "对手",
+    "导师",
+    "盟友",
+    "同伴",
+    "关键角色",
+    "人物",
+    "角色",
+    "姐姐",
+    "妹妹",
+    "哥哥",
+    "弟弟",
+    "母亲",
+    "父亲",
+    "妻子",
+    "丈夫",
+    "女儿",
+    "儿子",
+];
 
 fn reference_starts_with_compound_surname(reference: &str) -> bool {
     crate::tool::writing::naming::cjk_character_surname(reference)
@@ -2114,6 +2132,44 @@ mod tests {
             text,
             &["梁晏白"]
         ));
+    }
+
+    #[test]
+    fn role_prefixed_full_authority_name_is_not_blocked_when_parser_truncates_it() {
+        let authority = ["顾予原"];
+        let mut issues = ContractIssueList::default();
+
+        validate_text_character_references(
+            "兑现矩阵",
+            "对父亲顾予原的遗憾将在终局得到回应。",
+            &authority,
+            &[],
+            &mut issues,
+        );
+
+        assert!(
+            issues.is_empty(),
+            "a complete authority name after a role marker must override its parser-truncated prefix: {issues:?}"
+        );
+    }
+
+    #[test]
+    fn distinct_short_role_name_is_not_hidden_by_longer_authority_name_elsewhere() {
+        let authority = ["顾予原"];
+        let mut issues = ContractIssueList::default();
+
+        validate_text_character_references(
+            "大纲",
+            "父亲顾予失踪，顾予原随后负责调查。",
+            &authority,
+            &[],
+            &mut issues,
+        );
+
+        assert!(
+            issues.iter().any(|issue| issue.contains("`顾予`")),
+            "a genuinely distinct short role name must remain blocked: {issues:?}"
+        );
     }
 
     #[test]

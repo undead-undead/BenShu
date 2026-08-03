@@ -1360,13 +1360,7 @@ pub(crate) fn relationship_names_from_line(
     line: &str,
     characters: &[CharacterContract],
 ) -> Vec<String> {
-    let mut names = characters
-        .iter()
-        .filter_map(|character| {
-            let name = character.canonical_name.trim();
-            (!value_missing(name) && line.contains(name)).then(|| name.to_string())
-        })
-        .collect::<Vec<_>>();
+    let mut names = explicit_relationship_names_from_line(line, characters);
     if names.len() >= 2 {
         return names;
     }
@@ -1395,6 +1389,19 @@ pub(crate) fn relationship_names_from_line(
         }
     }
     names
+}
+
+pub(crate) fn explicit_relationship_names_from_line(
+    line: &str,
+    characters: &[CharacterContract],
+) -> Vec<String> {
+    characters
+        .iter()
+        .filter_map(|character| {
+            let name = character.canonical_name.trim();
+            (!value_missing(name) && line.contains(name)).then(|| name.to_string())
+        })
+        .collect()
 }
 
 fn plot_patch_from_field_pack(raw: &str) -> Option<PlotPatch> {

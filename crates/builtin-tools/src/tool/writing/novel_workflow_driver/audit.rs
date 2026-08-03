@@ -195,6 +195,7 @@ impl NovelChapterRunner {
             &self.language,
             chapter_number,
             &authority_context,
+            &authority.chapter_contract.new_state_after_chapter,
             &content,
             previous_error,
         );

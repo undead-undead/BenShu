@@ -108,6 +108,76 @@ fn inject_sealed_future_boundary_finding(
     true
 }
 
+fn inject_required_end_state_finding(
+    authority: &SealedChapterAuthority,
+    body: &str,
+    observation: &novel_runner::FinalChapterObservation,
+    write_result: &mut Value,
+) -> bool {
+    let required = authority.chapter_contract.new_state_after_chapter.trim();
+    if required.is_empty() {
+        return false;
+    }
+    let Ok(raw_observation) = serde_json::to_string(observation) else {
+        return false;
+    };
+    if final_body_has_required_end_state_evidence(
+        authority.chapter_number,
+        body,
+        authority,
+        &raw_observation,
+    ) {
+        return false;
+    }
+    let Some(gate_value) = write_result.get_mut("quality_gate") else {
+        return false;
+    };
+    let Ok(mut gate) =
+        serde_json::from_value::<chapter_quality::ChapterQualityGate>(gate_value.clone())
+    else {
+        return false;
+    };
+    let mut finding = chapter_quality::ChapterFinding::local(
+        "required_end_state_evidence_missing",
+        chapter_quality::ChapterFindingClass::State,
+        chapter_quality::ChapterFindingDisposition::HardBlock,
+        chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+        "sealed_required_end_state_preflight",
+        format!(
+            "final body must explicitly realize the sealed required end-state in one entity-bound bounded passage: {required}"
+        ),
+        &authority.authority_root_fingerprint,
+        body,
+    );
+    finding.authority_evidence = vec![chapter_quality::AuthorityEvidenceRef {
+        path: "chapter_contract.new_state_after_chapter".to_string(),
+        excerpt: required.to_string(),
+    }];
+    gate.extend_findings(vec![finding]);
+    let Ok(serialized) = serde_json::to_value(gate) else {
+        return false;
+    };
+    *gate_value = serialized;
+    true
+}
+
+fn inject_final_observation_findings(
+    authority: &SealedChapterAuthority,
+    body: &str,
+    observation: &novel_runner::FinalChapterObservation,
+    write_result: &mut Value,
+    language: &str,
+) -> bool {
+    // Both checks must always run: a draft can omit its required end state
+    // while also consuming a future chapter. Short-circuiting here would hide
+    // one deterministic revision obligation and waste a later revision round.
+    let required_state_finding_added =
+        inject_required_end_state_finding(authority, body, observation, write_result);
+    let future_boundary_finding_added =
+        inject_sealed_future_boundary_finding(authority, body, observation, write_result, language);
+    required_state_finding_added || future_boundary_finding_added
+}
+
 fn sealed_future_boundary_evidence(
     body: &str,
     observer_evidence: &str,
@@ -937,7 +1007,7 @@ impl NovelChapterRunner {
                     .observe_final_chapter_state(chapter_number, &write_result, None)
                     .await
                 {
-                    if inject_sealed_future_boundary_finding(
+                    if inject_final_observation_findings(
                         &authority,
                         &current_draft.content,
                         &observation,
@@ -2252,6 +2322,88 @@ pub(super) fn chapter_body_has_tool_or_json_residue(content: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn authority_with_required_state_and_future_boundary() -> SealedChapterAuthority {
+        serde_json::from_value(serde_json::json!({
+            "schema_version": "test",
+            "chapter_number": 1,
+            "canonical_contract": {
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "沈砚"
+                }]
+            },
+            "truth_as_of_chapter": {},
+            "truth_cutoff_chapter": 0,
+            "context_package": {
+                "schema_version": "test",
+                "chapter_number": 1,
+                "selected_context": []
+            },
+            "rule_stack": {
+                "schema_version": "test",
+                "chapter_number": 1,
+                "hard": [],
+                "soft": [],
+                "diagnostic": []
+            },
+            "trace": {
+                "schema_version": "test",
+                "chapter_number": 1,
+                "planner_inputs": [],
+                "composer_inputs": [],
+                "selected_sources": [],
+                "notes": []
+            },
+            "chapter_contract": {
+                "number": 1,
+                "title": "旧站密钥",
+                "path": "",
+                "markdown_path": "",
+                "goal": "沈砚寻找旧站密钥",
+                "new_state_after_chapter": "沈砚已经取回旧站密钥",
+                "status": "ready",
+                "created_at": "",
+                "updated_at": ""
+            },
+            "chapter_architecture": {
+                "number": 1,
+                "title": "旧站密钥",
+                "path": "",
+                "architecture": "",
+                "status": "ready",
+                "created_at": "",
+                "updated_at": ""
+            },
+            "character_registrations": [],
+            "role_projections": {
+                "observer": {
+                    "role": "observer",
+                    "payload": {
+                        "authority": {
+                            "working_context": {
+                                "rolling_outline_window": [{
+                                    "number": 2,
+                                    "goal": "梁砚发现追兵逼近",
+                                    "expected_turn": "梁砚确认旧站已经暴露"
+                                }]
+                            }
+                        }
+                    },
+                    "fingerprint": "observer"
+                }
+            },
+            "authority_root_fingerprint": "root",
+            "protected_coverage": {
+                "required_paths": [],
+                "present_paths": [],
+                "missing_paths": [],
+                "complete": true
+            },
+            "sealed_at": ""
+        }))
+        .expect("test authority")
+    }
+
     #[test]
     fn freeform_draft_with_repairable_tail_is_not_fallback_usable() {
         let body = format!(
@@ -2294,5 +2446,35 @@ mod tests {
             source,
             "final_body_completed_event+sealed_future_chapter_boundary"
         );
+    }
+
+    #[test]
+    fn final_observation_injects_required_state_and_future_boundary_findings_together() {
+        let authority = authority_with_required_state_and_future_boundary();
+        let body = "梁砚已经发现追兵逼近，并确认旧站已经暴露。";
+        let observation = novel_runner::FinalChapterObservation::default();
+        let mut write_result = serde_json::json!({
+            "quality_gate": chapter_quality::ChapterQualityGate::default()
+        });
+
+        assert!(inject_final_observation_findings(
+            &authority,
+            body,
+            &observation,
+            &mut write_result,
+            "zh-CN",
+        ));
+
+        let gate = serde_json::from_value::<chapter_quality::ChapterQualityGate>(
+            write_result["quality_gate"].clone(),
+        )
+        .expect("quality gate");
+        let codes = gate
+            .findings
+            .iter()
+            .map(|finding| finding.code.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(codes.contains("required_end_state_evidence_missing"));
+        assert!(codes.contains("future_chapter_consumed"));
     }
 }

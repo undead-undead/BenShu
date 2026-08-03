@@ -158,6 +158,13 @@ pub(super) fn contract_explicit_identity_profile_in_character_anchor(
 ) -> Option<&'static str> {
     explicit_identity_profile_in_character_anchor(content)
 }
+
+pub(in crate::tool::writing) fn compact_planning_text_conflicts_with_character_authority(
+    content: &str,
+    character_identity_markers: &BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    compact_planning_text_conflicts_with_character_identity(content, character_identity_markers)
+}
 #[cfg(test)]
 use quality_gate::chapter_title_fatigue_issues;
 use quality_gate::{
@@ -172,6 +179,7 @@ use rendering::{
 };
 use reporting::*;
 use runtime_records::*;
+pub(crate) use settlement::final_body_has_required_end_state_evidence;
 #[cfg(test)]
 use settlement::{deterministic_state_validation, parse_settlement_output};
 use settlement::{

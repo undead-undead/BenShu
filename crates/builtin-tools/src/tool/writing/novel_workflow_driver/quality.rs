@@ -2804,8 +2804,9 @@ pub(super) fn fallback_chapter_seed_goal(
     fallback_chapter_seed_from_near_chapters(&value, chapter_number)
         .or_else(|| fallback_chapter_seed_from_outline_texts(&value, chapter_number, cjk))
         .or_else(|| fallback_opening_chapter_seed_from_story_contract(&value, chapter_number, cjk))
-        .map(|value| preview_text(value.trim(), 360))
-        .filter(|value| !value.trim().is_empty())
+        .map(|seed| preview_text(seed.trim(), 360))
+        .filter(|seed| !seed.trim().is_empty())
+        .filter(|seed| planning_text_preserves_character_identity(&value, seed))
 }
 
 pub(super) fn fallback_opening_chapter_seed_from_story_contract(
@@ -2910,7 +2911,8 @@ pub(super) fn fallback_chapter_seed_from_near_chapters(
     .filter(|value| !value.is_empty())
     .map(ToString::to_string)
     .collect::<Vec<_>>();
-    (!parts.is_empty()).then(|| parts.join("；"))
+    let seed = (!parts.is_empty()).then(|| parts.join("；"))?;
+    planning_text_preserves_character_identity(value, &seed).then_some(seed)
 }
 
 fn fallback_chapter_end_state_from_near_chapters(
@@ -2918,13 +2920,68 @@ fn fallback_chapter_end_state_from_near_chapters(
     chapter_number: usize,
 ) -> Option<String> {
     let item = chapter_seed_item_from_context(value, chapter_number, true, false)?;
-    ["expected_turn", "moves_toward_ending"]
+    let end_state = ["expected_turn", "moves_toward_ending"]
         .into_iter()
         .find_map(|key| item.get(key).and_then(Value::as_str))
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty())?;
+    planning_text_preserves_character_identity(value, &end_state).then_some(end_state)
+}
+
+fn character_identity_markers_from_execution_context(
+    value: &Value,
+) -> BTreeMap<String, BTreeSet<String>> {
+    let mut profiles = BTreeMap::new();
+    for pointer in [
+        "/authority/working_context/character_ledger",
+        "/project_context/character_ledger",
+        "/character_ledger",
+        "/truth_as_of_chapter/story_state/character_ledger",
+        "/authority/truth_as_of_chapter/story_state/character_ledger",
+    ] {
+        let Some(items) = value.pointer(pointer).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            let Some(name) = item
+                .get("canonical_name")
+                .or_else(|| item.get("name"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+            else {
+                continue;
+            };
+            let markers = item
+                .get("identity_markers")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|marker| !marker.is_empty())
+                .map(ToString::to_string)
+                .collect::<BTreeSet<_>>();
+            if !markers.is_empty() {
+                profiles
+                    .entry(name.to_string())
+                    .or_insert_with(BTreeSet::new)
+                    .extend(markers);
+            }
+        }
+    }
+    profiles
+}
+
+fn planning_text_preserves_character_identity(context: &Value, text: &str) -> bool {
+    let profiles = character_identity_markers_from_execution_context(context);
+    profiles.is_empty()
+        || !crate::tool::writing::novel_studio::compact_planning_text_conflicts_with_character_authority(
+            text,
+            &profiles,
+        )
 }
 
 const CHAPTER_SEED_CONTEXT_POINTERS: &[&str] = &[
@@ -3035,13 +3092,16 @@ fn chapter_seed_contract_from_context(
         .into_iter()
         .find_map(|key| item.get(key).and_then(Value::as_str))?
         .trim();
-    Some(
-        crate::tool::writing::creation_contract_model::ChapterSeedContract {
-            number: Some(chapter_number),
-            goal: goal.to_string(),
-            expected_turn: expected_turn.to_string(),
-        },
+    let seed = crate::tool::writing::creation_contract_model::ChapterSeedContract {
+        number: Some(chapter_number),
+        goal: goal.to_string(),
+        expected_turn: expected_turn.to_string(),
+    };
+    planning_text_preserves_character_identity(
+        value,
+        &format!("{}\n{}", seed.goal, seed.expected_turn),
     )
+    .then_some(seed)
 }
 
 fn govern_rolling_future_chapters(
@@ -3062,7 +3122,11 @@ fn govern_rolling_future_chapters(
             (number > chapter_number
                 && number <= last_allowed
                 && !seed.goal.is_empty()
-                && !seed.expected_turn.is_empty())
+                && !seed.expected_turn.is_empty()
+                && planning_text_preserves_character_identity(
+                    context,
+                    &format!("{}\n{}", seed.goal, seed.expected_turn),
+                ))
             .then_some((number, seed))
         })
         .collect::<BTreeMap<_, _>>();
@@ -5999,6 +6063,64 @@ mod tests {
         assert_eq!(governed.future_chapters[1].goal, "跟踪夜班经手人的交货路线");
         assert_eq!(governed.future_chapters[2].number, Some(6));
         assert_eq!(governed.future_chapters[2].goal, "潜入档案馆核对原始登记");
+    }
+
+    #[test]
+    fn rolling_outline_drops_identity_conflicting_authority_and_uses_generated_replacement() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "outline": {
+                    "near_chapters": [{
+                        "number": 7,
+                        "goal": "程听野追查旧照片与拆迁范围的联系",
+                        "expected_turn": "程听野意识到闻照桥的规划不仅是为了城市，更是为了她"
+                    }]
+                }
+            },
+            "authority": {
+                "working_context": {
+                    "character_ledger": [
+                        {
+                            "canonical_name": "程听野",
+                            "identity_markers": ["inferred_pronoun_profile:masculine"]
+                        },
+                        {
+                            "canonical_name": "闻照桥",
+                            "identity_markers": ["inferred_pronoun_profile:masculine"]
+                        }
+                    ]
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "重建旧城时", 6, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(7),
+                goal: "程听野追查旧照片与拆迁范围的联系".to_string(),
+                expected_turn: "程听野确认闻照桥一直在保护他".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "重建旧城时",
+            6,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 1);
+        assert_eq!(governed.future_chapters[0].number, Some(7));
+        assert_eq!(
+            governed.future_chapters[0].expected_turn,
+            "程听野确认闻照桥一直在保护他"
+        );
     }
 
     #[test]

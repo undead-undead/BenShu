@@ -245,6 +245,35 @@ fn story_bible_seeds_contract_payoffs_as_completion_debts() {
 }
 
 #[test]
+fn raw_outline_chapter_clue_is_not_duplicated_as_a_durable_hook() {
+    let mut contract = contract();
+    contract.outline = "第3章 本章目标：引入核心秘密；预期转折：沈砚发现一张旧照片".to_string();
+    contract.structured_contract_v2.payoff_matrix = vec![PayoffMatrixEntry {
+        promise: "揭开旧照片背后的失踪真相".to_string(),
+        payoff_target: "沈砚确认失踪者的最终去向".to_string(),
+        status: "planned".to_string(),
+        ..Default::default()
+    }];
+
+    let bible = build_story_bible(
+        "旧照失踪案",
+        "zh-CN",
+        "悬疑",
+        "brief",
+        &contract,
+        "now".into(),
+    );
+
+    assert!(bible
+        .hook_ledger
+        .iter()
+        .any(|hook| hook.title == "揭开旧照片背后的失踪真相"));
+    assert!(bible.hook_ledger.iter().all(|hook| {
+        !hook.title.contains("第3章") && !hook.evidence.iter().any(|item| item.contains("第3章"))
+    }));
+}
+
+#[test]
 fn rolling_execution_package_upserts_chapter_goal() {
     let mut bible = build_story_bible(
         "海平面之下",

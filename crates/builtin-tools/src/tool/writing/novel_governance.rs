@@ -261,6 +261,21 @@ pub(crate) fn contract_change_evidence_score(
     cjk: bool,
     ignored_entity_surfaces: &[String],
 ) -> usize {
+    if text_reports_completed_outcome(authority_value, cjk)
+        && !text_reports_completed_outcome(evidence, cjk)
+        && text_reports_non_realized_intent(evidence, cjk)
+    {
+        return 0;
+    }
+    raw_contract_change_evidence_score(authority_value, evidence, cjk, ignored_entity_surfaces)
+}
+
+fn raw_contract_change_evidence_score(
+    authority_value: &str,
+    evidence: &str,
+    cjk: bool,
+    ignored_entity_surfaces: &[String],
+) -> usize {
     if contains_unexpected_script_residue(authority_value, evidence) {
         return 0;
     }
@@ -423,33 +438,7 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
         // contain an outcome verb while still leaving that event for the next
         // chapter. This is the existing completion gate's intent check, made
         // sentence-wide so modal wording is not lost at clause boundaries.
-        if [
-            "即将",
-            "将要",
-            "正要",
-            "正在",
-            "正从",
-            "准备",
-            "决定",
-            "打算",
-            "试图",
-            "想要",
-            "预示",
-            "可能",
-            "不得不",
-            "计划",
-            "预期",
-            "一旦",
-            "如果",
-            "若是",
-            "将会",
-            "会让",
-            "会在",
-            "会导致",
-        ]
-        .iter()
-        .any(|marker| sentence.contains(marker))
-        {
+        if text_reports_non_realized_intent(sentence, cjk) {
             return false;
         }
         if sentence.contains('已') {
@@ -500,6 +489,81 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
     ]
     .iter()
     .any(|marker| lowered.contains(marker))
+}
+
+fn text_reports_non_realized_intent(text: &str, cjk: bool) -> bool {
+    if cjk {
+        let modal_or_future = [
+            "即将",
+            "将要",
+            "正要",
+            "正在",
+            "正从",
+            "准备",
+            "决定",
+            "打算",
+            "试图",
+            "想要",
+            "预示",
+            "可能",
+            "不得不",
+            "计划",
+            "预期",
+            "一旦",
+            "如果",
+            "若是",
+            "将会",
+            "会让",
+            "会在",
+            "会导致",
+        ]
+        .iter()
+        .any(|marker| text.contains(marker));
+        // “需要/急需” are strong intent surfaces unless the same bounded
+        // clause explicitly says that need has already been satisfied. Keep
+        // them out of the general future-marker list so noun-like completed
+        // states such as “需要已经得到满足” remain admissible evidence.
+        let unmet_need =
+            ["需要", "急需"].iter().any(|marker| text.contains(marker)) && !text.contains('已');
+        return modal_or_future || unmet_need;
+    }
+    let lowered = text.to_ascii_lowercase();
+    [
+        "will ",
+        "would ",
+        "plans to",
+        "planned to",
+        "prepares to",
+        "prepared to",
+        "tries to",
+        "tried to",
+        "needs to",
+        "needed to",
+        "intends to",
+        "intended to",
+        "hopes to",
+        "hoped to",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker))
+}
+
+fn completed_outcome_segments(text: &str, cjk: bool) -> Vec<&str> {
+    text.split_inclusive(['。', '！', '？', '.', '!', '?', '\n'])
+        .map(str::trim)
+        .filter(|sentence| !sentence.is_empty())
+        .filter(|sentence| {
+            sentence
+                .split(['，', ',', '；', ';'])
+                .map(str::trim)
+                .filter(|clause| !clause.is_empty())
+                .any(|clause| sentence_reports_completed_outcome(clause, cjk))
+        })
+        .collect()
+}
+
+fn text_reports_completed_outcome(text: &str, cjk: bool) -> bool {
+    !completed_outcome_segments(text, cjk).is_empty()
 }
 
 pub(crate) fn final_body_future_consumption_evidence(
@@ -1784,6 +1848,31 @@ mod tests {
             true,
             &[],
         ));
+    }
+
+    #[test]
+    fn completed_contract_change_rejects_intention_and_accepts_realized_outcome() {
+        let authority = "韩照朔通过精准判断废旧物资价值，成功完成第一笔盈利交易";
+        let ignored = vec!["韩照朔".to_string()];
+
+        assert_eq!(
+            contract_change_evidence_score(
+                authority,
+                "韩照朔需要第一笔启动资金，于是环视旧货摊寻找机会。",
+                true,
+                &ignored,
+            ),
+            0,
+            "an intended transaction is not evidence of the sealed completed outcome"
+        );
+        assert!(
+            contract_change_evidence_score(
+                authority,
+                "韩照朔以十块买入零件，又以三十五块卖出，第一笔盈利交易已经完成。",
+                true,
+                &ignored,
+            ) >= 2
+        );
     }
 
     #[test]

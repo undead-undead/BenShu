@@ -37,7 +37,7 @@ use super::novel_governance::{
 use super::novel_pipeline;
 use super::novel_pipeline::lifecycle as chapter_lifecycle;
 use super::novel_runner;
-use super::novel_studio::NovelStudioTool;
+use super::novel_studio::{final_body_has_required_end_state_evidence, NovelStudioTool};
 use super::surface_sanitizer::{self, strip_markdown_frontmatter as strip_frontmatter};
 
 mod audit;

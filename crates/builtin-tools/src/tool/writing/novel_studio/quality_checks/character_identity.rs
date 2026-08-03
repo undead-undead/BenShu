@@ -228,6 +228,77 @@ pub(in crate::tool::writing::novel_studio) fn contract_character_pronoun_drift_i
     issues
 }
 
+pub(in crate::tool::writing) fn compact_planning_text_conflicts_with_character_identity(
+    content: &str,
+    character_identity_markers: &BTreeMap<String, BTreeSet<String>>,
+) -> bool {
+    let mentioned = character_identity_markers
+        .iter()
+        .filter(|(name, _)| !name.trim().is_empty() && content.contains(name.as_str()))
+        .filter_map(|(name, markers)| {
+            let expected = if markers.contains("pronoun_profile:feminine")
+                || markers.contains("inferred_pronoun_profile:feminine")
+            {
+                Some("feminine")
+            } else if markers.contains("pronoun_profile:masculine")
+                || markers.contains("inferred_pronoun_profile:masculine")
+            {
+                Some("masculine")
+            } else {
+                None
+            }?;
+            Some((name, expected))
+        })
+        .collect::<Vec<_>>();
+    if mentioned.is_empty() {
+        return false;
+    }
+
+    for (name, expected) in &mentioned {
+        let other_character_names = character_identity_markers
+            .keys()
+            .filter(|other| *other != *name)
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let evidence = character_pronoun_evidence_near_name(
+            content,
+            name,
+            &other_character_names,
+            PronounEvidenceScope::ContractInference,
+        );
+        let (contradicts, supports) = if *expected == "feminine" {
+            (evidence.masculine, evidence.feminine)
+        } else {
+            (evidence.feminine, evidence.masculine)
+        };
+        if contradicts > 0 && contradicts > supports {
+            return true;
+        }
+    }
+
+    // Compact outline nodes must not leave an opposite-gender personal
+    // pronoun dangling when every named, established participant has the same
+    // identity authority.  The chapter prose gate intentionally requires
+    // repeated evidence, but a one- or two-sentence planning authority has no
+    // room for that threshold and would otherwise force the writer to inherit
+    // a known contradiction.
+    let profiles = mentioned
+        .iter()
+        .map(|(_, profile)| *profile)
+        .collect::<BTreeSet<_>>();
+    if profiles.len() != 1 {
+        return false;
+    }
+    let expected = *profiles.iter().next().expect("one profile");
+    let (opposite, matching) = if expected == "feminine" {
+        ("他", "她")
+    } else {
+        ("她", "他")
+    };
+    explicit_identity_marker_count(content, opposite)
+        > explicit_identity_marker_count(content, matching)
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 struct CharacterPronounEvidence {
     feminine: usize,
@@ -656,6 +727,33 @@ fn personal_pronoun_directly_attributes_nearby_name(
 #[cfg(test)]
 mod pronoun_tests {
     use super::*;
+
+    #[test]
+    fn compact_planning_authority_rejects_opposite_pronoun_for_same_profile_pair() {
+        let authority = BTreeMap::from([
+            (
+                "程听野".to_string(),
+                BTreeSet::from(["inferred_pronoun_profile:masculine".to_string()]),
+            ),
+            (
+                "闻照桥".to_string(),
+                BTreeSet::from(["inferred_pronoun_profile:masculine".to_string()]),
+            ),
+        ]);
+
+        assert!(compact_planning_text_conflicts_with_character_identity(
+            "程听野开始意识到闻照桥的规划不仅是为了城市，更是为了她。",
+            &authority,
+        ));
+        assert!(!compact_planning_text_conflicts_with_character_identity(
+            "程听野开始意识到闻照桥的规划不仅是为了城市，更是为了他。",
+            &authority,
+        ));
+        assert!(!compact_planning_text_conflicts_with_character_identity(
+            "程听野与闻照桥共同完成结构缓冲方案。",
+            &authority,
+        ));
+    }
 
     #[test]
     fn object_pronoun_does_not_hide_later_subject_pronoun_for_nearby_name() {

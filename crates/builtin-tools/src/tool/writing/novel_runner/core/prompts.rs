@@ -225,23 +225,40 @@ pub(crate) fn final_chapter_observer_prompt(
     language: &str,
     chapter_number: usize,
     authority_context: &str,
+    required_end_state: &str,
     content: &str,
     previous_error: Option<&str>,
 ) -> String {
     let indexed_content = render_final_body_sentence_index(content);
+    let required_end_state = required_end_state.trim();
     let retry = previous_error
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| {
-            format!(
-                "\n\n上一轮状态结算未通过 / Previous settlement errors:\n{value}\n只修正观察结果的证据、ID、路径和字段，不得虚构正文事件。"
-            )
+            if required_end_state.is_empty() {
+                format!(
+                    "\n\n上一轮状态结算未通过 / Previous settlement errors:\n{value}\n只修正观察结果的证据、ID、路径和字段，不得虚构正文事件。"
+                )
+            } else {
+                format!(
+                    "\n\n上一轮状态结算未通过 / Previous settlement errors:\n{value}\n先重新核对上面单列的 required end-state：若最终正文已经实现它，必须修正对应 typed delta 的证据句、实体 ID、event_type 和 authority_path，不能再次返回空 state_changes；若正文确实未实现，才保持为空。不得虚构正文事件。"
+                )
+            }
         })
         .unwrap_or_default();
     if is_chinese_language(language) {
+        let required_state_focus = if required_end_state.is_empty() {
+            "本章没有密封的 required end-state；只报告最终正文明确产生且获权威允许的 typed delta。"
+                .to_string()
+        } else {
+            format!(
+                "本章唯一必需的章末状态槽（这里只重申密封权威，不创建第二份权威）：\n- authority_path: chapter_contract.new_state_after_chapter\n- required_end_state: {required_end_state}"
+            )
+        };
         format!(
             "你是小说状态观察器。只根据已经定稿的第 {chapter_number} 章正文结算章末状态；写作阶段的 summary、key_facts、continuity_updates 或执行包声明都不是事实来源。\n\n\
              项目权威上下文仅用于识别既有实体、合同变化和伏笔，不得用它补写正文里没有发生的事件：\n{authority_context}\n\n\
+             {required_state_focus}\n\n\
              最终正文句子索引（方括号编号不是正文）：\n{indexed_content}\n\n\
              只输出一个紧凑 JSON 对象，字段固定为 current_state, pending_hooks, chapter_summary, continuity_updates, resolved_hooks, future_boundary_sentence_ids, state_changes。current_state 和 chapter_summary 各用一句话；current_state 必须写清章末地点、当前冲突或异常是持续还是解除、主角代价或身体/能力状态，以及正文涉及的关键物件或关系状态，不适用的维度省略。continuity_updates 最多 4 项，全部只写正文可见事实。resolved_hooks 只列正文明确兑现的既有伏笔；pending_hooks 只写章末仍开放的明确线索，没有则为空字符串。future_boundary_sentence_ids 只在最终正文已经完成密封权威中 next_chapter_boundary 或 rolling_outline_window 的任一尚未到期核心事件时填写对应句子编号；正文只是准备、预示、接近或共享人物、地点、物件时必须为空数组。\
              state_changes 是唯一可持久化的 typed delta。每项只输出 entity_id, event_type, authority_path, evidence_sentence_ids；不要复制正文，不要输出 value、evidence 或 authority_excerpt，本地验证器会从不可变最终正文按句子编号恢复精确原文并绑定权威字段。evidence_sentence_ids 必须包含 1 至 3 个同段、连续、正序的整数编号，总原文不得超过 320 字，并且所选原文必须点名对应人物或权威实体。event_type 只能是 character、relationship、world、power、resource、hook_seed、hook_advance、hook_pay_off、hook_defer、incidental。entity_id 使用稳定 ID；没有稳定 ID 的物件、地点或其他权威实体使用合同中的精确表面名。\
@@ -249,9 +266,17 @@ pub(crate) fn final_chapter_observer_prompt(
              使用正文原始姓名和专名；不要推测幕后真相，不要 Markdown，不要说明。严格形状示例：{{\"current_state\":\"一句话\",\"pending_hooks\":\"一句话或空字符串\",\"chapter_summary\":\"一句话\",\"continuity_updates\":[],\"resolved_hooks\":[],\"future_boundary_sentence_ids\":[],\"state_changes\":[{{\"entity_id\":\"character-0001\",\"event_type\":\"character\",\"authority_path\":\"chapter_contract.new_state_after_chapter\",\"evidence_sentence_ids\":[12,13]}}]}}。没有对应项时数组为空。{retry}"
         )
     } else {
+        let required_state_focus = if required_end_state.is_empty() {
+            "This chapter has no sealed required end-state; report only typed deltas explicitly realized by final prose and allowed by authority.".to_string()
+        } else {
+            format!(
+                "The chapter's sole required end-state slot (this only repeats sealed authority; it does not create a second authority):\n- authority_path: chapter_contract.new_state_after_chapter\n- required_end_state: {required_end_state}"
+            )
+        };
         format!(
             "You are a fiction state observer. Settle the end state of final chapter {chapter_number} from final prose only. Writer-stage summaries and execution-package claims are not evidence.\n\n\
              Project authority is only for identifying established entities, contracted changes, and hooks; never invent an event absent from the prose:\n{authority_context}\n\n\
+             {required_state_focus}\n\n\
              Final prose sentence index (bracketed IDs are not prose):\n{indexed_content}\n\n\
              Return one compact JSON object with exactly current_state, pending_hooks, chapter_summary, continuity_updates, resolved_hooks, future_boundary_sentence_ids, and state_changes. Keep current_state and chapter_summary to one sentence each. Keep continuity_updates to at most four visibly supported facts. resolved_hooks contains only explicitly paid-off established hooks. future_boundary_sentence_ids contains sentence IDs only when final prose has completed any not-yet-due core event sealed in next_chapter_boundary or rolling_outline_window; preparation or foreshadowing requires an empty array.\
              state_changes is the only durable typed delta. Each item contains only entity_id, event_type, authority_path, and evidence_sentence_ids. Do not copy prose and do not output value, evidence, or authority_excerpt: the local validator reconstructs exact immutable prose and binds sealed authority. evidence_sentence_ids must contain one to three consecutive ascending sentence IDs from one paragraph, totaling no more than 320 characters, and the selected prose must name the public authority entity. event_type is one of character, relationship, world, power, resource, hook_seed, hook_advance, hook_pay_off, hook_defer, incidental. Use stable entity IDs.\

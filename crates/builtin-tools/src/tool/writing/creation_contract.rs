@@ -137,9 +137,11 @@ pub use lifecycle::CreationDraftLifecycleStatus;
 pub(crate) use patch::*;
 #[cfg(test)]
 pub(crate) use patch_normalizer::infer_book_title_from_rationale_text;
+#[cfg(test)]
+pub(crate) use patch_normalizer::relationship_names_from_line;
 pub(crate) use patch_normalizer::{
-    derive_plot_contract_from_outline_text, normalize_creation_contract_patch_boundary,
-    relationship_names_from_line, strip_plot_control_segments_from_outline_text,
+    derive_plot_contract_from_outline_text, explicit_relationship_names_from_line,
+    normalize_creation_contract_patch_boundary, strip_plot_control_segments_from_outline_text,
 };
 #[cfg(test)]
 pub(crate) use planning_gate::generated_fiction_contract_planning_issues;

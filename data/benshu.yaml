@@ -230,9 +230,9 @@ windows_ml_bridge:
       bridge_mode: migration_pending
       note: GGUF is reserved for the main llama.cpp brain path, not the Windows-native
         small-model runtime.
-  base_url: http://172.18.176.1:18013/v1
+  base_url: http://172.18.176.1:28013/v1
   host: 172.18.176.1
-  port: 18013
+  port: 28013
 runtime_host_control:
   main_brain:
     control_mode: command
@@ -278,7 +278,7 @@ agents:
     model: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
   benshu:
     provider: openai
-    base_url: http://172.18.176.1:18013/v1
+    base_url: http://172.18.176.1:28013/v1
     model: benshu-main-brain
     local_model_artifact: /home/biubiuboy/BenShu/models/live/gemma4-26b-a4b-qat-uncensored-hauhaucs-balanced-q4_k_m/Gemma4-26B-A4B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf
     local_runtime_family: llama_cpp

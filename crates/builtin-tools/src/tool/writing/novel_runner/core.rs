@@ -465,6 +465,7 @@ mod tests {
             "zh-CN",
             3,
             r#"{"authority":{"chapter_contract":{}}}"#,
+            "闻庭安带着铜钥匙离开旧站",
             "闻庭安带着铜钥匙离开旧站。",
             None,
         );
@@ -479,6 +480,7 @@ mod tests {
             "zh-CN",
             3,
             r#"{"authority":{"chapter_contract":{"new_state_after_chapter":"旧引擎发出非自然信号"}}}"#,
+            "旧引擎发出非自然信号",
             "旧引擎突然震动。那不是自然噪声。信号仍在持续。",
             None,
         );
@@ -486,12 +488,32 @@ mod tests {
         assert!(prompt.contains("1 至 3 个同段、连续、正序的整数编号"));
         assert!(prompt.contains("不得超过 320 字"));
         assert!(prompt.contains("authority_path=chapter_contract.new_state_after_chapter"));
+        assert!(prompt.contains("required_end_state: 旧引擎发出非自然信号"));
+        assert!(prompt.contains("这里只重申密封权威，不创建第二份权威"));
         assert!(prompt.contains("不要求逐字同措辞"));
         assert!(prompt.contains("entity_id 使用稳定 ID"));
         assert!(prompt.contains("\"authority_path\":\"chapter_contract.new_state_after_chapter\""));
         assert!(prompt.contains("\"evidence_sentence_ids\":[12,13]"));
         assert!(!prompt.contains("\"authority_excerpt\""));
         assert!(!prompt.contains("\"value\":\"正文"));
+    }
+
+    #[test]
+    fn final_chapter_observer_retry_focuses_the_existing_required_state_slot() {
+        let prompt = final_chapter_observer_prompt(
+            "zh-CN",
+            1,
+            r#"{"authority":{"chapter_contract":{"new_state_after_chapter":"祝星真发现城内粮草已近枯竭，面临生存压力"}}}"#,
+            "祝星真发现城内粮草已近枯竭，面临生存压力",
+            "祝星真确认粮仓只够支撑半个月，粮草的匮乏让他攥紧了拳头。",
+            Some(
+                "final-body settlement is missing the required typed end-state change from chapter_contract.new_state_after_chapter",
+            ),
+        );
+
+        assert!(prompt.contains("required_end_state: 祝星真发现城内粮草已近枯竭，面临生存压力"));
+        assert!(prompt.contains("不能再次返回空 state_changes"));
+        assert!(prompt.contains("若正文确实未实现，才保持为空"));
     }
 
     #[test]

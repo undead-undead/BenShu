@@ -1189,30 +1189,12 @@ fn character_ledger_from(contract: &StoryContract) -> Vec<CharacterAnchor> {
 }
 
 fn hook_ledger_from_contract(contract: &StoryContract) -> Vec<HookLedgerEntry> {
-    let mut hooks = contract
-        .outline
-        .lines()
-        .filter_map(sanitize_contract_item)
-        .filter(|line| hook_like_text(line))
-        .enumerate()
-        .map(|(index, line)| HookLedgerEntry {
-            id: format!("hook-{:04}", index + 1),
-            title: preview(&line, 80),
-            introduced_chapter: None,
-            introduced_when: "project_setup".to_string(),
-            knowers: Vec::new(),
-            reader_knows: preview(&line, 180),
-            planned_payoff_window: "Before the natural ending; refine during chapter planning."
-                .to_string(),
-            planned_payoff_chapter: None,
-            payoff_chapter: None,
-            last_advanced_chapter: None,
-            deferred_until_chapter: None,
-            emotional_effect: "Curiosity, tension, or delayed satisfaction.".to_string(),
-            status: HookStatus::Open,
-            evidence: vec![line.trim().to_string()],
-        })
-        .collect::<Vec<_>>();
+    // Raw outline prose is already owned by the narrative graph.  Treating
+    // every line containing words such as “秘密/线索” as a second durable hook
+    // duplicates chapter goals and leaves already completed nodes permanently
+    // open.  Durable hook debt comes only from the typed payoff matrix, ending
+    // obligations, or an approved chapter's explicit hook delta.
+    let mut hooks: Vec<HookLedgerEntry> = Vec::new();
     for payoff in &authoritative_structured_contract(contract).payoff_matrix {
         let promise = sanitize_contract_multiline(&payoff.promise);
         let target = sanitize_contract_multiline(&payoff.payoff_target);
@@ -1614,15 +1596,6 @@ fn upsert_chapter_summary(
     summaries.retain(|item| item.chapter_number != summary.chapter_number);
     summaries.push(summary);
     summaries.sort_by_key(|item| item.chapter_number);
-}
-
-fn hook_like_text(text: &str) -> bool {
-    let lowered = text.to_ascii_lowercase();
-    [
-        "伏笔", "悬念", "线索", "秘密", "未解", "谜", "hook", "clue", "secret", "mystery",
-    ]
-    .iter()
-    .any(|term| text.contains(term) || lowered.contains(term))
 }
 
 fn character_name(value: &str) -> Option<String> {

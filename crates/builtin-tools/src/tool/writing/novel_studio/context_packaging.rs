@@ -420,6 +420,13 @@ pub(super) fn chapter_boundary_seed_view(
     manifest: &NovelProjectManifest,
     chapter_number: usize,
 ) -> Option<ChapterSeedContract> {
+    let identity_markers = contract_term_authority_view(manifest).character_identity_markers;
+    let identity_consistent = |seed: &ChapterSeedContract| {
+        !compact_planning_text_conflicts_with_character_identity(
+            &format!("{}\n{}", seed.goal.trim(), seed.expected_turn.trim()),
+            &identity_markers,
+        )
+    };
     let contract_seed = manifest
         .contract
         .as_ref()
@@ -431,7 +438,8 @@ pub(super) fn chapter_boundary_seed_view(
                 .iter()
                 .find(|chapter| chapter.number == Some(chapter_number))
         })
-        .cloned();
+        .cloned()
+        .filter(&identity_consistent);
     if let Some(seed) = contract_seed {
         return Some(seed);
     }
@@ -450,6 +458,7 @@ pub(super) fn chapter_boundary_seed_view(
             goal: goal.goal.clone(),
             expected_turn: goal.moves_toward_ending.clone(),
         })
+        .filter(identity_consistent)
 }
 
 pub(super) fn relevant_character_subgraph(
