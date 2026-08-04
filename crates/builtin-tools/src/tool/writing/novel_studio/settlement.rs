@@ -306,10 +306,7 @@ fn validate_and_bind_settlement(
                 change.allowance = novel_bible::StateChangeAllowance::Rejected;
                 deferred_required_rejections.push(error);
             } else if recover_required_state {
-                change.allowance = novel_bible::StateChangeAllowance::Rejected;
-                validation.advisories.push(format!(
-                    "discarded malformed optional observer state proposal after observer attempts were exhausted: {error}"
-                ));
+                discard_exhausted_optional_state_delta(&mut validation, &mut change, error);
             } else {
                 reject_untrusted_state_delta(&mut validation, &mut change, error);
             }
@@ -323,6 +320,8 @@ fn validate_and_bind_settlement(
                 {
                     change.allowance = novel_bible::StateChangeAllowance::Rejected;
                     deferred_required_rejections.push(error);
+                } else if recover_required_state {
+                    discard_exhausted_optional_state_delta(&mut validation, &mut change, error);
                 } else {
                     reject_untrusted_state_delta(&mut validation, &mut change, error);
                 }
@@ -335,14 +334,15 @@ fn validate_and_bind_settlement(
                 .is_some_and(|number| number > chapter.number)
         {
             let change_id = change.change_id.trim().to_string();
-            reject_untrusted_state_delta(
-                &mut validation,
-                &mut change,
-                format!(
-                    "state change {} defers a hook without a later chapter",
-                    change_id
-                ),
+            let reason = format!(
+                "state change {} defers a hook without a later chapter",
+                change_id
             );
+            if recover_required_state {
+                discard_exhausted_optional_state_delta(&mut validation, &mut change, reason);
+            } else {
+                reject_untrusted_state_delta(&mut validation, &mut change, reason);
+            }
             continue;
         }
         accepted_changes.push(change);
@@ -414,6 +414,21 @@ fn reject_untrusted_state_delta(
 ) {
     change.allowance = novel_bible::StateChangeAllowance::Rejected;
     record_untrusted_state_delta_rejection(validation, reason);
+}
+
+fn discard_exhausted_optional_state_delta(
+    validation: &mut StateValidationOutput,
+    change: &mut novel_bible::ChapterStateChange,
+    reason: impl Into<String>,
+) {
+    change.allowance = novel_bible::StateChangeAllowance::Rejected;
+    validation.disposition = validation
+        .disposition
+        .merge(StateSettlementDisposition::ObserverFormatDegraded);
+    validation.advisories.push(format!(
+        "discarded malformed optional observer state proposal after observer attempts were exhausted: {}",
+        reason.into()
+    ));
 }
 
 fn record_untrusted_state_delta_rejection(
@@ -2681,6 +2696,46 @@ mod tests {
     }
 
     #[test]
+    fn revision_preflight_accepts_required_escape_state_realized_across_adjacent_actions() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 5;
+        authority.chapter_contract.number = 5;
+        authority.chapter_contract.new_state_after_chapter =
+            "商砚宁成功通过秘密通道脱离包围，并获得闻清安的指引".to_string();
+        authority.chapter_contract.goal =
+            authority.chapter_contract.new_state_after_chapter.clone();
+        authority.chapter_contract.relationship_delta =
+            "商砚宁与闻清安之间的感应协作关系得到初步建立。".to_string();
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "商砚宁",
+                "role": "主角"
+            }, {
+                "character_id": "character-0002",
+                "canonical_name": "闻清安",
+                "role": "关键关系对象"
+            }]
+        });
+        let observation = json!({
+            "current_state": "商砚宁已经脱离包围。",
+            "chapter_summary": "商砚宁循着闻清安的指引逃离。",
+            "state_changes": []
+        })
+        .to_string();
+        let body = "商砚宁捕捉到闻清安的共振指引，看见阴影深处藏着一条秘密通道。\
+                    商砚宁屏住呼吸滑进通道。他成功了。他避开了机械卫队的包围圈。\
+                    闻清安再次提醒他沿着能量脉络前进。商砚宁意识到自己已经成功脱离表层包围。";
+
+        assert!(final_body_has_required_end_state_evidence(
+            5,
+            body,
+            &authority,
+            &observation
+        ));
+    }
+
+    #[test]
     fn exhausted_observer_uses_earliest_valid_window_for_repeated_required_state() {
         let mut authority = hook_authority("", json!([]));
         authority.chapter_number = 1;
@@ -3526,6 +3581,10 @@ mod tests {
 
         assert!(parse_error.is_none());
         assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(
+            validation.disposition,
+            StateSettlementDisposition::ObserverFormatDegraded
+        );
         assert_eq!(settlement.state_changes.len(), 1);
         assert_eq!(
             settlement.state_changes[0].authority_path,
@@ -3539,6 +3598,129 @@ mod tests {
             .warnings
             .iter()
             .any(|item| item.contains("unauthorized state delta")));
+    }
+
+    #[test]
+    fn exhausted_observer_discards_optional_delta_that_cannot_bind_to_its_sealed_field() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_contract.new_state_after_chapter = "沈砚已经取回旧城密钥".to_string();
+        authority.chapter_contract.resource_delta = "沈砚的寿元大幅减少".to_string();
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "沈砚"
+            }]
+        });
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 28,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "沈砚从石匣中取回旧城密钥，确认封锁已经解除。沈砚把陌生铜符收入袖中。";
+        let raw = json!({
+            "current_state": "沈砚取回旧城密钥。",
+            "chapter_summary": "沈砚取回旧城密钥并解除封锁。",
+            "state_changes": [{
+                "entity_id": "character-0001",
+                "event_type": "resource",
+                "value": "沈砚把陌生铜符收入袖中",
+                "evidence": {"excerpt": "沈砚把陌生铜符收入袖中。"},
+                "authority_path": "chapter_contract.resource_delta"
+            }]
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body_after_observer_exhaustion(
+                &raw, body, &chapter, &authority,
+            );
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(
+            validation.disposition,
+            StateSettlementDisposition::ObserverFormatDegraded
+        );
+        assert_eq!(settlement.state_changes.len(), 1);
+        assert_eq!(
+            settlement.state_changes[0].authority_path,
+            REQUIRED_END_STATE_AUTHORITY_PATH
+        );
+        assert!(validation
+            .advisories
+            .iter()
+            .any(|item| item.contains("discarded malformed optional observer state proposal")));
+        assert!(!validation
+            .warnings
+            .iter()
+            .any(|item| item.contains("unauthorized state delta")));
+    }
+
+    #[test]
+    fn exhausted_observer_discards_hook_defer_without_a_later_chapter_as_degraded() {
+        let mut authority = hook_authority(
+            "",
+            json!([{
+                "id": "hook-old-city-door",
+                "title": "旧城门后的真相",
+                "status": "open"
+            }]),
+        );
+        authority.chapter_contract.payoff_target = "旧城门后的真相".to_string();
+        let chapter = ChapterRecord {
+            number: 1,
+            title: "chapter".to_string(),
+            volume_id: String::new(),
+            volume_title: String::new(),
+            path: String::new(),
+            summary: String::new(),
+            unit_count: 16,
+            status: "draft".to_string(),
+            key_facts: Vec::new(),
+            continuity_updates: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let body = "沈砚确认旧城门后的真相仍需追查。";
+        let raw = json!({
+            "current_state": body,
+            "chapter_summary": body,
+            "state_changes": [{
+                "entity_id": "hook-old-city-door",
+                "event_type": "hook_defer",
+                "value": body,
+                "evidence": {"excerpt": body},
+                "authority_path": "chapter_contract.payoff_target",
+                "defer_until_chapter": 1
+            }]
+        })
+        .to_string();
+
+        let (settlement, validation, _, parse_error) =
+            validated_settlement_from_final_body_after_observer_exhaustion(
+                &raw, body, &chapter, &authority,
+            );
+
+        assert!(parse_error.is_none());
+        assert!(validation.passed, "{:?}", validation.warnings);
+        assert_eq!(
+            validation.disposition,
+            StateSettlementDisposition::ObserverFormatDegraded
+        );
+        assert!(settlement.state_changes.is_empty());
+        assert!(validation
+            .advisories
+            .iter()
+            .any(|item| { item.contains("defers a hook without a later chapter") }));
     }
 
     #[test]

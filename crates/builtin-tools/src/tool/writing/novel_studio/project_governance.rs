@@ -525,13 +525,15 @@ fn character_identity_markers_for_authority(
     } else if role.contains("男主") {
         Some("pronoun_profile:masculine")
     } else {
-        super::contract_explicit_identity_profile_in_character_anchor(arc_start).map(|profile| {
-            if profile == "feminine" {
-                "pronoun_profile:feminine"
-            } else {
-                "pronoun_profile:masculine"
-            }
-        })
+        super::contract_explicit_identity_profile_in_character_anchor(role)
+            .or_else(|| super::contract_explicit_identity_profile_in_character_anchor(arc_start))
+            .map(|profile| {
+                if profile == "feminine" {
+                    "pronoun_profile:feminine"
+                } else {
+                    "pronoun_profile:masculine"
+                }
+            })
     };
     if let Some(profile) = explicit_profile {
         markers.retain(|marker| {
@@ -543,6 +545,55 @@ fn character_identity_markers_for_authority(
     markers.sort();
     markers.dedup();
     markers
+}
+
+#[cfg(test)]
+mod character_authority_identity_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_spouse_role_becomes_pronoun_authority() {
+        assert_eq!(
+            character_identity_markers_for_authority(
+                Vec::new(),
+                "妻子兼关键关系对象",
+                "被动观察者",
+            ),
+            vec!["pronoun_profile:feminine"]
+        );
+        assert_eq!(
+            character_identity_markers_for_authority(
+                Vec::new(),
+                "丈夫兼关键关系对象",
+                "被动观察者",
+            ),
+            vec!["pronoun_profile:masculine"]
+        );
+    }
+
+    #[test]
+    fn explicit_gendered_occupation_in_arc_becomes_pronoun_authority() {
+        assert_eq!(
+            character_identity_markers_for_authority(
+                vec!["inferred_pronoun_profile:masculine".to_string()],
+                "关键关系对象",
+                "依赖主角的侍女",
+            ),
+            vec!["pronoun_profile:feminine"]
+        );
+    }
+
+    #[test]
+    fn relationship_object_fields_do_not_override_character_authority() {
+        assert_eq!(
+            character_identity_markers_for_authority(
+                vec!["inferred_pronoun_profile:masculine".to_string()],
+                "主角",
+                "寻找失踪妻子的调查者",
+            ),
+            vec!["inferred_pronoun_profile:masculine"]
+        );
+    }
 }
 
 pub(super) fn promote_approved_chapter_character_identity_markers(
@@ -572,11 +623,27 @@ pub(super) fn promote_approved_chapter_character_identity_markers(
         }
         let mut other_character_names = character_names.clone();
         other_character_names.remove(name);
-        let Some(profile) = super::contract_stable_character_pronoun_profile_in_text(
+        let directly_stable = super::approved_final_body_stable_character_pronoun_profile_in_text(
             final_body,
             name,
             &other_character_names,
-        ) else {
+        );
+        let sole_named_primary = super::character_contract_line_marks_primary(&character.role)
+            && !other_character_names
+                .iter()
+                .any(|other| final_body.contains(other));
+        let locally_confirmed_global = sole_named_primary
+            .then(|| {
+                let local = super::approved_final_body_character_pronoun_profile_hint_in_text(
+                    final_body,
+                    name,
+                    &other_character_names,
+                )?;
+                let global = super::contract_stable_primary_pronoun_profile_in_text(final_body)?;
+                (local == global).then_some(local)
+            })
+            .flatten();
+        let Some(profile) = directly_stable.or(locally_confirmed_global) else {
             continue;
         };
         character

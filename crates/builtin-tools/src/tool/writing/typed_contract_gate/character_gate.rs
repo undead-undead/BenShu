@@ -285,6 +285,117 @@ pub(super) fn validate_character_identity_invariants(
     }
 
     validate_gendered_primary_role_against_story_text(contract, issues);
+    validate_primary_spouse_authority(contract, issues);
+}
+
+fn validate_primary_spouse_authority(
+    contract: &NovelCreationContract,
+    issues: &mut ContractIssueList,
+) {
+    for primary in contract
+        .characters
+        .iter()
+        .filter(|character| character.role_looks_primary())
+    {
+        for profile in INTIMATE_RELATIONSHIP_PROFILES {
+            let Some(field) = [
+                ("欲望", primary.desire.as_str()),
+                ("恐惧", primary.fear.as_str()),
+                ("底线", primary.bottom_line.as_str()),
+            ]
+            .into_iter()
+            .find_map(|(field, value)| {
+                primary_field_declares_owned_intimate_relationship(value, profile).then_some(field)
+            }) else {
+                continue;
+            };
+            let has_bound_authority = contract.characters.iter().any(|candidate| {
+                !candidate.role_looks_primary()
+                    && intimate_relationship_profile_in_text(&candidate.role).is_some_and(
+                        |candidate_profile| {
+                            candidate_profile.identity_profile == profile.identity_profile
+                        },
+                    )
+                    && contract
+                        .structured
+                        .relationship_ledger
+                        .iter()
+                        .any(|relation| {
+                            relationship_entry_binds_characters(
+                                relation,
+                                &primary.canonical_name,
+                                &primary.character_id,
+                                &candidate.canonical_name,
+                                &candidate.character_id,
+                            )
+                        })
+            });
+            if has_bound_authority {
+                continue;
+            }
+            issues.set_scope(
+                "contract.character_relationship_identity",
+                ContractIssueKind::Characters,
+                "characters",
+            );
+            issues.push(format!(
+                "ContractBlocker: 主角 `{}` 的{field}把{}作为核心人物，但角色权威表没有用明确关系身份绑定对应 canonical_name；必须新增或修正该角色定位，并同步关系账本，不能让未命名关系身份在正文中漂移",
+                primary.canonical_name.trim(),
+                profile.label
+            ));
+        }
+    }
+}
+
+fn primary_field_declares_owned_intimate_relationship(
+    value: &str,
+    profile: &IntimateRelationshipProfile,
+) -> bool {
+    let lowered = value.to_ascii_lowercase();
+    profile.markers.iter().any(|marker| {
+        let haystack = if marker.is_ascii() {
+            lowered.as_str()
+        } else {
+            value
+        };
+        haystack.match_indices(marker).any(|(index, _)| {
+            let clause = haystack[..index]
+                .rsplit(['，', ',', '。', '；', ';', '：', ':'])
+                .next()
+                .unwrap_or("")
+                .trim();
+            !clause.ends_with("别人的")
+                && !clause.ends_with("他人的")
+                && !clause.ends_with("委托人的")
+                && !clause.ends_with("客户的")
+                && !clause.ends_with("受害者的")
+                && !clause.contains("帮助委托人")
+                && !clause.contains("协助委托人")
+                && !clause.contains("受托")
+        })
+    })
+}
+
+fn relationship_entry_binds_characters(
+    relation: &super::super::novel_contract_v2::RelationshipLedgerEntry,
+    primary_name: &str,
+    primary_id: &str,
+    candidate_name: &str,
+    candidate_id: &str,
+) -> bool {
+    let names_bind = [primary_name, candidate_name].into_iter().all(|name| {
+        let name = name.trim();
+        !value_missing(name) && relation.characters.iter().any(|bound| bound.trim() == name)
+    });
+    let ids_bind = [primary_id, candidate_id].into_iter().all(|id| {
+        let id = id.trim();
+        !value_missing(id)
+            && relation
+                .character_ids
+                .iter()
+                .any(|bound| bound.trim() == id)
+    });
+    names_bind || ids_bind
 }
 
 fn validate_gendered_primary_role_against_story_text(

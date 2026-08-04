@@ -646,12 +646,18 @@ pub(crate) fn distinct_future_boundary_character_anchors(
         .collect()
 }
 
+pub(crate) struct SealedFutureChapterBoundaries {
+    pub(crate) current_chapter_seed: String,
+    pub(crate) approved_history_seed: String,
+    pub(crate) future: Vec<(usize, String, String)>,
+}
+
 /// Reads the current seed and bounded future window from the already sealed
 /// authority projection. This keeps all consumers on the same read-only
 /// boundary instead of reconstructing another outline view from mutable state.
 pub(crate) fn sealed_current_and_future_chapter_seeds(
     authority: &SealedChapterAuthority,
-) -> Option<(String, Vec<(usize, String, String)>)> {
+) -> Option<SealedFutureChapterBoundaries> {
     let projection = authority.projection(AuthorityRole::Observer)?;
     let current_seed = [
         authority.chapter_contract.goal.as_str(),
@@ -668,7 +674,46 @@ pub(crate) fn sealed_current_and_future_chapter_seeds(
     let future =
         future_chapter_seeds_from_projection(&projection.payload, authority.chapter_number);
     let future = future.into_values().collect::<Vec<_>>();
-    (!future.is_empty()).then_some((current_seed, future))
+    (!future.is_empty()).then(|| SealedFutureChapterBoundaries {
+        current_chapter_seed: current_seed,
+        approved_history_seed: approved_truth_boundary_context(&authority.truth_as_of_chapter),
+        future,
+    })
+}
+
+/// Extends the current boundary with already-approved facts from the sealed
+/// truth snapshot. Future-boundary detection must not classify a repeated
+/// prior fact as a newly consumed future event merely because the current
+/// chapter seed does not repeat that fact. Pending hooks and ending-contract
+/// promises are deliberately excluded because they are not approved outcomes.
+fn approved_truth_boundary_context(truth_as_of_chapter: &Value) -> String {
+    truth_as_of_chapter
+        .get("recent_approved_chapters")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .flat_map(|chapter| {
+            [chapter.get("chapter_summary"), chapter.get("current_state")]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .chain(
+                    chapter
+                        .get("continuity_updates")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(ToString::to_string),
+                )
+        })
+        .collect::<Vec<_>>()
+        .join("；")
 }
 
 /// Collect the bounded future window from both sealed boundary sources.  The
@@ -2206,6 +2251,42 @@ mod tests {
         assert!(
             final_body_future_consumption_evidence(body, current, next, true, &[]).is_none(),
             "a possible or compelled next-stage plan is not evidence that the next chapter stage completed"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_keeps_core_area_approach_distinct_from_arrival_and_fusion() {
+        let truth = json!({
+            "recent_approved_chapters": [{
+                "chapter_summary": "商砚宁发现了能量核心外壳，并遭遇机械卫队合围。",
+                "current_state": "商砚宁带着能量核心外壳躲在斜坡阴影中。",
+                "continuity_updates": [
+                    "商砚宁通过消耗生命力使碎片与外壳频率同步。"
+                ],
+                "pending_hooks": "商砚宁何时抵达矿脉核心区"
+            }]
+        });
+        let current = format!(
+            "商砚宁通过与闻清安的远程共振感应找到秘密通道；商砚宁成功通过秘密通道脱离包围，并获得闻清安的指引；{}",
+            approved_truth_boundary_context(&truth)
+        );
+        let next = "商砚宁抵达能量核心所在的矿脉核心区，准备进行第一次真正的能量融合；商砚宁抵达能量核心点，准备进行融合仪式";
+        let body = "由于刚才为了让碎片与能量核心外壳达成频率同步，商砚宁不得不驱动过多生命力，手部仍在剧烈颤抖。他发现自己已经站在废墟边缘，下方是深不见底的黑暗。这里是能量流动的边缘，也是通往矿脉核心区的必经之路。他意识到自己已经成功脱离表层包围，来到禁地边缘，真正的挑战才刚刚开始。";
+
+        assert!(
+            final_body_future_consumption_evidence(body, &current, next, true, &[]).is_none(),
+            "an approved core-shell fact and an approach to the core area must not consume arrival or the first fusion"
+        );
+        assert!(
+            !approved_truth_boundary_context(&truth).contains("何时抵达矿脉核心区"),
+            "pending hooks must not weaken the future boundary"
+        );
+
+        let consumed = "商砚宁已经抵达能量核心所在的矿脉核心区，并完成了第一次真正的能量融合。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, &current, next, true, &[]).as_deref(),
+            Some(consumed),
+            "approved prior facts must not hide a genuinely completed future event"
         );
     }
 

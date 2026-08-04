@@ -58,31 +58,37 @@ pub(super) fn validate_structured_contract_fields(
     {
         issues.push("ContractBlocker: 小说合同缺少终局情绪落点".to_string());
     }
-    if field_strength(contract, "relationship_ledger")
+    let contract_declares_tracked_relationship = contract
+        .characters
+        .iter()
+        .any(|character| character_role_declares_intimate_relationship(&character.role));
+    let relationship_ledger_required = field_strength(contract, "relationship_ledger")
         .blocks_for_scope(scope, "relationship_ledger")
-        && structured.relationship_ledger.is_empty()
-    {
+        || contract_declares_tracked_relationship;
+    let relationship_ledger_must_be_valid =
+        relationship_ledger_required || !structured.relationship_ledger.is_empty();
+    if relationship_ledger_required && structured.relationship_ledger.is_empty() {
         issues.push("ContractBlocker: 小说合同缺少关系线或关键人物关系账本".to_string());
-    } else if field_strength(contract, "relationship_ledger")
-        .blocks_for_scope(scope, "relationship_ledger")
-        && structured.relationship_ledger.iter().all(|relation| {
-            relation.characters.is_empty()
-                || (value_missing(&relation.relationship_type)
-                    && value_missing(&relation.start_state)
-                    && value_missing(&relation.desired_end_state))
-        })
-    {
-        issues.push("ContractBlocker: 小说合同关系线缺少人物、起点或终点".to_string());
     }
-    for relation in &structured.relationship_ledger {
+    for (index, relation) in structured.relationship_ledger.iter().enumerate() {
         if relationship_ledger_entry_uses_generic_placeholder(relation) {
             issues.push(
                 "ContractBlocker: 小说合同关系账本仍使用通用占位关系，必须根据当前故事重写关系类型、阶段和冲突变化"
                     .to_string(),
             );
         }
-        if field_strength(contract, "relationship_ledger")
-            .blocks_for_scope(scope, "relationship_ledger")
+        if relationship_ledger_must_be_valid
+            && value_missing(&relation.relationship_type)
+            && value_missing(&relation.start_state)
+            && value_missing(&relation.current_state)
+            && value_missing(&relation.desired_end_state)
+        {
+            issues.push(format!(
+                "ContractBlocker: 小说合同关系账本第{}项缺少关系类型、起点或终点",
+                index + 1
+            ));
+        }
+        if relationship_ledger_must_be_valid
             && relation
                 .characters
                 .iter()
@@ -93,9 +99,10 @@ pub(super) fn validate_structured_contract_fields(
                 .count()
                 < 2
         {
-            issues.push(
-                "ContractBlocker: 小说合同关系线必须包含至少两个角色权威表内角色".to_string(),
-            );
+            issues.push(format!(
+                "ContractBlocker: 小说合同关系账本第{}项必须包含至少两个角色权威表内角色",
+                index + 1
+            ));
         }
         for name in &relation.characters {
             let name = name.trim();
@@ -257,7 +264,7 @@ fn validate_relationship_ledger_roles(
                 continue;
             };
             if character.role_looks_primary()
-                || character_role_supports_intimate_relationship(&character.role)
+                || super::character_role_supports_intimate_relationship(&character.role)
             {
                 continue;
             }
@@ -284,24 +291,6 @@ fn relationship_ledger_has_explicit_intimate_destination(
     .iter()
     .any(|marker| joined.contains(marker))
         || ["romance", "romantic", "lover", "spouse"]
-            .iter()
-            .any(|marker| lowered.contains(marker))
-}
-
-fn character_role_supports_intimate_relationship(role: &str) -> bool {
-    let lowered = role.to_ascii_lowercase();
-    [
-        "关系对象",
-        "情感对象",
-        "恋人",
-        "爱人",
-        "伴侣",
-        "男主",
-        "女主",
-    ]
-    .iter()
-    .any(|marker| role.contains(marker))
-        || ["love interest", "romantic", "lover", "spouse"]
             .iter()
             .any(|marker| lowered.contains(marker))
 }

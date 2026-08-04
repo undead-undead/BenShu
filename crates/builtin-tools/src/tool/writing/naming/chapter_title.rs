@@ -138,7 +138,10 @@ pub(crate) fn chapter_title_core(title: &str) -> String {
     }
     value
         .trim_start_matches(|ch: char| {
-            matches!(ch, ':' | '：' | '-' | '—' | ' ' | '\t' | '、' | '.')
+            matches!(
+                ch,
+                ':' | '：' | ';' | '；' | '-' | '—' | ' ' | '\t' | '、' | '.'
+            )
         })
         .trim()
         .to_string()
@@ -155,7 +158,10 @@ fn strip_structural_title_prefix(value: &str, marker: char) -> String {
     if prefix_len <= 8 && prefix.starts_with('第') {
         return trimmed[end..]
             .trim_start_matches(|ch: char| {
-                matches!(ch, ':' | '：' | '-' | '—' | ' ' | '\t' | '、' | '.')
+                matches!(
+                    ch,
+                    ':' | '：' | ';' | '；' | '-' | '—' | ' ' | '\t' | '、' | '.'
+                )
             })
             .trim()
             .to_string();
@@ -1125,7 +1131,10 @@ fn title_looks_like_temporal_prose_fragment(title: &str) -> bool {
 fn title_looks_like_causal_clause_fragment(title: &str) -> bool {
     let core = chapter_title_core(title);
     let chars = core.chars().collect::<Vec<_>>();
-    if !(4..=8).contains(&chars.len()) || !chars.iter().all(|ch| is_cjk_unified(*ch)) {
+    if !chars.iter().all(|ch| is_cjk_unified(*ch)) {
+        return false;
+    }
+    if !(4..=8).contains(&chars.len()) {
         return false;
     }
     for (index, ch) in chars.iter().enumerate() {
@@ -2093,6 +2102,42 @@ mod tests {
                 "{bad_title} should be treated as prose-clause metadata, not final title"
             );
         }
+    }
+
+    #[test]
+    fn final_title_selection_strips_leading_punctuation_without_rejecting() {
+        let context = ChapterTitleContext {
+            language: "zh-CN".to_string(),
+            project_title: "荒原领主".to_string(),
+            volume_titles: vec!["黑雾围城".to_string()],
+            other_chapter_titles: vec![(1, "青铜残镜的裂缝".to_string())],
+            character_names: vec!["岑启川".to_string(), "陆栖真".to_string()],
+        };
+        let bad_title = "；岑启川因过度消耗体力而昏迷";
+        let decision = select_final_chapter_title_from_body(
+            &context,
+            2,
+            bad_title,
+            "岑启川尝试驱动纹章，因生命力耗尽而昏迷。",
+            "岑启川将意志注入残镜，裂缝泛出红光。他因生命力迅速流失而昏迷，陆栖真守在床边。",
+        );
+
+        assert!(decision.accepted, "{decision:?}");
+        assert_eq!(
+            decision
+                .selected
+                .as_ref()
+                .map(|candidate| candidate.title.as_str()),
+            Some("岑启川因过度消耗体力而昏迷")
+        );
+    }
+
+    #[test]
+    fn concise_causal_chapter_title_is_not_treated_as_a_prose_fragment() {
+        assert!(!title_looks_like_causal_clause_fragment("周砚因旧誓而归来"));
+        assert!(!title_looks_like_causal_clause_fragment(
+            "周砚因一场旧日誓言而重返故城"
+        ));
     }
 
     #[test]

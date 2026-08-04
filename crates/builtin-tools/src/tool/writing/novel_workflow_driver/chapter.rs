@@ -55,24 +55,32 @@ fn inject_sealed_future_boundary_finding(
     write_result: &mut Value,
     language: &str,
 ) -> bool {
-    let Some((current_seed, future_boundaries)) =
-        governance::sealed_current_and_future_chapter_seeds(authority)
-    else {
+    let Some(boundaries) = governance::sealed_current_and_future_chapter_seeds(authority) else {
         return false;
     };
+    let comparison_seed = [
+        boundaries.current_chapter_seed.as_str(),
+        boundaries.approved_history_seed.as_str(),
+    ]
+    .into_iter()
+    .map(str::trim)
+    .filter(|value| !value.is_empty())
+    .collect::<Vec<_>>()
+    .join("；");
     let cjk = language_looks_cjk(language);
-    let findings = future_boundaries
+    let findings = boundaries
+        .future
         .into_iter()
         .filter_map(|(future_number, future_seed, future_path)| {
             let required_character_anchors = governance::distinct_future_boundary_character_anchors(
                 authority,
-                &current_seed,
+                &boundaries.current_chapter_seed,
                 &future_seed,
             );
             let (excerpt, source) = sealed_future_boundary_evidence(
                 body,
                 &observation.future_boundary_evidence,
-                &current_seed,
+                &comparison_seed,
                 &future_seed,
                 cjk,
                 &required_character_anchors,
@@ -2330,9 +2338,18 @@ mod tests {
                 "characters": [{
                     "character_id": "character-0001",
                     "canonical_name": "沈砚"
+                }, {
+                    "character_id": "character-0002",
+                    "canonical_name": "梁砚"
                 }]
             },
-            "truth_as_of_chapter": {},
+            "truth_as_of_chapter": {
+                "recent_approved_chapters": [{
+                    "chapter_summary": "梁砚此前送来旧站地图",
+                    "current_state": "梁砚仍在外城调查",
+                    "continuity_updates": []
+                }]
+            },
             "truth_cutoff_chapter": 0,
             "context_package": {
                 "schema_version": "test",
@@ -2476,5 +2493,26 @@ mod tests {
             .collect::<BTreeSet<_>>();
         assert!(codes.contains("required_end_state_evidence_missing"));
         assert!(codes.contains("future_chapter_consumed"));
+    }
+
+    #[test]
+    fn approved_history_does_not_remove_a_future_actor_absent_from_current_chapter() {
+        let authority = authority_with_required_state_and_future_boundary();
+        let body = "守卫已经发现追兵逼近，并确认旧站已经暴露。";
+        let observation = novel_runner::FinalChapterObservation::default();
+        let mut write_result = serde_json::json!({
+            "quality_gate": chapter_quality::ChapterQualityGate::default()
+        });
+
+        assert!(
+            !inject_sealed_future_boundary_finding(
+                &authority,
+                body,
+                &observation,
+                &mut write_result,
+                "zh-CN",
+            ),
+            "a similar event performed by another actor must not consume the future actor's boundary"
+        );
     }
 }

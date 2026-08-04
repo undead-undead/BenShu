@@ -147,6 +147,22 @@ pub(super) fn contract_stable_character_pronoun_profile_in_text(
     stable_character_pronoun_profile_in_text(content, name, other_character_names)
 }
 
+pub(super) fn approved_final_body_stable_character_pronoun_profile_in_text(
+    content: &str,
+    name: &str,
+    other_character_names: &BTreeSet<String>,
+) -> Option<&'static str> {
+    stable_approved_character_pronoun_profile_in_text(content, name, other_character_names)
+}
+
+pub(super) fn approved_final_body_character_pronoun_profile_hint_in_text(
+    content: &str,
+    name: &str,
+    other_character_names: &BTreeSet<String>,
+) -> Option<&'static str> {
+    approved_character_pronoun_profile_hint_in_text(content, name, other_character_names)
+}
+
 pub(super) fn contract_stable_primary_pronoun_profile_in_text(
     content: &str,
 ) -> Option<&'static str> {

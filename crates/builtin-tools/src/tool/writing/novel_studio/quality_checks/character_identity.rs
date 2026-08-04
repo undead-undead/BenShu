@@ -212,12 +212,7 @@ pub(in crate::tool::writing::novel_studio) fn contract_character_pronoun_drift_i
             "masculine" => evidence.feminine,
             _ => 0,
         };
-        let supports = match expected {
-            "feminine" => evidence.feminine,
-            "masculine" => evidence.masculine,
-            _ => 0,
-        };
-        if contradicts >= 2 && contradicts > supports {
+        if contradicts >= 2 {
             issues.push(format!(
                 "character pronoun/appellation drift: `{name}` has established {expected} identity markers, but this chapter uses contradictory references near the same character"
             ));
@@ -307,7 +302,7 @@ struct CharacterPronounEvidence {
 
 const FEMININE_IDENTITY_MARKERS: &[&str] = &[
     "她", "女人", "女孩", "少女", "姑娘", "女子", "女修", "小姐", "姐姐", "妹妹", "母亲", "妻子",
-    "女儿",
+    "女儿", "侍女",
 ];
 const FEMININE_ROLE_MARKERS: &[&str] = &[
     "夫人",
@@ -325,6 +320,7 @@ const FEMININE_ROLE_MARKERS: &[&str] = &[
     "母亲",
     "妻子",
     "女儿",
+    "侍女",
 ];
 const MASCULINE_IDENTITY_MARKERS: &[&str] = &[
     "他", "男人", "男孩", "少年", "青年", "男子", "男修", "先生", "哥哥", "弟弟", "父亲", "丈夫",
@@ -335,10 +331,41 @@ const MASCULINE_ROLE_MARKERS: &[&str] = &[
     "儿子", "士子", "书生",
 ];
 const FEMININE_SELF_IDENTITY_MARKERS: &[&str] = &[
-    "女性", "女主", "女人", "女孩", "少女", "姑娘", "女子", "女修", "小姐",
+    "女性",
+    "女主",
+    "女人",
+    "女孩",
+    "少女",
+    "姑娘",
+    "女子",
+    "女修",
+    "小姐",
+    "妻子",
+    "未婚妻",
+    "前妻",
+    "亡妻",
+    "女友",
+    "女性伴侣",
+    "侍女",
 ];
 const MASCULINE_SELF_IDENTITY_MARKERS: &[&str] = &[
-    "男性", "男主", "男人", "男孩", "少年", "青年", "男子", "男修", "先生", "士子", "书生",
+    "男性",
+    "男主",
+    "男人",
+    "男孩",
+    "少年",
+    "青年",
+    "男子",
+    "男修",
+    "先生",
+    "士子",
+    "书生",
+    "丈夫",
+    "未婚夫",
+    "前夫",
+    "亡夫",
+    "男友",
+    "男性伴侣",
 ];
 
 fn stable_pronoun_profile(evidence: CharacterPronounEvidence) -> Option<&'static str> {
@@ -362,6 +389,37 @@ pub(in crate::tool::writing) fn stable_character_pronoun_profile_in_text(
         other_character_names,
         PronounEvidenceScope::ContractInference,
     ))
+}
+
+pub(in crate::tool::writing) fn stable_approved_character_pronoun_profile_in_text(
+    content: &str,
+    name: &str,
+    other_character_names: &BTreeSet<String>,
+) -> Option<&'static str> {
+    stable_pronoun_profile(character_pronoun_evidence_near_name(
+        content,
+        name,
+        other_character_names,
+        PronounEvidenceScope::ChapterHardGate,
+    ))
+}
+
+pub(in crate::tool::writing) fn approved_character_pronoun_profile_hint_in_text(
+    content: &str,
+    name: &str,
+    other_character_names: &BTreeSet<String>,
+) -> Option<&'static str> {
+    let evidence = character_pronoun_evidence_near_name(
+        content,
+        name,
+        other_character_names,
+        PronounEvidenceScope::ChapterHardGate,
+    );
+    match (evidence.feminine, evidence.masculine) {
+        (feminine, 0) if feminine > 0 => Some("feminine"),
+        (0, masculine) if masculine > 0 => Some("masculine"),
+        _ => None,
+    }
 }
 
 pub(in crate::tool::writing) fn stable_primary_pronoun_profile_in_text(
@@ -487,12 +545,14 @@ fn direct_identity_marker_count_for_name(
                 same_profile_role_markers,
                 other_character_names,
                 true,
+                scope,
             ) + nearby_identity_marker_count(
                 before,
                 same_profile_role_markers,
                 same_profile_role_markers,
                 other_character_names,
                 false,
+                scope,
             );
             direct
                 + if scope == PronounEvidenceScope::ContractInference {
@@ -536,7 +596,8 @@ fn following_sentence_identity_marker_count(
     {
         return 0;
     }
-    let first_personal_pronoun = first_attributable_personal_pronoun(&next, 18);
+    let first_personal_pronoun =
+        first_attributable_personal_pronoun(&next, 18, PronounEvidenceScope::ContractInference);
     markers
         .iter()
         .filter(|marker| {
@@ -552,6 +613,8 @@ fn following_sentence_identity_marker_count(
                         &next[..index],
                         true,
                         18,
+                        marker.chars().next().unwrap(),
+                        PronounEvidenceScope::ContractInference,
                     );
                 }
                 next[..index].chars().count() <= 8
@@ -566,6 +629,7 @@ fn nearby_identity_marker_count(
     same_profile_role_markers: &[&str],
     other_character_names: &BTreeSet<String>,
     forward: bool,
+    scope: PronounEvidenceScope,
 ) -> usize {
     let chars = if forward {
         text.split(|ch| matches!(ch, '。' | '！' | '？' | '；' | '\n'))
@@ -593,7 +657,7 @@ fn nearby_identity_marker_count(
         return 0;
     }
     let first_personal_pronoun = if forward {
-        first_attributable_personal_pronoun(sentence_fragment, 48)
+        first_attributable_personal_pronoun(sentence_fragment, 48, scope)
     } else {
         None
     };
@@ -621,7 +685,11 @@ fn nearby_identity_marker_count(
                         && (first_personal_pronoun
                             != Some((*index, marker.chars().next().unwrap()))
                             || !personal_pronoun_directly_attributes_nearby_name(
-                                between, forward, 48,
+                                between,
+                                forward,
+                                48,
+                                marker.chars().next().unwrap(),
+                                scope,
                             ))
                     {
                         return false;
@@ -640,7 +708,11 @@ fn nearby_identity_marker_count(
         .sum()
 }
 
-fn first_attributable_personal_pronoun(text: &str, max_distance: usize) -> Option<(usize, char)> {
+fn first_attributable_personal_pronoun(
+    text: &str,
+    max_distance: usize,
+    scope: PronounEvidenceScope,
+) -> Option<(usize, char)> {
     ["他", "她"]
         .into_iter()
         .flat_map(|marker| {
@@ -651,6 +723,8 @@ fn first_attributable_personal_pronoun(text: &str, max_distance: usize) -> Optio
                             &text[..*index],
                             true,
                             max_distance,
+                            marker.chars().next().unwrap(),
+                            scope,
                         )
                 })
                 .map(move |(index, _)| (index, marker.chars().next().unwrap()))
@@ -662,6 +736,8 @@ fn personal_pronoun_directly_attributes_nearby_name(
     between: &str,
     forward: bool,
     max_distance: usize,
+    pronoun: char,
+    scope: PronounEvidenceScope,
 ) -> bool {
     if !forward {
         return false;
@@ -686,47 +762,74 @@ fn personal_pronoun_directly_attributes_nearby_name(
     let continuation =
         compact[boundary..].trim_start_matches(['，', ',', '。', '！', '!', '？', '?', '；', ';']);
     let prior_clause = &compact[..boundary];
-    let prior_clause_has_object_pronoun = ["他", "她"].iter().any(|marker| {
-        prior_clause
-            .match_indices(marker)
-            .any(|(index, _)| identity_marker_occurrence_is_explicit(prior_clause, index, marker))
-    });
-    prior_clause_has_object_pronoun
-        || matches!(
-            continuation,
-            "" | "而"
-                | "但"
-                | "然而"
-                | "却"
-                | "随后"
-                | "然后"
-                | "于是"
-                | "接着"
-                | "此时"
-                | "这时"
-                | "最终"
-                | "仍"
-                | "仍然"
-                | "仍旧"
-                | "依然"
-                | "也"
-                | "又"
-                | "便"
-                | "就"
-                | "则"
-                | "转而"
-                | "忽然"
-                | "突然"
-                | "旋即"
-                | "随即"
-                | "紧接着"
-                | "下一刻"
-        )
+    let prior_clause_object_pronoun = ["他", "她"]
+        .into_iter()
+        .flat_map(|marker| {
+            prior_clause
+                .match_indices(marker)
+                .filter(move |(index, _)| {
+                    identity_marker_occurrence_is_explicit(prior_clause, *index, marker)
+                })
+                .map(move |(index, _)| (index, marker.chars().next().unwrap()))
+        })
+        .max_by_key(|(index, _)| *index)
+        .map(|(_, marker)| marker);
+    (match scope {
+        PronounEvidenceScope::ContractInference => prior_clause_object_pronoun.is_some(),
+        PronounEvidenceScope::ChapterHardGate => {
+            prior_clause_object_pronoun.is_some_and(|object_pronoun| object_pronoun != pronoun)
+        }
+    }) || matches!(
+        continuation,
+        "" | "而"
+            | "但"
+            | "然而"
+            | "却"
+            | "随后"
+            | "然后"
+            | "于是"
+            | "接着"
+            | "此时"
+            | "这时"
+            | "最终"
+            | "仍"
+            | "仍然"
+            | "仍旧"
+            | "依然"
+            | "也"
+            | "又"
+            | "便"
+            | "就"
+            | "则"
+            | "转而"
+            | "忽然"
+            | "突然"
+            | "旋即"
+            | "随即"
+            | "紧接着"
+            | "下一刻"
+    )
 }
 
 #[cfg(test)]
 mod pronoun_tests {
     use super::*;
+
+    #[test]
+    fn relationship_role_identity_is_explicit_but_object_reference_is_not() {
+        assert_eq!(
+            explicit_identity_profile_in_character_anchor("妻子兼关键关系对象"),
+            Some("feminine")
+        );
+        assert_eq!(
+            explicit_identity_profile_in_character_anchor("丈夫兼关键关系对象"),
+            Some("masculine")
+        );
+        assert_eq!(
+            explicit_identity_profile_in_character_anchor("寻找失踪妻子的调查者"),
+            None
+        );
+    }
 
     #[test]
     fn compact_planning_authority_rejects_opposite_pronoun_for_same_profile_pair() {
@@ -778,6 +881,40 @@ mod pronoun_tests {
         );
 
         assert!(masculine > 0);
+        assert_eq!(feminine, 0);
+    }
+
+    #[test]
+    fn repeated_object_pronoun_is_not_attributed_to_named_observer() {
+        let content = "沈砚看着她，能感受到她眼中那种紧迫的焦虑。";
+        let other_names = BTreeSet::from(["顾晚".to_string()]);
+
+        let feminine = direct_identity_marker_count_for_name(
+            content,
+            "沈砚",
+            &other_names,
+            FEMININE_IDENTITY_MARKERS,
+            FEMININE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+
+        assert_eq!(feminine, 0);
+    }
+
+    #[test]
+    fn prior_addressee_title_is_not_attributed_to_next_speaker() {
+        let content = "“顾小姐，”沈砚收回视线，重新回到工作台旁。";
+        let other_names = BTreeSet::from(["顾晚".to_string()]);
+
+        let feminine = direct_identity_marker_count_for_name(
+            content,
+            "沈砚",
+            &other_names,
+            FEMININE_IDENTITY_MARKERS,
+            FEMININE_ROLE_MARKERS,
+            PronounEvidenceScope::ChapterHardGate,
+        );
+
         assert_eq!(feminine, 0);
     }
 
@@ -852,6 +989,28 @@ mod pronoun_tests {
 }
 
 fn role_marker_directly_attributes_nearby_name(between: &str, forward: bool) -> bool {
+    if !forward
+        && between.chars().any(|ch| {
+            matches!(
+                ch,
+                '，' | ','
+                    | '。'
+                    | '！'
+                    | '!'
+                    | '？'
+                    | '?'
+                    | '；'
+                    | ';'
+                    | '“'
+                    | '”'
+                    | '"'
+                    | '‘'
+                    | '’'
+            )
+        })
+    {
+        return false;
+    }
     let compact = between
         .chars()
         .filter(|ch| !ch.is_whitespace() && !matches!(ch, '，' | ',' | '：' | ':' | '（' | '('))

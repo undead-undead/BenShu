@@ -3611,6 +3611,205 @@ fn approved_final_body_locks_first_stable_pronoun_profile_without_later_overwrit
 }
 
 #[test]
+fn approved_final_body_locks_sole_named_primary_from_stable_narrative_pronouns() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![CharacterAuthorityRecord {
+        name_source: "contract".to_string(),
+        planned_entry: String::new(),
+        planned_exit: String::new(),
+        id: "character-0001".to_string(),
+        canonical_name: "许观澜".to_string(),
+        aliases: Vec::new(),
+        identity_markers: Vec::new(),
+        role: "主角".to_string(),
+        desire: "找回遗失的记忆".to_string(),
+        fear: "失去感知能力".to_string(),
+        bottom_line: "不牺牲他人".to_string(),
+        arc_start: "孤独的修复者".to_string(),
+        arc_end: "坚定的守护者".to_string(),
+        forbidden_renames: Vec::new(),
+        status: "active".to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+    }];
+
+    promote_approved_chapter_character_identity_markers(
+        &mut manifest,
+        "许观澜低头校准刻度，随后她抬起放大镜检查齿轮。齿轮重新转动时，她屏住呼吸。她没有移开视线，而是把异常频率记进账本。门外的访客停在阴影里，他始终没有报出姓名。",
+    );
+
+    assert_eq!(
+        manifest.character_ledger[0].identity_markers,
+        vec!["inferred_pronoun_profile:feminine"]
+    );
+}
+
+#[test]
+fn approved_final_body_does_not_assign_unnamed_secondary_pronouns_to_sole_named_primary() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![CharacterAuthorityRecord {
+        name_source: "contract".to_string(),
+        planned_entry: String::new(),
+        planned_exit: String::new(),
+        id: "character-0001".to_string(),
+        canonical_name: "许观澜".to_string(),
+        aliases: Vec::new(),
+        identity_markers: Vec::new(),
+        role: "主人公".to_string(),
+        desire: "找回遗失的记忆".to_string(),
+        fear: "失去感知能力".to_string(),
+        bottom_line: "不牺牲他人".to_string(),
+        arc_start: "孤独的修复者".to_string(),
+        arc_end: "坚定的守护者".to_string(),
+        forbidden_renames: Vec::new(),
+        status: "active".to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+    }];
+
+    promote_approved_chapter_character_identity_markers(
+        &mut manifest,
+        "许观澜整理好他的工具，把记录放回抽屉。门外的女孩走进工作间，她放下雨伞。她检查窗锁，又把她带来的旧表放在桌上。",
+    );
+
+    assert!(manifest.character_ledger[0].identity_markers.is_empty());
+}
+
+#[test]
+fn approved_final_body_does_not_use_global_pronouns_when_another_named_character_appears() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0001".to_string(),
+            canonical_name: "许观澜".to_string(),
+            aliases: Vec::new(),
+            identity_markers: Vec::new(),
+            role: "主角".to_string(),
+            desire: "找回遗失的记忆".to_string(),
+            fear: "失去感知能力".to_string(),
+            bottom_line: "不牺牲他人".to_string(),
+            arc_start: "孤独的修复者".to_string(),
+            arc_end: "坚定的守护者".to_string(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0002".to_string(),
+            canonical_name: "顾临川".to_string(),
+            aliases: Vec::new(),
+            identity_markers: Vec::new(),
+            role: "关键关系对象".to_string(),
+            desire: "守住档案".to_string(),
+            fear: "秘密暴露".to_string(),
+            bottom_line: "不伤害无辜".to_string(),
+            arc_start: String::new(),
+            arc_end: String::new(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    ];
+
+    promote_approved_chapter_character_identity_markers(
+        &mut manifest,
+        "许观澜看向顾临川。她把档案收进抽屉，她没有解释自己的来意。",
+    );
+
+    assert!(manifest
+        .character_ledger
+        .iter()
+        .all(|character| character.identity_markers.is_empty()));
+}
+
+#[test]
+fn approved_final_body_does_not_turn_repeated_object_pronouns_into_identity_authority() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![CharacterAuthorityRecord {
+        name_source: "contract".to_string(),
+        planned_entry: String::new(),
+        planned_exit: String::new(),
+        id: "character-0002".to_string(),
+        canonical_name: "陆栖真".to_string(),
+        aliases: Vec::new(),
+        identity_markers: Vec::new(),
+        role: "关键关系对象".to_string(),
+        desire: "守护岑启川".to_string(),
+        fear: "失去岑启川".to_string(),
+        bottom_line: "必须守住岑启川的安全".to_string(),
+        arc_start: String::new(),
+        arc_end: String::new(),
+        forbidden_renames: Vec::new(),
+        status: "active".to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+    }];
+
+    promote_approved_chapter_character_identity_markers(
+        &mut manifest,
+        "陆栖真曾是他最信任的盾，也是最后为他挡下致命一击的利刃。陆栖真放下水盆，有些嗔怪地看着他，随后注意到他的目光。",
+    );
+
+    assert!(
+        manifest.character_ledger[0]
+            .identity_markers
+            .iter()
+            .all(|marker| !marker.starts_with("inferred_pronoun_profile:")),
+        "object pronouns must not become final-body identity authority"
+    );
+}
+
+#[test]
+fn quality_gate_blocks_mixed_identity_even_when_matching_references_are_more_frequent() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![CharacterAuthorityRecord {
+        name_source: "contract".to_string(),
+        planned_entry: String::new(),
+        planned_exit: String::new(),
+        id: "character-0001".to_string(),
+        canonical_name: "陆栖真".to_string(),
+        aliases: Vec::new(),
+        identity_markers: vec!["pronoun_profile:masculine".to_string()],
+        role: "关键关系对象".to_string(),
+        desire: "守住领地".to_string(),
+        fear: "任务失败".to_string(),
+        bottom_line: "不伤害无辜".to_string(),
+        arc_start: String::new(),
+        arc_end: String::new(),
+        forbidden_renames: Vec::new(),
+        status: "active".to_string(),
+        updated_at: Utc::now().to_rfc3339(),
+    }];
+    let chapter = ChapterRecord {
+        number: 2,
+        title: "残镜余温".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0002.md".to_string(),
+        summary: String::new(),
+        unit_count: 2500,
+        status: "draft".to_string(),
+        key_facts: Vec::new(),
+        continuity_updates: Vec::new(),
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+    let content = "陆栖真走到床边，他放下毛巾。陆栖真没有回头，他关上窗。陆栖真守在门口，他握紧刀柄。陆栖真走到镜前，她收起残镜。陆栖真回到床边，她低声告警。";
+
+    let issues = contract_character_pronoun_drift_issues(&manifest, &chapter, content);
+
+    assert!(
+        issues
+            .iter()
+            .any(|issue| issue.contains("pronoun/appellation drift")),
+        "repeated opposite identity evidence must not be hidden by majority matching references: {issues:?}"
+    );
+}
+
+#[test]
 fn quality_gate_does_not_require_every_secondary_character_each_chapter() {
     let manifest = test_manifest_with_primary_character();
     let chapter = ChapterRecord {

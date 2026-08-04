@@ -19,6 +19,82 @@ mod outline_gate;
 mod structured_gate;
 mod surface_gate;
 
+#[derive(Clone, Copy)]
+struct IntimateRelationshipProfile {
+    label: &'static str,
+    identity_profile: &'static str,
+    markers: &'static [&'static str],
+}
+
+const INTIMATE_RELATIONSHIP_PROFILES: &[IntimateRelationshipProfile] = &[
+    IntimateRelationshipProfile {
+        label: "女性配偶",
+        identity_profile: "feminine",
+        markers: &[
+            "妻子",
+            "未婚妻",
+            "前妻",
+            "亡妻",
+            "女友",
+            "女性伴侣",
+            "wife",
+            "fiancee",
+            "fiancée",
+            "girlfriend",
+        ],
+    },
+    IntimateRelationshipProfile {
+        label: "男性配偶",
+        identity_profile: "masculine",
+        markers: &[
+            "丈夫",
+            "未婚夫",
+            "前夫",
+            "亡夫",
+            "男友",
+            "男性伴侣",
+            "husband",
+            "fiance",
+            "fiancé",
+            "boyfriend",
+        ],
+    },
+];
+
+fn intimate_relationship_profile_in_text(
+    text: &str,
+) -> Option<&'static IntimateRelationshipProfile> {
+    let lowered = text.to_ascii_lowercase();
+    INTIMATE_RELATIONSHIP_PROFILES.iter().find(|profile| {
+        profile
+            .markers
+            .iter()
+            .any(|marker| text.contains(marker) || lowered.contains(marker))
+    })
+}
+
+fn character_role_declares_intimate_relationship(role: &str) -> bool {
+    let lowered = role.to_ascii_lowercase();
+    intimate_relationship_profile_in_text(role).is_some()
+        || ["恋人", "爱人", "伴侣"]
+            .iter()
+            .any(|marker| role.contains(marker))
+        || ["love interest", "romantic interest", "lover", "spouse"]
+            .iter()
+            .any(|marker| lowered.contains(marker))
+}
+
+fn character_role_supports_intimate_relationship(role: &str) -> bool {
+    character_role_declares_intimate_relationship(role)
+        || role.contains("关系对象")
+        || role.contains("情感对象")
+        || role.contains("男主")
+        || role.contains("女主")
+        || role.to_ascii_lowercase().contains("love interest")
+        || role.to_ascii_lowercase().contains("male lead")
+        || role.to_ascii_lowercase().contains("female lead")
+}
+
 pub(crate) fn character_anchor_person_references(text: &str) -> Vec<String> {
     character_gate::character_field_person_references(text)
 }
@@ -3070,5 +3146,114 @@ mod tests {
             )),
             "{joined}"
         );
+    }
+
+    #[test]
+    fn locked_contract_requires_ledger_for_declared_relationship_character() {
+        let mut contract: NovelCreationContract =
+            serde_json::from_value(base_ready_contract_json()).expect("contract");
+        contract.characters[1].role = "妻子兼关键关系对象".to_string();
+        contract.structured.relationship_ledger.clear();
+
+        let report = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        let joined = report.issues.join("\n");
+
+        assert!(joined.contains("缺少关系线或关键人物关系账本"), "{joined}");
+    }
+
+    #[test]
+    fn locked_contract_binds_primary_spouse_to_named_character_authority() {
+        let mut contract: NovelCreationContract =
+            serde_json::from_value(base_ready_contract_json()).expect("contract");
+        let primary_name = contract.characters[0].canonical_name.clone();
+        contract.characters[0].desire = "找回失踪妻子的记忆与行踪".to_string();
+        contract.characters[1].role = "关键关系对象".to_string();
+
+        let blocked = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        let blocked_text = blocked.issues.join("\n");
+        assert!(
+            blocked_text.contains(&format!(
+                "主角 `{primary_name}` 的欲望把女性配偶作为核心人物"
+            )),
+            "{blocked_text}"
+        );
+
+        contract.characters[1].role = "妻子兼关键关系对象".to_string();
+        let repaired = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        let repaired_text = repaired.issues.join("\n");
+        assert!(
+            !repaired_text.contains("把女性配偶作为核心人物"),
+            "{repaired_text}"
+        );
+    }
+
+    #[test]
+    fn locked_contract_does_not_treat_a_third_party_spouse_as_the_primarys_spouse() {
+        let mut contract: NovelCreationContract =
+            serde_json::from_value(base_ready_contract_json()).expect("contract");
+        contract.characters[0].desire = "帮助委托人寻找妻子留下的证据".to_string();
+        contract.characters[1].role = "关键同伴".to_string();
+
+        let report = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        let joined = report.issues.join("\n");
+
+        assert!(!joined.contains("把女性配偶作为核心人物"), "{joined}");
+    }
+
+    #[test]
+    fn locked_contract_requires_the_spouse_candidate_to_share_a_relationship_edge_with_primary() {
+        let mut contract: NovelCreationContract =
+            serde_json::from_value(base_ready_contract_json()).expect("contract");
+        let primary_name = contract.characters[0].canonical_name.clone();
+        contract.characters[0].desire = "找回失踪妻子的记忆与行踪".to_string();
+        contract.characters[1].role = "妻子兼关键关系对象".to_string();
+        contract.structured.relationship_ledger[0].characters =
+            vec![contract.characters[1].canonical_name.clone()];
+
+        let report = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        let joined = report.issues.join("\n");
+
+        assert!(
+            joined.contains(&format!(
+                "主角 `{primary_name}` 的欲望把女性配偶作为核心人物"
+            )),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn declared_relationship_rejects_an_existing_but_empty_optional_ledger_entry() {
+        let mut contract: NovelCreationContract =
+            serde_json::from_value(base_ready_contract_json()).expect("contract");
+        contract.characters[1].role = "妻子兼关键关系对象".to_string();
+        contract
+            .structured
+            .field_requirements
+            .insert("relationship_ledger".to_string(), "optional".to_string());
+        contract.structured.relationship_ledger[0] = Default::default();
+
+        let report = validate_novel_creation_contract_for_scope(
+            &contract,
+            ContractReadinessScope::LockedAuthorityContract,
+        );
+        let joined = report.issues.join("\n");
+
+        assert!(joined.contains("关系账本第1项缺少关系类型"), "{joined}");
+        assert!(joined.contains("第1项必须包含至少两个角色"), "{joined}");
     }
 }
