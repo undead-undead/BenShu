@@ -2191,6 +2191,56 @@ fn chapter_metadata_summary_prefers_supported_facts_over_body_opening() {
 }
 
 #[test]
+fn chapter_metadata_rebuilds_identity_conflicting_fields_from_final_body() {
+    let mut manifest = test_manifest_with_primary_character();
+    if let Some(contract) = manifest.contract.as_mut() {
+        contract.characters = vec![
+            "name: 商予真; role: 主角; desire: 延续寿元".to_string(),
+            "name: 阮承澜; role: 同伴; desire: 找到矿脉".to_string(),
+        ];
+    }
+    ensure_project_governance(&mut manifest);
+    manifest
+        .character_ledger
+        .iter_mut()
+        .find(|character| character.canonical_name == "商予真")
+        .expect("primary character ledger")
+        .identity_markers = vec!["inferred_pronoun_profile:feminine".to_string()];
+    let body = "商予真发现乱石后的矿脉入口，她带着阮承澜进入矿道。商予真主动引导青灯释放灵气，她也因此承受了寿元流失的代价。";
+    let mut chapter = ChapterRecord {
+        number: 4,
+        title: "矿脉入口".to_string(),
+        volume_id: String::new(),
+        volume_title: String::new(),
+        path: "chapters/0004.md".to_string(),
+        summary: "商予真发现了矿脉入口，他的视线越过乱石。".to_string(),
+        unit_count: 2500,
+        status: "state_ready".to_string(),
+        key_facts: vec![
+            "商予真发现乱石后的矿脉入口，他带着阮承澜进入矿道。".to_string(),
+        ],
+        continuity_updates: vec![
+            "商予真主动引导青灯释放灵气，他也因此承受了寿元流失的代价。".to_string(),
+        ],
+        created_at: Utc::now().to_rfc3339(),
+        updated_at: Utc::now().to_rfc3339(),
+    };
+
+    normalize_chapter_metadata_against_body(&manifest, &mut chapter, body);
+
+    let governed = format!(
+        "{}\n{}\n{}",
+        chapter.summary,
+        chapter.key_facts.join("\n"),
+        chapter.continuity_updates.join("\n")
+    );
+    assert!(!governed.contains("他的"), "{governed}");
+    assert!(!chapter.key_facts.is_empty(), "{chapter:?}");
+    assert!(!chapter.continuity_updates.is_empty(), "{chapter:?}");
+    assert!(governed.contains("商予真"), "{governed}");
+}
+
+#[test]
 fn chapter_metadata_summary_rejects_prior_chapter_fact_reuse() {
     let mut manifest = test_manifest_with_primary_character();
     if let Some(contract) = manifest.contract.as_mut() {
@@ -3727,6 +3777,73 @@ fn approved_final_body_does_not_use_global_pronouns_when_another_named_character
 }
 
 #[test]
+fn approved_final_body_locks_repeated_cross_sentence_profiles_for_separate_named_characters() {
+    let mut manifest = test_manifest_with_primary_character();
+    manifest.character_ledger = vec![
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0001".to_string(),
+            canonical_name: "梁知遥".to_string(),
+            aliases: Vec::new(),
+            identity_markers: Vec::new(),
+            role: "主角".to_string(),
+            desire: "修复裂痕".to_string(),
+            fear: "城市崩塌".to_string(),
+            bottom_line: "不牺牲他人".to_string(),
+            arc_start: "谨慎的维修工".to_string(),
+            arc_end: "城市守护者".to_string(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+        CharacterAuthorityRecord {
+            name_source: "contract".to_string(),
+            planned_entry: String::new(),
+            planned_exit: String::new(),
+            id: "character-0002".to_string(),
+            canonical_name: "阮启序".to_string(),
+            aliases: Vec::new(),
+            identity_markers: Vec::new(),
+            role: "关键关系对象".to_string(),
+            desire: "记录空间异常".to_string(),
+            fear: "观测失真".to_string(),
+            bottom_line: "不伪造数据".to_string(),
+            arc_start: "严谨的观察员".to_string(),
+            arc_end: "共同重建城市".to_string(),
+            forbidden_renames: Vec::new(),
+            status: "active".to_string(),
+            updated_at: Utc::now().to_rfc3339(),
+        },
+    ];
+
+    promote_approved_chapter_character_identity_markers(
+        &mut manifest,
+        "梁知遥放下工具箱。她用指尖检查墙缝。梁知遥收回抹刀。她没有离开现场。\n\n阮启序站在观测塔顶。他记录重力参数。阮启序放下望远镜。他重新核对读数。",
+    );
+
+    let primary = manifest
+        .character_ledger
+        .iter()
+        .find(|character| character.canonical_name == "梁知遥")
+        .expect("primary character");
+    assert_eq!(
+        primary.identity_markers,
+        vec!["inferred_pronoun_profile:feminine"]
+    );
+    let observer = manifest
+        .character_ledger
+        .iter()
+        .find(|character| character.canonical_name == "阮启序")
+        .expect("observer character");
+    assert_eq!(
+        observer.identity_markers,
+        vec!["inferred_pronoun_profile:masculine"]
+    );
+}
+
+#[test]
 fn approved_final_body_does_not_turn_repeated_object_pronouns_into_identity_authority() {
     let mut manifest = test_manifest_with_primary_character();
     manifest.character_ledger = vec![CharacterAuthorityRecord {
@@ -4199,6 +4316,40 @@ fn quality_gate_blocks_anchor_followed_by_sensory_object() {
         issues.iter().any(|issue| issue.contains("黎启洄一种")),
         "{issues:?}"
     );
+}
+
+#[test]
+fn quality_gate_allows_plural_demonstrative_after_character_anchor() {
+    let mut manifest = test_manifest_with_primary_character();
+    if let Some(contract) = manifest.contract.as_mut() {
+        contract.characters = vec!["name: 陆启宁; role: 对手; desire: 找到青灯".to_string()];
+    }
+    ensure_project_governance(&mut manifest);
+
+    let issues = anchor_malformed_predicate_issues(
+        &manifest,
+        "一旦释放灵气，陆启宁那些人的感应会比之前敏锐十倍。",
+    );
+
+    assert!(issues.is_empty(), "{issues:?}");
+}
+
+#[test]
+fn quality_gate_does_not_scan_later_predicate_for_demonstrative_locative() {
+    let mut manifest = test_manifest_with_primary_character();
+    if let Some(contract) = manifest.contract.as_mut() {
+        contract.characters = vec!["name: 陆启宁; role: 对手; desire: 找到青灯".to_string()];
+    }
+    ensure_project_governance(&mut manifest);
+
+    for content in [
+        "陆启宁那个人的感应会比之前更强。",
+        "陆启宁那个对手后来改变了计划。",
+        "陆启宁那座前哨站仍然亮着灯。",
+    ] {
+        let issues = anchor_malformed_predicate_issues(&manifest, content);
+        assert!(issues.is_empty(), "{content}: {issues:?}");
+    }
 }
 
 #[test]
@@ -5111,6 +5262,34 @@ fn contract_previous_names_become_forbidden_authority_and_are_repaired() {
     assert_eq!(
         repair_contract_character_name_typos(&manifest, protected_location),
         protected_location
+    );
+
+    let ledger = manifest
+        .character_ledger
+        .iter_mut()
+        .find(|character| character.canonical_name == "谢知原")
+        .expect("canonical character ledger");
+    ledger.forbidden_renames.push("骸骨".to_string());
+    ledger.forbidden_renames.sort();
+    ledger.forbidden_renames.dedup();
+
+    let common_noun = "扭曲的钢筋像一具巨大的骸骨，直指灰暗的天空。";
+    assert!(
+        contract_character_drift_issues(&manifest, &chapter, common_noun).is_empty(),
+        "an ambiguous two-character former candidate used as a common noun must not be treated as a character"
+    );
+    assert_eq!(
+        repair_contract_character_name_typos(&manifest, common_noun),
+        common_noun
+    );
+
+    let explicit_character = "对手骸骨正在操控异兽。";
+    assert!(contract_character_drift_issues(&manifest, &chapter, explicit_character)
+        .iter()
+        .any(|issue| issue.contains("骸骨") && issue.contains("谢知原")));
+    assert_eq!(
+        repair_contract_character_name_typos(&manifest, explicit_character),
+        "对手谢知原正在操控异兽。"
     );
 }
 

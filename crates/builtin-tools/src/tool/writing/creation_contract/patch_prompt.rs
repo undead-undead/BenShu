@@ -141,6 +141,7 @@ fn skeleton_patch_prompt(
 故事蓝图补齐阶段：Skeleton typed patch\n\
 用户正在确定小说故事蓝图，当前只需要补齐结构化创作字段。请输出紧凑、可确认、可机读的“故事蓝图字段包”。{STORY_BLUEPRINT_BOUNDARY}你只生成字段补丁，不写正文，不解释，不输出 Markdown 代码块。\n\
 本阶段只补故事骨架和书名：题材、简述、故事前提、终局方向、终局状态、主角弧线、世界观意象、总主线因果链、书名候选和书名理由。\n\
+故事简述、故事前提、主角弧线、总主线因果、终局方向和终局状态必须是主体、动作、对象与结果清楚的完整自然句；因果分句必须明确写出什么行动导致什么直接结果，不得把人物姓名单独放在“导致/引发”之后充当结果，不得输出缺词、词序损坏、截断或不可读拼接。\n\
 角色权威表若已用“女主”或“男主”锁定主角身份，简述、故事前提、主角弧线和终局字段对该角色的指代必须一致；质量门指出冲突时必须重写冲突的故事字段，不得原样返回。\n\
 终局方向必须写清主角采取的具体行动和直接结果；终局状态必须非空，并写成行动完成后已经不可逆改变的制度、关系、身份、资源归属或公共状态，不能只写情绪、愿望或“失败/成功”。\n\
 	生成顺序必须是：先终局和主线，再世界规则和关键意象，再生成恰好 3 个彼此不同的候选书名，最后从候选里定名；每个候选 rationale 控制在 18 到 35 个中文字，title.rationale 控制在 30 到 50 个中文字，并说明书名如何来自结局、主线、世界规则或关键事件。\n\
@@ -912,6 +913,41 @@ mod tests {
         messages: impl IntoIterator<Item = String>,
     ) -> ContractIssueList {
         ContractIssueList::from_messages("test.contract_issue", kind, "test", messages)
+    }
+
+    #[test]
+    fn skeleton_prompt_requires_complete_causal_sentences() {
+        let draft = super::build_initial_creation_draft(
+            "skeleton-sentence-integrity",
+            "fiction",
+            "写历史架空小说，总字数10万字，每章2500字。",
+        )
+        .expect("draft");
+        let issues = typed_issues(
+            ContractIssueKind::Skeleton,
+            ["总主线因果存在不可读残句".to_string()],
+        );
+
+        let prompt = skeleton_patch_prompt(
+            &draft,
+            "其他内容你来决定",
+            &issues,
+            "稳定锚点",
+            "100000",
+            "2500",
+            40,
+            "使用中文",
+        );
+
+        assert!(prompt.contains("主体、动作、对象与结果清楚"), "{prompt}");
+        assert!(
+            prompt.contains("人物姓名单独放在“导致/引发”之后"),
+            "{prompt}"
+        );
+        assert!(
+            prompt.contains("缺词、词序损坏、截断或不可读拼接"),
+            "{prompt}"
+        );
     }
 
     #[test]

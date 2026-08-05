@@ -612,7 +612,11 @@ pub(super) fn decide_chapter_loop_step(input: ChapterLoopDecisionInput<'_>) -> C
 
     if only_local_cleanup_issues(input.write_result, input.audit) {
         return if input.last_cleanup_fingerprint == Some(input.body_fingerprint) {
-            ChapterLoopDecision::StopForFinalCleanup
+            // Approval enforces the same unresolved deterministic body
+            // findings. If local cleanup cannot change the body, use the
+            // existing bounded semantic reviser instead of falling through to
+            // an approval that must reject it.
+            ChapterLoopDecision::LlmRevision
         } else {
             ChapterLoopDecision::LocalCleanup
         };

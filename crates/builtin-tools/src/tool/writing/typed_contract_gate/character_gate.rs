@@ -157,8 +157,12 @@ fn superseded_name_is_explicit_person_reference(value: &str, previous_name: &str
         return false;
     }
     if previous_name.chars().count() == 1
-        && replace_character_anchor_reference(value, previous_name, "__CURRENT_CHARACTER__")
-            != value
+        && replace_character_anchor_reference(
+            value,
+            previous_name,
+            "__CURRENT_CHARACTER__",
+            CharacterReferenceMatch::AuthorityAnchor,
+        ) != value
     {
         return true;
     }
@@ -1455,12 +1459,34 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
         "公开",
         "守住",
         "学会",
+        "选择",
+        "查明",
+        "意识到",
+        "身份",
         "成为",
         "愿意",
+        "需要",
+        "不得不",
+        "为了",
+        "必须",
+        "想",
+        "要",
+        "会",
+        "能",
         "拒绝",
         "介入",
         "退出",
         "离开",
+        "离去",
+        "归来",
+        "隐居",
+        "入京",
+        "入宫",
+        "入宗",
+        "入城",
+        "回京",
+        "回宫",
+        "回家",
         "加入",
         "辞职",
         "辞官",
@@ -1491,6 +1517,11 @@ fn text_after_reference_has_person_action_context(after: &str) -> bool {
     ]
     .iter()
     .any(|marker| compact.starts_with(marker))
+        || ["最终", "逐渐"].iter().any(|modifier| {
+            compact
+                .strip_prefix(modifier)
+                .is_some_and(text_after_reference_has_person_action_context)
+        })
 }
 
 fn text_before_reference_has_role_marker(before: &str) -> bool {
@@ -2055,12 +2086,19 @@ pub(super) fn replace_character_anchor_reference(
     text: &str,
     reference: &str,
     replacement: &str,
+    reference_match: CharacterReferenceMatch,
 ) -> String {
     let Some(reference) = clean_character_anchor_replacement_reference(reference) else {
         return text.to_string();
     };
     if replacement.trim().is_empty() || text.is_empty() {
         return text.to_string();
+    }
+    if reference_match == CharacterReferenceMatch::DerivedShortIdentity
+        && reference.chars().count() == 2
+        && reference.chars().all(surface_gate::is_cjk_unified)
+    {
+        return replace_contextual_two_cjk_character_reference(text, &reference, replacement);
     }
     if reference.chars().count() == 1 {
         if reference.chars().all(surface_gate::is_cjk_unified) {
@@ -2069,6 +2107,118 @@ pub(super) fn replace_character_anchor_reference(
         return replace_single_ascii_character_reference(text, &reference, replacement);
     }
     text.replace(&reference, replacement)
+}
+
+fn replace_contextual_two_cjk_character_reference(
+    text: &str,
+    reference: &str,
+    replacement: &str,
+) -> String {
+    let Some(reference) = clean_character_anchor_replacement_reference(reference) else {
+        return text.to_string();
+    };
+    if reference.chars().count() != 2
+        || !reference.chars().all(surface_gate::is_cjk_unified)
+        || replacement.trim().is_empty()
+        || text.is_empty()
+    {
+        return text.to_string();
+    }
+
+    let mut rewritten = String::with_capacity(text.len());
+    let mut cursor = 0usize;
+    while let Some(relative_index) = text[cursor..].find(&reference) {
+        let index = cursor + relative_index;
+        let end = index + reference.len();
+        rewritten.push_str(&text[cursor..index]);
+        let before = &text[..index];
+        let after = &text[end..];
+        if short_identity_reference_is_explicit_person(before, after) {
+            rewritten.push_str(replacement);
+        } else {
+            rewritten.push_str(&reference);
+        }
+        cursor = end;
+    }
+    rewritten.push_str(&text[cursor..]);
+    rewritten
+}
+
+fn short_identity_reference_is_explicit_person(before: &str, after: &str) -> bool {
+    let before = before.trim_end_matches(char::is_whitespace);
+    let after = after.trim_start_matches(char::is_whitespace);
+    text_before_reference_has_role_marker(before)
+        || (text_before_reference_is_clause_boundary(before)
+            && text_after_reference_has_person_action_context(after))
+        || text_around_reference_has_person_object_context(before, after)
+}
+
+fn text_before_reference_is_clause_boundary(before: &str) -> bool {
+    before.is_empty()
+        || before.chars().last().is_some_and(|ch| {
+            matches!(
+                ch,
+                '。' | '！'
+                    | '？'
+                    | '；'
+                    | '，'
+                    | '.'
+                    | '!'
+                    | '?'
+                    | ';'
+                    | ','
+                    | ':'
+                    | '：'
+                    | '“'
+                    | '‘'
+                    | '「'
+                    | '『'
+                    | '('
+                    | '（'
+            )
+        })
+}
+
+fn text_around_reference_has_person_object_context(before: &str, after: &str) -> bool {
+    let paired_context = [
+        (
+            ["护", "保护", "守护", "守住"].as_slice(),
+            [
+                "周全",
+                "平安",
+                "安全",
+                "安危",
+                "性命",
+                "自由",
+                "的平安",
+                "的安全",
+                "的安危",
+                "的性命",
+                "的自由",
+            ]
+            .as_slice(),
+        ),
+        (
+            ["带着", "陪着", "跟着"].as_slice(),
+            ["隐居", "离开", "进入", "回到", "前往", "一起"].as_slice(),
+        ),
+        (
+            ["将", "把"].as_slice(),
+            ["纳为", "立为", "封为", "送往", "留在", "带到"].as_slice(),
+        ),
+        (
+            ["对", "向"].as_slice(),
+            ["的", "情感", "态度", "关注", "承诺", "说", "问", "表明"].as_slice(),
+        ),
+        (
+            ["与", "和", "同"].as_slice(),
+            ["一起", "共同", "联手", "重逢", "合作", "对立", "隐居"].as_slice(),
+        ),
+    ];
+    paired_context.iter().any(|(prefixes, suffixes)| {
+        prefixes.iter().any(|prefix| before.ends_with(prefix))
+            && suffixes.iter().any(|suffix| after.starts_with(suffix))
+    })
 }
 
 fn replace_governed_single_cjk_character_reference(
@@ -2111,6 +2261,7 @@ fn single_cjk_character_reference_is_explicit_person(before: &str, after: &str) 
         || text_before_reference_has_role_marker(before)
         || after.starts_with('的')
         || text_after_reference_has_person_action_context(after)
+        || text_around_reference_has_person_object_context(before, after)
         || after.chars().next().is_some_and(|ch| {
             matches!(
                 ch,

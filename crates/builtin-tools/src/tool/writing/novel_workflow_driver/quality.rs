@@ -2857,36 +2857,47 @@ fn json_pointer_string(value: &Value, pointers: &[&str]) -> Option<String> {
     })
 }
 
+const CHARACTER_AUTHORITY_CONTEXT_POINTERS: &[&str] = &[
+    "/canonical_contract/characters",
+    "/authority/canonical_contract/characters",
+    "/project_context/contract/characters",
+    "/contract/characters",
+    "/creation_contract/characters",
+    "/project_context/story_bible/characters",
+    "/story_bible/characters",
+    "/authority/working_context/character_ledger",
+    "/project_context/character_ledger",
+    "/character_ledger",
+    "/truth_as_of_chapter/story_state/character_ledger",
+    "/authority/truth_as_of_chapter/story_state/character_ledger",
+];
+
+fn character_authority_records_from_execution_context(value: &Value) -> Vec<&Value> {
+    CHARACTER_AUTHORITY_CONTEXT_POINTERS
+        .iter()
+        .filter_map(|pointer| value.pointer(pointer).and_then(Value::as_array))
+        .flatten()
+        .collect()
+}
+
 fn primary_character_anchor_from_context(value: &Value) -> Option<String> {
-    for pointer in [
-        "/canonical_contract/characters",
-        "/authority/canonical_contract/characters",
-        "/project_context/contract/characters",
-        "/contract/characters",
-        "/project_context/story_bible/characters",
-        "/story_bible/characters",
-    ] {
-        let Some(items) = value.pointer(pointer).and_then(Value::as_array) else {
+    for item in character_authority_records_from_execution_context(value) {
+        let role = item
+            .get("role")
+            .or_else(|| item.get("function"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !role.contains("主角") && !role.to_ascii_lowercase().contains("protagonist") {
             continue;
-        };
-        for item in items {
-            let role = item
-                .get("role")
-                .or_else(|| item.get("function"))
-                .and_then(Value::as_str)
-                .unwrap_or("");
-            if !role.contains("主角") && !role.to_ascii_lowercase().contains("protagonist") {
-                continue;
-            }
-            if let Some(name) = item
-                .get("name")
-                .or_else(|| item.get("canonical_name"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
-                return Some(name.to_string());
-            }
+        }
+        if let Some(name) = item
+            .get("name")
+            .or_else(|| item.get("canonical_name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            return Some(name.to_string());
         }
     }
     None
@@ -2934,42 +2945,31 @@ fn character_identity_markers_from_execution_context(
     value: &Value,
 ) -> BTreeMap<String, BTreeSet<String>> {
     let mut profiles = BTreeMap::new();
-    for pointer in [
-        "/authority/working_context/character_ledger",
-        "/project_context/character_ledger",
-        "/character_ledger",
-        "/truth_as_of_chapter/story_state/character_ledger",
-        "/authority/truth_as_of_chapter/story_state/character_ledger",
-    ] {
-        let Some(items) = value.pointer(pointer).and_then(Value::as_array) else {
+    for item in character_authority_records_from_execution_context(value) {
+        let Some(name) = item
+            .get("canonical_name")
+            .or_else(|| item.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        else {
             continue;
         };
-        for item in items {
-            let Some(name) = item
-                .get("canonical_name")
-                .or_else(|| item.get("name"))
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            else {
-                continue;
-            };
-            let markers = item
-                .get("identity_markers")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|marker| !marker.is_empty())
-                .map(ToString::to_string)
-                .collect::<BTreeSet<_>>();
-            if !markers.is_empty() {
-                profiles
-                    .entry(name.to_string())
-                    .or_insert_with(BTreeSet::new)
-                    .extend(markers);
-            }
+        let markers = item
+            .get("identity_markers")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|marker| !marker.is_empty())
+            .map(ToString::to_string)
+            .collect::<BTreeSet<_>>();
+        if !markers.is_empty() {
+            profiles
+                .entry(name.to_string())
+                .or_insert_with(BTreeSet::new)
+                .extend(markers);
         }
     }
     profiles
@@ -3126,16 +3126,24 @@ fn govern_rolling_future_chapters(
                 && planning_text_preserves_character_identity(
                     context,
                     &format!("{}\n{}", seed.goal, seed.expected_turn),
-                ))
+                )
+                && !rolling_seed_replays_current_transition(context, chapter_number, &seed))
             .then_some((number, seed))
         })
         .collect::<BTreeMap<_, _>>();
     let mut governed = Vec::new();
     for number in chapter_number.saturating_add(1)..=last_allowed {
-        let seed = chapter_seed_contract_from_context(context, number)
-            .or_else(|| generated.remove(&number));
+        let existing_seed = chapter_seed_item_from_context(context, number, false, false).is_some();
+        let seed = if existing_seed {
+            chapter_seed_contract_from_context(context, number)
+        } else {
+            generated.remove(&number)
+        };
         let Some(seed) = seed else {
-            continue;
+            // A rolling window is contiguous. Stop at the first missing or
+            // unusable node instead of replacing read-only authority or
+            // detaching later nodes from the missing chapter.
+            break;
         };
         if typed_contract_gate::contract_outline_plan_text_is_placeholder(&seed.goal)
             || typed_contract_gate::contract_outline_plan_text_is_placeholder(&seed.expected_turn)
@@ -3177,21 +3185,7 @@ fn rolling_seed_replays_current_transition(
     };
     let current_turn = normalize_repetition_segment(&current.expected_turn);
     let future_goal = normalize_repetition_segment(&seed.goal);
-    if current_turn.is_empty() || future_goal.is_empty() {
-        return false;
-    }
-    if current_turn == future_goal {
-        return true;
-    }
-    let cjk = current_turn.chars().any(is_cjk_char) || future_goal.chars().any(is_cjk_char);
-    if !cjk {
-        let current_turn = current_turn.to_ascii_lowercase();
-        let future_goal = future_goal.to_ascii_lowercase();
-        return current_turn.split_whitespace().count() >= 4 && future_goal.contains(&current_turn);
-    }
-    current_turn.chars().count() >= 8
-        && future_goal.chars().count() >= 8
-        && chapter_quality::shared_distinctive_bigram_count(&current_turn, &future_goal) >= 8
+    !current_turn.is_empty() && current_turn == future_goal
 }
 
 fn rolling_seed_stays_within_volume_scope(
@@ -5919,6 +5913,23 @@ mod tests {
         let context = serde_json::json!({
             "canonical_contract": {
                 "premise": "修仙界的灵气由众生因果凝结。",
+                "characters": [
+                    {
+                        "character_id": "character-0001",
+                        "canonical_name": "谢栖禾",
+                        "role": "主角"
+                    },
+                    {
+                        "character_id": "character-0002",
+                        "canonical_name": "秦星朔",
+                        "role": "关键关系对象"
+                    },
+                    {
+                        "character_id": "character-0003",
+                        "canonical_name": "钟予原",
+                        "role": "对手"
+                    }
+                ],
                 "outline": {
                     "near_chapters": [
                         {
@@ -5985,17 +5996,22 @@ mod tests {
             "canonical_contract": {
                 "target_units": 100_000,
                 "chapter_unit_target": 2_500,
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "程听野",
+                    "role": "主角"
+                }],
                 "outline": {
                     "near_chapters": [
                         {
                             "number": 3,
-                            "goal": "主角确认账本被替换",
-                            "expected_turn": "取得伪造页的压痕证据"
+                            "goal": "程听野确认账本被替换",
+                            "expected_turn": "程听野取得伪造页的压痕证据"
                         },
                         {
                             "number": 4,
                             "goal": "沿压痕寻找印刷作坊",
-                            "expected_turn": "锁定作坊夜班经手人"
+                            "expected_turn": "程听野锁定作坊夜班经手人"
                         }
                     ]
                 }
@@ -6004,24 +6020,24 @@ mod tests {
                 {
                     "number": 4,
                     "goal": "沿压痕寻找印刷作坊",
-                    "expected_turn": "锁定作坊夜班经手人"
+                    "expected_turn": "程听野锁定作坊夜班经手人"
                 }
             ],
             "rolling_outline_window": [
                 {
                     "number": 4,
                     "goal": "沿压痕寻找印刷作坊",
-                    "expected_turn": "锁定作坊夜班经手人"
+                    "expected_turn": "程听野锁定作坊夜班经手人"
                 },
                 {
                     "number": 5,
                     "goal": "跟踪夜班经手人的交货路线",
-                    "expected_turn": "发现货物被送入市政档案馆"
+                    "expected_turn": "程听野发现货物被送入市政档案馆"
                 },
                 {
                     "number": 6,
                     "goal": "潜入档案馆核对原始登记",
-                    "expected_turn": "确认换页命令来自清退专案组"
+                    "expected_turn": "程听野确认换页命令来自清退专案组"
                 }
             ]
         })
@@ -6066,7 +6082,56 @@ mod tests {
     }
 
     #[test]
-    fn rolling_outline_drops_identity_conflicting_authority_and_uses_generated_replacement() {
+    fn rolling_outline_preserves_entityless_existing_turn_as_read_only_authority() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "韩照朔",
+                    "role": "主角"
+                }],
+                "outline": {
+                    "near_chapters": [{
+                        "number": 5,
+                        "goal": "陆维川通过商业手段施压，试图控制长乐巷的改造结果",
+                        "expected_turn": "商业格局与社会阶层的初步连锁反应出现"
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "旧街新局", 4, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(5),
+                goal: "陆维川通过商业手段施压，试图控制长乐巷的改造结果".to_string(),
+                expected_turn: "长乐巷的商业格局进入重组阶段".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "旧街新局",
+            4,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 1);
+        assert_eq!(governed.future_chapters[0].number, Some(5));
+        assert_eq!(
+            governed.future_chapters[0].expected_turn,
+            "商业格局与社会阶层的初步连锁反应出现"
+        );
+    }
+
+    #[test]
+    fn rolling_outline_never_replaces_identity_conflicting_read_only_authority() {
         let context = serde_json::json!({
             "canonical_contract": {
                 "target_units": 100_000,
@@ -6115,12 +6180,7 @@ mod tests {
             None,
         );
 
-        assert_eq!(governed.future_chapters.len(), 1);
-        assert_eq!(governed.future_chapters[0].number, Some(7));
-        assert_eq!(
-            governed.future_chapters[0].expected_turn,
-            "程听野确认闻照桥一直在保护他"
-        );
+        assert!(governed.future_chapters.is_empty());
     }
 
     #[test]
@@ -6129,6 +6189,11 @@ mod tests {
             "canonical_contract": {
                 "target_units": 10_000,
                 "chapter_unit_target": 2_500,
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "程听野",
+                    "role": "主角"
+                }],
                 "outline": {"near_chapters": []}
             }
         })
@@ -6138,8 +6203,8 @@ mod tests {
         package.future_chapters = vec![
             crate::tool::writing::creation_contract_model::ChapterSeedContract {
                 number: Some(4),
-                goal: "公开账本原件".to_string(),
-                expected_turn: "产权清退被永久叫停".to_string(),
+                goal: "程听野公开账本原件".to_string(),
+                expected_turn: "程听野促使产权清退被永久叫停".to_string(),
             },
             crate::tool::writing::creation_contract_model::ChapterSeedContract {
                 number: Some(5),
@@ -6163,7 +6228,7 @@ mod tests {
     }
 
     #[test]
-    fn rolling_outline_drops_a_future_goal_that_replays_the_current_required_turn() {
+    fn rolling_outline_drops_a_future_goal_that_exactly_replays_the_current_required_turn() {
         let context = serde_json::json!({
             "canonical_contract": {
                 "target_units": 100_000,
@@ -6183,7 +6248,7 @@ mod tests {
         package.future_chapters = vec![
             crate::tool::writing::creation_contract_model::ChapterSeedContract {
                 number: Some(6),
-                goal: "在能量波动区遭遇城邦武装的第一次实质性机动对抗".to_string(),
+                goal: "双方在云层中展开第一次实质性的机动对抗".to_string(),
                 expected_turn: "勘探队被迫改变原定航线".to_string(),
             },
             crate::tool::writing::creation_contract_model::ChapterSeedContract {
@@ -6204,6 +6269,126 @@ mod tests {
         );
 
         assert!(governed.future_chapters.is_empty());
+    }
+
+    #[test]
+    fn rolling_outline_preserves_existing_future_node_that_continues_current_goal_event() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "祝泊白",
+                    "role": "主角"
+                }, {
+                    "character_id": "character-0002",
+                    "canonical_name": "沈照棠",
+                    "role": "对手"
+                }],
+                "outline": {
+                    "near_chapters": [{
+                        "number": 3,
+                        "goal": "确认记忆偏差的规律",
+                        "expected_turn": "沈照棠的守卫察觉祝泊白的逻辑推演，并改变频率干扰他的感知"
+                    }, {
+                        "number": 4,
+                        "goal": "祝泊白在频率干扰中识别出沈照棠控制记忆偏差的规律",
+                        "expected_turn": "祝泊白建立起对沈照棠控制频率的初步数学模型"
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "钟城记忆校准师", 3, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(4),
+                goal: "祝泊白沿隔离频率定位地面巡检站".to_string(),
+                expected_turn: "祝泊白确认干扰源来自废料区上层中继器".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "钟城记忆校准师",
+            3,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 1);
+        assert_eq!(governed.future_chapters[0].number, Some(4));
+        assert_eq!(
+            governed.future_chapters[0].goal,
+            "祝泊白在频率干扰中识别出沈照棠控制记忆偏差的规律"
+        );
+        assert_eq!(
+            governed.future_chapters[0].expected_turn,
+            "祝泊白建立起对沈照棠控制频率的初步数学模型"
+        );
+    }
+
+    #[test]
+    fn rolling_outline_preserves_adjacent_future_nodes_that_continue_one_event() {
+        let context = serde_json::json!({
+            "canonical_contract": {
+                "target_units": 100_000,
+                "chapter_unit_target": 2_500,
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "祝泊白",
+                    "role": "主角"
+                }, {
+                    "character_id": "character-0002",
+                    "canonical_name": "沈照棠",
+                    "role": "对手"
+                }],
+                "outline": {
+                    "near_chapters": [{
+                        "number": 2,
+                        "goal": "追踪物理线索",
+                        "expected_turn": "祝泊白在钟城底层发现记忆粉尘齿轮"
+                    }, {
+                        "number": 3,
+                        "goal": "确认记忆偏差的规律",
+                        "expected_turn": "沈照棠的守卫改变频率干扰祝泊白的感知"
+                    }]
+                }
+            }
+        })
+        .to_string();
+        let mut package =
+            fallback_chapter_execution_package("zh-CN", "钟城记忆校准师", 2, &context, false, None);
+        package.future_chapters = vec![
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(3),
+                goal: "确认记忆偏差的规律".to_string(),
+                expected_turn: "沈照棠的守卫改变频率干扰祝泊白的感知".to_string(),
+            },
+            crate::tool::writing::creation_contract_model::ChapterSeedContract {
+                number: Some(4),
+                goal: "祝泊白在频率干扰中识别沈照棠控制记忆偏差的规律".to_string(),
+                expected_turn: "祝泊白建立沈照棠控制频率的初步数学模型".to_string(),
+            },
+        ];
+
+        let governed = govern_generated_execution_package(
+            package,
+            "zh-CN",
+            "钟城记忆校准师",
+            2,
+            &context,
+            false,
+            None,
+        );
+
+        assert_eq!(governed.future_chapters.len(), 2);
+        assert_eq!(governed.future_chapters[0].number, Some(3));
+        assert_eq!(governed.future_chapters[1].number, Some(4));
     }
 
     #[test]
@@ -6347,6 +6532,11 @@ mod tests {
             "canonical_contract": {
                 "target_units": 40_000,
                 "chapter_unit_target": 2_500,
+                "characters": [{
+                    "character_id": "character-0001",
+                    "canonical_name": "顾砚声",
+                    "role": "主角"
+                }],
                 "outline": {"near_chapters": []}
             },
             "project": {
@@ -6374,8 +6564,8 @@ mod tests {
         package.future_chapters = vec![
             crate::tool::writing::creation_contract_model::ChapterSeedContract {
                 number: Some(8),
-                goal: "主角把最后一份坐标痕迹带回据点".to_string(),
-                expected_turn: "敌方确认据点坐标并发动围攻".to_string(),
+                goal: "顾砚声把最后一份坐标痕迹带回据点".to_string(),
+                expected_turn: "顾砚声确认敌方已经锁定据点坐标并发动围攻".to_string(),
             },
         ];
 

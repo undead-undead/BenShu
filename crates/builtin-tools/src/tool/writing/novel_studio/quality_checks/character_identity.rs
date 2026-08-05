@@ -266,17 +266,19 @@ pub(in crate::tool::writing) fn compact_planning_text_conflicts_with_character_i
         } else {
             (evidence.feminine, evidence.masculine)
         };
-        if contradicts > 0 && contradicts > supports {
+        let opposite = if *expected == "feminine" {
+            "他"
+        } else {
+            "她"
+        };
+        if contradicts > 0
+            && contradicts > supports
+            && !opposite_pronoun_follows_unnamed_person_introduction(content, name, opposite)
+        {
             return true;
         }
     }
 
-    // Compact outline nodes must not leave an opposite-gender personal
-    // pronoun dangling when every named, established participant has the same
-    // identity authority.  The chapter prose gate intentionally requires
-    // repeated evidence, but a one- or two-sentence planning authority has no
-    // room for that threshold and would otherwise force the writer to inherit
-    // a known contradiction.
     let profiles = mentioned
         .iter()
         .map(|(_, profile)| *profile)
@@ -292,6 +294,31 @@ pub(in crate::tool::writing) fn compact_planning_text_conflicts_with_character_i
     };
     explicit_identity_marker_count(content, opposite)
         > explicit_identity_marker_count(content, matching)
+        && !mentioned.iter().any(|(name, _)| {
+            opposite_pronoun_follows_unnamed_person_introduction(content, name, opposite)
+        })
+}
+
+fn opposite_pronoun_follows_unnamed_person_introduction(
+    content: &str,
+    established_name: &str,
+    opposite_pronoun: &str,
+) -> bool {
+    content
+        .match_indices(established_name)
+        .any(|(name_index, name)| {
+            let after_name = &content[name_index + name.len()..];
+            after_name
+                .match_indices(opposite_pronoun)
+                .any(|(pronoun_index, _)| {
+                    let between = &after_name[..pronoun_index];
+                    [
+                        "一名", "一位", "一个", "某名", "某位", "某个", "这名", "那名",
+                    ]
+                    .iter()
+                    .any(|marker| between.contains(marker))
+                })
+        })
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -400,7 +427,7 @@ pub(in crate::tool::writing) fn stable_approved_character_pronoun_profile_in_tex
         content,
         name,
         other_character_names,
-        PronounEvidenceScope::ChapterHardGate,
+        PronounEvidenceScope::ApprovedSettlement,
     ))
 }
 
@@ -524,6 +551,7 @@ fn character_pronoun_evidence_near_name(
 enum PronounEvidenceScope {
     ContractInference,
     ChapterHardGate,
+    ApprovedSettlement,
 }
 
 fn direct_identity_marker_count_for_name(
@@ -555,10 +583,15 @@ fn direct_identity_marker_count_for_name(
                 scope,
             );
             direct
-                + if scope == PronounEvidenceScope::ContractInference {
-                    following_sentence_identity_marker_count(after, markers, other_character_names)
-                } else {
+                + if scope == PronounEvidenceScope::ChapterHardGate {
                     0
+                } else {
+                    following_sentence_identity_marker_count(
+                        after,
+                        markers,
+                        other_character_names,
+                        scope,
+                    )
                 }
         })
         .sum()
@@ -568,6 +601,7 @@ fn following_sentence_identity_marker_count(
     text: &str,
     markers: &[&str],
     other_character_names: &BTreeSet<String>,
+    scope: PronounEvidenceScope,
 ) -> usize {
     let boundary = text
         .char_indices()
@@ -595,6 +629,14 @@ fn following_sentence_identity_marker_count(
             .any(|name| !name.is_empty() && next.contains(name))
     {
         return 0;
+    }
+    if scope == PronounEvidenceScope::ApprovedSettlement {
+        return markers
+            .iter()
+            .filter(|marker| matches!(**marker, "他" | "她"))
+            .filter(|marker| next.starts_with(**marker))
+            .filter(|marker| identity_marker_occurrence_is_explicit(&next, 0, **marker))
+            .count();
     }
     let first_personal_pronoun =
         first_attributable_personal_pronoun(&next, 18, PronounEvidenceScope::ContractInference);
@@ -776,7 +818,7 @@ fn personal_pronoun_directly_attributes_nearby_name(
         .map(|(_, marker)| marker);
     (match scope {
         PronounEvidenceScope::ContractInference => prior_clause_object_pronoun.is_some(),
-        PronounEvidenceScope::ChapterHardGate => {
+        PronounEvidenceScope::ChapterHardGate | PronounEvidenceScope::ApprovedSettlement => {
             prior_clause_object_pronoun.is_some_and(|object_pronoun| object_pronoun != pronoun)
         }
     }) || matches!(
@@ -854,6 +896,19 @@ mod pronoun_tests {
         ));
         assert!(!compact_planning_text_conflicts_with_character_identity(
             "程听野与闻照桥共同完成结构缓冲方案。",
+            &authority,
+        ));
+    }
+
+    #[test]
+    fn compact_planning_authority_does_not_assign_unnamed_person_pronoun_to_named_character() {
+        let authority = BTreeMap::from([(
+            "商予真".to_string(),
+            BTreeSet::from(["inferred_pronoun_profile:feminine".to_string()]),
+        )]);
+
+        assert!(!compact_planning_text_conflicts_with_character_identity(
+            "商予真看见一名守卫，他立即转身逃走。",
             &authority,
         ));
     }
@@ -1353,8 +1408,17 @@ fn replace_forbidden_character_name_reference(
             restorations.push((sentinel, term));
         }
     }
+    let reference_match = if forbidden.chars().count() == 2 && forbidden.chars().all(is_cjk_unified)
+    {
+        crate::tool::writing::typed_contract_gate::CharacterReferenceMatch::DerivedShortIdentity
+    } else {
+        crate::tool::writing::typed_contract_gate::CharacterReferenceMatch::AuthorityAnchor
+    };
     protected = crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
-        &protected, forbidden, canonical,
+        &protected,
+        forbidden,
+        canonical,
+        reference_match,
     );
     for (sentinel, term) in restorations {
         protected = protected.replace(&sentinel, &term);

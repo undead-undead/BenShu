@@ -175,13 +175,26 @@ pub(super) fn demonstrative_anchor_fragment(
     if chars.get(after) != Some(&'那') {
         return None;
     }
+    // This check targets a missing predicate before a *closed* locative noun
+    // phrase, such as `陆沉舟那座遗迹旁，`. Do not infer the noun
+    // phrase from a classifier list: the first `前`/`后`/`旁` may belong to a
+    // later predicate such as `那个人的感应会比之前更强`. A locative
+    // is deterministic here only when it itself reaches a clause boundary.
     let end = (after + 12).min(chars.len());
-    let fragment = chars[index..end].iter().collect::<String>();
-    if fragment.contains('旁') || fragment.contains('前') || fragment.contains('后') {
-        Some(fragment)
-    } else {
-        None
+    for locative_index in (after + 1)..end {
+        if !matches!(chars[locative_index], '旁' | '前' | '后') {
+            continue;
+        }
+        let reaches_boundary = chars.get(locative_index + 1).is_none_or(|ch| {
+            ch.is_whitespace()
+                || cjk_sentence_punctuation(*ch)
+                || matches!(ch, '”' | '’' | '"' | '\'')
+        });
+        if reaches_boundary {
+            return Some(chars[index..=locative_index].iter().collect());
+        }
     }
+    None
 }
 
 pub(super) fn chapter_is_title_reference_candidate(chapter: &ChapterRecord) -> bool {

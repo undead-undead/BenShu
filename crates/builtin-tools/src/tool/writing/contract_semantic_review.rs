@@ -368,8 +368,10 @@ impl OutlineCharacterAuthorityReviewRequest {
 
     pub(crate) fn prompt(&self) -> String {
         format!(
-            "你是小说合同内部一致性裁判，只判断大纲和伏笔兑现是否服从已经形成的角色与故事权威。\n\
+            "你是小说合同内部一致性与语言完整性裁判，只判断已形成的合同核心字段、角色权威、治理约束、大纲和伏笔兑现是否内部一致且可读。\n\
              不得改写合同，不得输出补丁，也不要因为措辞不同就判冲突。\n\
+             必须检查故事简述、故事前提、主角弧线、总主线因果、终局方向、终局状态和书名理由是否都是主体、动作、对象与结果清楚的完整自然句；明显缺词、词序错乱、句子截断、同一短语被破坏性重复或不可读拼接必须判 conflict。\n\
+             必须直接比较故事前提、主线因果、世界规则、必须避免、终局和大纲；只有两段精确引文在同一条件下明确要求互斥的状态、能力、因果或终局结果，才能判 conflict；需要题材常识、隐含假设或主观解读才能成立的意见必须判 uncertain。\n\
              必须逐一核对具名角色的身份、职责、欲望、恐惧、底线、弧线、身体特征、能力边界、关系和终局命运。\n\
              角色权威标明男主、女主或其他明确性别身份时，大纲和兑现矩阵中的性别称谓、代词、亲属身份与年龄身份必须一致；把女主写成男性代词或男性年龄身份、把男主写成女性代词或女性年龄身份，且合同没有建立身份变化时，必须判 conflict。\n\
              角色权威只写“主角”而未明确男主、女主或其他性别身份时，不得从姓名用字、常见印象、题材常识或代词反推性别、年龄和身份；裸姓名只证明实体标识，不能作为这些冲突的权威证据。\n\
@@ -394,7 +396,7 @@ impl OutlineCharacterAuthorityReviewRequest {
              合同核心字段：{}\n\
              大纲：{}\n\
              伏笔兑现矩阵：{}\n\
-             conflict 必须逐字引用一处角色/故事权威和一处大纲/兑现候选，并标出两边字段；无法提供双侧精确引用时必须输出 uncertain。\n\
+             conflict 必须逐字引用一处稳定合同字段和一处被检查候选字段，并标出两边字段；无法提供双侧精确引用时必须输出 uncertain。\n\
              只输出一个 JSON 对象：\n\
              {{\"verdict\":\"equivalent|conflict|uncertain\",\"rationale\":\"一句简短理由\",\"evidence\":{{\"authority_field\":\"权威字段\",\"authority_quote\":\"逐字短引文\",\"candidate_field\":\"候选字段\",\"candidate_quote\":\"逐字短引文\"}}}}",
             self.character_authority,
@@ -437,10 +439,7 @@ impl OutlineCharacterAuthorityReviewRequest {
         }
         if finding.verdict == SemanticReviewVerdict::Conflict
             && finding.evidence.as_ref().is_some_and(|evidence| {
-                evidence_quote_is_only_character_name(
-                    &self.character_authority,
-                    &evidence.authority_quote,
-                ) && rationale_infers_identity_from_character_name(&finding.rationale)
+                semantic_gender_conflict_lacks_explicit_authority(evidence, &finding.rationale)
             })
         {
             finding.verdict = SemanticReviewVerdict::Uncertain;
@@ -450,32 +449,22 @@ impl OutlineCharacterAuthorityReviewRequest {
     }
 }
 
-fn evidence_quote_is_only_character_name(character_authority: &str, quote: &str) -> bool {
-    let quote = quote
-        .trim()
-        .trim_matches(|ch: char| matches!(ch, '`' | '“' | '”' | '"' | '‘' | '’'));
-    character_authority.lines().any(|line| {
-        line.split('；').any(|field| {
-            let field = field.trim();
-            let name = field
-                .strip_prefix("姓名：")
-                .or_else(|| field.strip_prefix("姓名:"))
-                .map(str::trim);
-            name.is_some_and(|name| {
-                !name.is_empty()
-                    && matches!(
-                        quote,
-                        value if value == name
-                            || value == format!("姓名：{name}")
-                            || value == format!("姓名:{name}")
-                    )
-            })
-        })
-    })
-}
-
-fn rationale_infers_identity_from_character_name(rationale: &str) -> bool {
+fn semantic_gender_conflict_lacks_explicit_authority(
+    evidence: &SemanticConflictEvidence,
+    rationale: &str,
+) -> bool {
+    let claim = format!(
+        "{}\n{}\n{}\n{}",
+        rationale, evidence.authority_field, evidence.candidate_field, evidence.candidate_quote
+    )
+    .to_ascii_lowercase();
     [
+        "性别",
+        "代词",
+        "男主",
+        "女主",
+        "男性",
+        "女性",
         "通常为男性名",
         "通常为女性名",
         "像男性名",
@@ -491,9 +480,17 @@ fn rationale_infers_identity_from_character_name(rationale: &str) -> bool {
         "name suggests",
         "typically a male name",
         "typically a female name",
+        "gender",
+        "pronoun",
+        "masculine",
+        "feminine",
     ]
     .iter()
-    .any(|marker| rationale.to_ascii_lowercase().contains(marker))
+    .any(|marker| claim.contains(marker))
+        && super::novel_studio::contract_explicit_identity_profile_in_character_anchor(
+            &evidence.authority_quote,
+        )
+        .is_none()
 }
 
 fn evidence_quote_is_character_motivational_anchor(character_authority: &str, quote: &str) -> bool {
@@ -644,23 +641,28 @@ pub(crate) fn outline_character_authority_review_request(
         return None;
     }
     let story_authority = format!(
-        "书名：{}\n书名理由：{}\n故事前提：{}\n主角弧线：{}\n终局方向：{}\n终局状态：{}\n世界规则：{}",
+        "书名：{}\n书名理由：{}\n故事简述：{}\n故事前提：{}\n主角弧线：{}\n总主线因果：{}\n终局方向：{}\n终局状态：{}\n世界规则：{}\n必须避免：{}",
         contract.title.canonical_title,
         contract.title.rationale,
-        contract.premise,
-        contract.protagonist_arc,
-        contract.ending.desired_resolution,
-        contract.ending.final_state,
-        contract.world_rules.join("；")
-    );
-    let contract_fields = format!(
-        "故事简述：{}\n故事前提：{}\n总主线因果：{}\n终局方向：{}\n终局状态：{}\n世界规则：{}",
         contract.brief,
         contract.premise,
+        contract.protagonist_arc,
         contract.main_causal_spine,
         contract.ending.desired_resolution,
         contract.ending.final_state,
-        contract.world_rules.join("；")
+        contract.world_rules.join("；"),
+        contract.must_avoid.join("；")
+    );
+    let contract_fields = format!(
+        "故事简述：{}\n故事前提：{}\n主角弧线：{}\n总主线因果：{}\n终局方向：{}\n终局状态：{}\n世界规则：{}\n必须避免：{}",
+        contract.brief,
+        contract.premise,
+        contract.protagonist_arc,
+        contract.main_causal_spine,
+        contract.ending.desired_resolution,
+        contract.ending.final_state,
+        contract.world_rules.join("；"),
+        contract.must_avoid.join("；")
     );
     let payoff_matrix = contract
         .structured
@@ -943,6 +945,23 @@ mod tests {
         assert!(request
             .prompt()
             .contains("不得从姓名用字、常见印象、题材常识或代词反推"));
+    }
+
+    #[test]
+    fn outline_review_rejects_gender_claim_when_role_is_only_protagonist() {
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：程听野；角色：主角".to_string(),
+            story_authority: "故事前提：程听野重逢闻照桥".to_string(),
+            contract_fields: "故事简述：两人在都市重建关系".to_string(),
+            outline: "第2章预期转折：闻照桥通过程听野随身携带的旧吊坠确认了她的身份".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"候选中的女性代词与角色权威中程听野的性别（男主）不符","evidence":{"authority_field":"角色权威","authority_quote":"姓名：程听野；角色：主角","candidate_field":"第2章预期转折","candidate_quote":"闻照桥通过程听野随身携带的旧吊坠确认了她的身份"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Uncertain);
+        assert!(finding.evidence.is_none());
     }
 
     #[test]
@@ -1474,6 +1493,58 @@ mod tests {
 
         let finding = request.ground_finding(parse_semantic_review_finding(
             r#"{"verdict":"conflict","rationale":"核心道具名称发生一字漂移","evidence":{"authority_field":"书名","authority_quote":"噬骨罗盘","candidate_field":"故事前提","candidate_quote":"蚀骨罗盘"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+        assert!(finding.evidence.is_some());
+    }
+
+    #[test]
+    fn exact_surface_damage_remains_grounded_for_advisory_review() {
+        let damaged = "律法残卷的发现导致顾泊序，主角的顾泊序引发各方割据势力的争夺";
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：顾泊序；角色：主角".to_string(),
+            story_authority: format!("总主线因果：{damaged}"),
+            contract_fields: format!("总主线因果：{damaged}"),
+            outline: "顾泊序追查残卷来历。".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(&format!(
+            r#"{{"verdict":"conflict","rationale":"因果句把人物姓名误作结果并产生不可读重复","evidence":{{"authority_field":"角色权威","authority_quote":"顾泊序","candidate_field":"总主线因果","candidate_quote":"{damaged}"}}}}"#
+        )));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+        assert!(finding.evidence.is_some());
+    }
+
+    #[test]
+    fn grounded_subjective_semantic_concern_remains_advisory() {
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：顾泊序；角色：主角".to_string(),
+            story_authority: "故事前提：顾泊序发现律法残卷".to_string(),
+            contract_fields: "故事简述：顾泊序追查旧法真相".to_string(),
+            outline: "顾泊序先拜访旧吏，再寻找残卷。".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"调查节奏可能偏慢","evidence":{"authority_field":"故事前提","authority_quote":"顾泊序发现律法残卷","candidate_field":"大纲","candidate_quote":"顾泊序先拜访旧吏，再寻找残卷"}}"#,
+        ));
+
+        assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);
+        assert!(finding.evidence.is_some());
+    }
+
+    #[test]
+    fn explicit_world_rule_and_must_avoid_contradiction_is_grounded() {
+        let request = OutlineCharacterAuthorityReviewRequest {
+            character_authority: "姓名：顾泊序；角色：主角".to_string(),
+            story_authority: "世界规则：违背残卷条款会直接引发山河崩塌\n必须避免：不得出现超自然力量直接改变物理世界".to_string(),
+            contract_fields: "世界规则：违背残卷条款会直接引发山河崩塌\n必须避免：不得出现超自然力量直接改变物理世界".to_string(),
+            outline: "顾泊序调查残卷的制度后果。".to_string(),
+            payoff_matrix: String::new(),
+        };
+        let finding = request.ground_finding(parse_semantic_review_finding(
+            r#"{"verdict":"conflict","rationale":"同一合同既要求超自然力量直接改变世界又明确禁止该机制","evidence":{"authority_field":"必须避免","authority_quote":"不得出现超自然力量直接改变物理世界","candidate_field":"世界规则","candidate_quote":"违背残卷条款会直接引发山河崩塌"}}"#,
         ));
 
         assert_eq!(finding.verdict, SemanticReviewVerdict::Conflict);

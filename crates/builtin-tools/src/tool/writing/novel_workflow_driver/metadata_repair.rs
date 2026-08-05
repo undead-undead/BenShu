@@ -3,13 +3,6 @@ use super::*;
 pub(super) const MAX_METADATA_REPAIR_ATTEMPTS: usize = 5;
 
 pub(super) fn metadata_gate_needs_repair(write_result: &Value) -> bool {
-    if write_result
-        .get("metadata_fallback_applied")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return false;
-    }
     metadata_gate_blocks(write_result)
         || !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
         || value_has_metadata_repair_findings(write_result)
@@ -21,15 +14,20 @@ pub(super) fn metadata_gate_blocks(write_result: &Value) -> bool {
 }
 
 pub(super) fn metadata_gate_has_repairable(write_result: &Value) -> bool {
-    if write_result
-        .get("metadata_fallback_applied")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return false;
-    }
     !json_array_is_empty(write_result.pointer("/metadata_gate/repairable"))
         || value_has_metadata_repair_findings(write_result)
+}
+
+pub(super) fn remember_rejected_metadata_title(rejected_titles: &mut Vec<String>, title: &str) {
+    let title = title.trim();
+    if title.is_empty()
+        || rejected_titles
+            .iter()
+            .any(|rejected| rejected.trim() == title)
+    {
+        return;
+    }
+    rejected_titles.push(title.to_string());
 }
 
 /// Reuse the typed finding classification emitted by the studio quality gate.
@@ -206,22 +204,12 @@ pub(super) fn metadata_repair_title_candidates(
 }
 
 pub(super) fn metadata_title_issue_count(write_result: &Value) -> usize {
-    write_result
-        .pointer("/metadata_gate/findings")
-        .and_then(Value::as_array)
+    typed_findings_in_value(write_result)
         .into_iter()
-        .flatten()
         .filter(|finding| {
-            finding
-                .get("source")
-                .and_then(Value::as_str)
-                .is_some_and(|source| source.starts_with("chapter_title"))
-                || finding
-                    .get("message")
-                    .and_then(Value::as_str)
-                    .is_some_and(|message| {
-                        message.contains("chapter title") || message.contains("章节标题")
-                    })
+            finding.source.starts_with("chapter_title")
+                || finding.message.contains("chapter title")
+                || finding.message.contains("章节标题")
         })
         .count()
 }
@@ -354,6 +342,17 @@ mod tests {
     }
 
     #[test]
+    fn metadata_repair_remembers_every_distinct_rejected_model_title() {
+        let mut rejected = vec!["第6章".to_string()];
+
+        remember_rejected_metadata_title(&mut rejected, "青色涟漪");
+        remember_rejected_metadata_title(&mut rejected, " 青色涟漪 ");
+        remember_rejected_metadata_title(&mut rejected, "荒漠来客");
+
+        assert_eq!(rejected, ["第6章", "青色涟漪", "荒漠来客"]);
+    }
+
+    #[test]
     fn quality_gate_metadata_findings_route_to_existing_metadata_repair() {
         let write_result = serde_json::json!({
             "quality_gate": {
@@ -376,9 +375,37 @@ mod tests {
         });
 
         assert!(value_has_metadata_repair_findings(&write_result));
+        assert_eq!(metadata_title_issue_count(&write_result), 1);
         assert!(metadata_gate_needs_repair(&write_result));
         assert!(metadata_gate_has_repairable(&write_result));
         assert!(metadata_issue_summary(&write_result).contains("default chapter heading"));
+    }
+
+    #[test]
+    fn legacy_fallback_marker_cannot_bypass_an_invalid_title_finding() {
+        let write_result = serde_json::json!({
+            "metadata_fallback_applied": true,
+            "quality_gate": {
+                "passed": false,
+                "findings": [{
+                    "code": "metadata_invalid",
+                    "class": "metadata",
+                    "disposition": "deterministic_repair",
+                    "evidence_grade": "deterministic_invariant",
+                    "source": "chapter_title",
+                    "message": "chapter title is still the default chapter heading",
+                    "authority_evidence": [],
+                    "body_evidence": [],
+                    "authority_fingerprint": "authority",
+                    "body_fingerprint": "body"
+                }]
+            },
+            "metadata_gate": {"blocking": [], "repairable": []},
+            "truth_validation": {"issues": []}
+        });
+
+        assert!(metadata_gate_needs_repair(&write_result));
+        assert!(metadata_gate_has_repairable(&write_result));
     }
 
     #[test]

@@ -160,7 +160,7 @@ pub async fn run_novel_content_operation_for_delegate(
                 approve_args["chapter_number"] = json!(number);
             }
             let approved = call_novel_studio_json_raw(&tool, approve_args).await?;
-            reports.push(format_novel_chapter_approval_result(
+            reports.push(format_chapter_approval_result(
                 &request.project_path,
                 chapter_number,
                 &approved,
@@ -530,40 +530,6 @@ pub(super) fn format_novel_project_state_repair_result(repaired: &Value) -> Stri
     };
     format!(
         "status: {status}\nworker: writer\nexecuted_tool: novel_studio\noperation: repair_project_state\nruntime_effect: {runtime_effect}\nrepaired_chapter_records: {repaired_count}\nauthority_updates: {authority_update_count}\nintegrity_blockers: {integrity_blocker_count}{blockers}\nsummary: 小说项目事实、连续性、故事圣经和角色身份权威已重新校验。"
-    )
-}
-
-fn format_novel_chapter_approval_result(
-    project_path: &str,
-    requested_chapter: Option<usize>,
-    approved: &Value,
-) -> String {
-    let success = approved
-        .get("success")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let chapter_number = approved
-        .get("chapter_number")
-        .and_then(Value::as_u64)
-        .or_else(|| requested_chapter.map(|number| number as u64))
-        .unwrap_or(0);
-    if success {
-        let state = approved.get("state").cloned().unwrap_or_else(|| json!({}));
-        let approved_units = state_usize(&state, "approved_units").unwrap_or(0);
-        return format!(
-            "status: completed\nworker: writer\nexecuted_tool: novel_studio\noperation: approve_chapter\nproject_path: {project_path}\nchapter_number: {chapter_number}\nruntime_effect: artifact.approved\nunit_count: {approved_units}\nsummary: 第 {chapter_number} 章已批准保存。"
-        );
-    }
-    let error_kind = approved
-        .get("error_kind")
-        .and_then(Value::as_str)
-        .unwrap_or("approval_not_ready");
-    let error = approved
-        .get("error")
-        .and_then(Value::as_str)
-        .unwrap_or("chapter is not ready for approval");
-    format!(
-        "status: blocked\nworker: writer\nexecuted_tool: novel_studio\noperation: approve_chapter\nproject_path: {project_path}\nchapter_number: {chapter_number}\nruntime_effect: artifact.approval_blocked\nblockers: {error_kind}: {error}"
     )
 }
 

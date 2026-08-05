@@ -371,6 +371,33 @@
     }
 
     #[tokio::test]
+    async fn natural_contract_review_request_reenters_existing_repair_pipeline() {
+        let mut runtime = MockCreationDraftRuntime {
+            draft: Some(ready_fiction_draft("session-a")),
+            recovered_draft: None,
+            continuation_project_path: None,
+            project_path: "data/generated/novels/test-project".to_string(),
+            saved: 0,
+            approved: 0,
+        };
+
+        let outcome = super::super::handle_creation_draft_chat(
+            &mut runtime,
+            "session-a",
+            "请先检查这份合同是否存在前后矛盾或语句不通顺的问题，有问题请自动修复。",
+        )
+        .await
+        .expect("handled")
+        .expect("outcome");
+        let super::super::CreationDraftTurnOutcome::ContinueWithMessage(prompt) = outcome else {
+            panic!("contract review must invoke the existing repair pipeline");
+        };
+
+        assert!(prompt.contains(super::super::CREATION_PLANNING_DIALOGUE_MARKER));
+        assert!(prompt.contains("检查这份合同"));
+    }
+
+    #[tokio::test]
     async fn unsupported_new_fiction_tier_is_not_silently_normalized() {
         let mut runtime = MockCreationDraftRuntime {
             draft: None,
@@ -1369,6 +1396,10 @@
         ));
         assert!(super::super::creation_draft_framework_requested(
             "合同草案未通过质量门，请修订草案。",
+            "fiction"
+        ));
+        assert!(super::super::creation_draft_framework_requested(
+            "请先检查这份合同是否存在前后矛盾或语句不通顺的问题，有问题请自动修复。",
             "fiction"
         ));
         assert!(!super::super::creation_draft_framework_requested(

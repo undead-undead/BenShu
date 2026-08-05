@@ -1147,6 +1147,9 @@ pub fn creation_draft_view_only_requested(message: &str) -> bool {
 }
 
 pub fn creation_draft_framework_requested(message: &str, artifact_kind: &str) -> bool {
+    if creation_contract_repair_only_message(message) {
+        return true;
+    }
     if !creation_draft_planning_dialogue_requested(message)
         && (creation_draft_approval_requested(message)
             || creation_draft_execution_requested(message, artifact_kind))

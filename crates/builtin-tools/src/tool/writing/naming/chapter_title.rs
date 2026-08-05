@@ -3183,5 +3183,9 @@ mod tests {
                 "{title} should require metadata repair"
             );
         }
+        assert!(
+            !chapter_title_needs_post_body_repair(&context, 2, "雾落；灯明"),
+            "a deliberate two-part title must not be rejected only for punctuation"
+        );
     }
 }

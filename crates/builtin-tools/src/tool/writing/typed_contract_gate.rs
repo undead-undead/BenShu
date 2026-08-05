@@ -103,12 +103,24 @@ pub(crate) fn leading_character_arc_subject(text: &str) -> Option<String> {
     character_gate::leading_character_arc_subject(text)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CharacterReferenceMatch {
+    AuthorityAnchor,
+    DerivedShortIdentity,
+}
+
 pub(crate) fn replace_character_anchor_reference(
     text: &str,
     reference: &str,
     replacement: &str,
+    reference_match: CharacterReferenceMatch,
 ) -> String {
-    character_gate::replace_character_anchor_reference(text, reference, replacement)
+    character_gate::replace_character_anchor_reference(
+        text,
+        reference,
+        replacement,
+        reference_match,
+    )
 }
 
 pub(crate) fn character_reference_extends_name_with_action(

@@ -211,6 +211,64 @@ pub(super) fn format_state_repair_blocker_result(
     )
 }
 
+pub(super) fn format_metadata_repair_blocker_result(
+    project_path: &str,
+    chapter_number: usize,
+    write_result: &Value,
+) -> String {
+    let artifact_path = write_result
+        .get("artifact_path")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            write_result
+                .pointer("/chapter/path")
+                .and_then(Value::as_str)
+        })
+        .unwrap_or("");
+    let issues = super::metadata_issue_summary(write_result);
+    format!(
+        "status: blocked\nworker: editor\nexecuted_tool: novel_studio\noperation: repair_chapter_metadata\nproject_path: {project_path}\nchapter_number: {chapter_number}\nruntime_effect: artifact.needs_metadata_revision\ndraft_status: preserved_metadata_revision_required\nprose_status: preserved_audit_passed\nartifact_path: {artifact_path}\nblocker_kind: metadata_repair_exhausted\nblockers: chapter prose is preserved, but chapter title or metadata did not converge within bounded attempts\nmetadata_issues:\n{issues}"
+    )
+}
+
+pub(super) fn format_chapter_approval_result(
+    project_path: &str,
+    requested_chapter: Option<usize>,
+    approved: &Value,
+) -> String {
+    let success = approved
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let chapter_number = approved
+        .get("chapter_number")
+        .and_then(Value::as_u64)
+        .or_else(|| approved.pointer("/chapter/number").and_then(Value::as_u64))
+        .or_else(|| requested_chapter.map(|number| number as u64))
+        .unwrap_or(0);
+    if success {
+        let state = approved.get("state").cloned().unwrap_or_else(|| json!({}));
+        let approved_units = state
+            .get("approved_units")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        return format!(
+            "status: completed\nworker: writer\nexecuted_tool: novel_studio\noperation: approve_chapter\nproject_path: {project_path}\nchapter_number: {chapter_number}\nruntime_effect: artifact.approved\nunit_count: {approved_units}\nsummary: 第 {chapter_number} 章已批准保存。"
+        );
+    }
+    let error_kind = approved
+        .get("error_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("approval_not_ready");
+    let error = approved
+        .get("error")
+        .and_then(Value::as_str)
+        .unwrap_or("chapter is not ready for approval");
+    format!(
+        "status: blocked\nworker: writer\nexecuted_tool: novel_studio\noperation: approve_chapter\nproject_path: {project_path}\nchapter_number: {chapter_number}\nruntime_effect: artifact.approval_blocked\nblockers: {error_kind}: {error}"
+    )
+}
+
 fn receipt_number(text: &str, key: &str) -> Option<u64> {
     for token in text.split(|ch: char| ch.is_whitespace() || matches!(ch, ';' | ',')) {
         let Some((candidate_key, value)) = token.split_once('=') else {
@@ -286,5 +344,50 @@ mod tests {
 
         assert!(result.contains("unit_count: 3290"), "{result}");
         assert!(result.contains("total_units: 14420"), "{result}");
+    }
+
+    #[test]
+    fn approval_blocker_preserves_the_actual_transaction_reason() {
+        let result = format_chapter_approval_result(
+            "/tmp/novel",
+            Some(4),
+            &json!({
+                "success": false,
+                "error_kind": "approval_requires_quality_gate",
+                "error": "the final body still has deterministic hard blockers"
+            }),
+        );
+
+        assert!(result.contains("operation: approve_chapter"), "{result}");
+        assert!(
+            result.contains("approval_requires_quality_gate"),
+            "{result}"
+        );
+        assert!(
+            !result.contains("revision did not converge"),
+            "approval rejection must not be mislabeled as revision exhaustion: {result}"
+        );
+    }
+
+    #[test]
+    fn metadata_exhaustion_reports_metadata_operation_and_issues() {
+        let result = format_metadata_repair_blocker_result(
+            "/tmp/novel",
+            17,
+            &json!({
+                "artifact_path": "/tmp/novel/chapters/0017.md",
+                "metadata_gate": {
+                    "repairable": ["chapter title duplicates a previous title"]
+                }
+            }),
+        );
+
+        assert!(
+            result.contains("operation: repair_chapter_metadata"),
+            "{result}"
+        );
+        assert!(result.contains("chapter_number: 17"), "{result}");
+        assert!(result.contains("chapter title duplicates"), "{result}");
+        assert!(!result.contains("operation: revise_draft"), "{result}");
     }
 }

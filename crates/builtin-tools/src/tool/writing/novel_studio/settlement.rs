@@ -1107,6 +1107,21 @@ fn required_change_evidence_score(
     event_type: novel_bible::ChapterStateEventType,
     authority_path: &str,
 ) -> usize {
+    if let Ok(contract) =
+        serde_json::from_value::<NovelCreationContract>(authority.canonical_contract.clone())
+    {
+        let explicit_characters =
+            crate::tool::writing::creation_contract::explicit_relationship_names_from_line(
+                required,
+                &contract.characters,
+            );
+        if explicit_characters
+            .iter()
+            .any(|name| !evidence.contains(name))
+        {
+            return 0;
+        }
+    }
     let direct = governance::contract_change_evidence_score(
         required,
         evidence,
@@ -2736,6 +2751,42 @@ mod tests {
     }
 
     #[test]
+    fn revision_preflight_accepts_explicit_temporary_protection_decision() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 9;
+        authority.chapter_contract.number = 9;
+        authority.chapter_contract.new_state_after_chapter =
+            "秦星朔决定暂时庇护或观察谢栖禾".to_string();
+        authority.chapter_contract.goal =
+            "谢栖禾展示更深层的青莲剑意，迫使秦星朔做出抉择".to_string();
+        authority.canonical_contract = json!({
+            "characters": [{
+                "character_id": "character-0001",
+                "canonical_name": "谢栖禾",
+                "role": "主角"
+            }, {
+                "character_id": "character-0002",
+                "canonical_name": "秦星朔",
+                "role": "关键关系对象"
+            }]
+        });
+        let observation = json!({
+            "current_state": "秦星朔留在谢栖禾身边。",
+            "chapter_summary": "秦星朔做出庇护决定。",
+            "state_changes": []
+        })
+        .to_string();
+        let body = "秦星朔知道自己刚刚做出了一个决定：他不再仅仅把谢栖禾当成观察的奇物，而是决定暂时庇护他，观察这个能够重塑混乱的变数。他并未起身离去，而是守在谢栖禾身侧。";
+
+        assert!(final_body_has_required_end_state_evidence(
+            9,
+            body,
+            &authority,
+            &observation
+        ));
+    }
+
+    #[test]
     fn exhausted_observer_uses_earliest_valid_window_for_repeated_required_state() {
         let mut authority = hook_authority("", json!([]));
         authority.chapter_number = 1;
@@ -3309,6 +3360,41 @@ mod tests {
         assert!(validation.passed, "{:?}", validation.warnings);
         assert_eq!(settlement.state_changes.len(), 1);
         assert_eq!(settlement.state_changes[0].entity_id, "character-0002");
+    }
+
+    #[test]
+    fn required_end_state_rejects_anonymous_target_despite_generic_event_overlap() {
+        let mut authority = hook_authority("", json!([]));
+        authority.chapter_number = 1;
+        authority.chapter_contract.number = 1;
+        authority.chapter_contract.new_state_after_chapter =
+            "商砚宁发现闻清安正在暗中观察自己".to_string();
+        authority.canonical_contract = json!({
+            "characters": [
+                {
+                    "character_id": "character-0001",
+                    "canonical_name": "商砚宁",
+                    "role": "主角"
+                },
+                {
+                    "character_id": "character-0002",
+                    "canonical_name": "闻清安",
+                    "role": "关键关系对象"
+                }
+            ]
+        });
+        let observation = json!({
+            "current_state": "商砚宁察觉到有人观察自己。",
+            "chapter_summary": "商砚宁发现匿名观察者。",
+            "state_changes": []
+        })
+        .to_string();
+        let body = "商砚宁的意识猛地被眩晕击中。他看到自己正在坠落，重力撕扯灵魂。窗外阴影中似乎有一个轮廓正静静观察他。";
+
+        assert!(
+            !final_body_has_required_end_state_evidence(1, body, &authority, &observation),
+            "an anonymous observer must not satisfy a sealed state that explicitly identifies a different canonical character"
+        );
     }
 
     #[test]

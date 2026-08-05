@@ -18,7 +18,7 @@
     }
 
     #[test]
-    fn chapter_loop_accepts_clean_audited_chapter() {
+fn chapter_loop_accepts_clean_audited_chapter() {
         let write_result = json!({
             "quality_gate": {
                 "passed": true,
@@ -106,6 +106,46 @@
 
     assert_eq!(first, ChapterLoopDecision::LengthTopup);
     assert_eq!(second, ChapterLoopDecision::StopForFinalCleanup);
+}
+
+#[test]
+fn exhausted_local_cleanup_routes_to_bounded_semantic_revision() {
+    let finding = chapter_quality::ChapterFinding::local(
+        "body_surface_contamination",
+        chapter_quality::ChapterFindingClass::BodyIntegrity,
+        chapter_quality::ChapterFindingDisposition::DeterministicRepair,
+        chapter_quality::FindingEvidenceGrade::DeterministicInvariant,
+        "anchor_malformed_predicate",
+        "chapter body contains malformed phrase near a stable character anchor",
+        "authority",
+        "body",
+    );
+    let write_result = json!({
+        "quality_gate": {
+            "passed": false,
+            "findings": [finding],
+            "issues": [],
+            "repairable": ["malformed phrase"],
+            "warnings": []
+        },
+        "truth_validation": {"issues": []}
+    });
+    let audit = json!({
+        "review": {"verdict": "passed", "locally_validated": true, "findings": []}
+    });
+
+    let decision = decide_chapter_loop_step(ChapterLoopDecisionInput {
+        write_result: &write_result,
+        audit: &audit,
+        body_fingerprint: 41,
+        last_cleanup_fingerprint: Some(41),
+        attempted_tail_completion: false,
+        attempted_length_topup: false,
+        chapter_unit_target: Some(2500),
+        language: "zh-CN",
+    });
+
+    assert_eq!(decision, ChapterLoopDecision::LlmRevision);
 }
 
 #[test]

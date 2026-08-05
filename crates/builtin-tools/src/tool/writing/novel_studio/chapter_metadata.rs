@@ -88,7 +88,10 @@ pub(super) fn normalize_chapter_metadata_against_body(
         content,
         CHAPTER_CONTINUITY_LIMIT,
     );
-
+    // Apply compact-planning identity rules only to model-supplied metadata.
+    // Any later fallback is derived from the final body, which has already
+    // passed the chapter identity gate and is the settlement authority.
+    retain_identity_consistent_supplied_metadata(manifest, chapter);
     if chapter_summary_is_body_prefix(&chapter.summary, content, &manifest.language)
         || chapter_summary_looks_like_prose_fragment(&chapter.summary, &manifest.language)
     {
@@ -183,6 +186,23 @@ fn chapter_truth_fallback_items(
         ranked.into_iter().map(|(_, sentence)| sentence).collect(),
         limit,
     )
+}
+
+fn retain_identity_consistent_supplied_metadata(
+    manifest: &NovelProjectManifest,
+    chapter: &mut ChapterRecord,
+) {
+    let identity_markers = contract_term_authority_view(manifest).character_identity_markers;
+    if compact_planning_text_conflicts_with_character_identity(&chapter.summary, &identity_markers)
+    {
+        chapter.summary.clear();
+    }
+    chapter.key_facts.retain(|item| {
+        !compact_planning_text_conflicts_with_character_identity(item, &identity_markers)
+    });
+    chapter.continuity_updates.retain(|item| {
+        !compact_planning_text_conflicts_with_character_identity(item, &identity_markers)
+    });
 }
 
 fn chapter_truth_fallback_candidates(

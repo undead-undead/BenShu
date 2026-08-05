@@ -2692,12 +2692,58 @@ fn rewrite_structured_character_references(
         if value.contains(old_name) {
             let mut rewritten =
                 crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
-                    value, old_name, new_name,
+                    value,
+                    old_name,
+                    new_name,
+                    crate::tool::writing::typed_contract_gate::CharacterReferenceMatch::AuthorityAnchor,
                 );
             if rewritten != *value {
                 rewrite_co_referential_family_name(&mut rewritten, old_name, new_name);
                 *value = rewritten;
             }
+        }
+    }
+    rewrite_unambiguous_superseded_short_identity_references(value, replacements);
+}
+
+fn rewrite_unambiguous_superseded_short_identity_references(
+    value: &mut String,
+    replacements: &BTreeMap<String, String>,
+) {
+    let mut targets_by_short_identity = BTreeMap::<String, BTreeSet<String>>::new();
+    for (old_name, new_name) in replacements {
+        let Some(old_surname) = naming::cjk_character_surname(old_name) else {
+            continue;
+        };
+        let Some(short_identity) = old_name.trim().strip_prefix(old_surname) else {
+            continue;
+        };
+        if short_identity.chars().count() != 2
+            || !short_identity.chars().all(is_cjk_unified)
+            || short_identity == new_name.trim()
+        {
+            continue;
+        }
+        targets_by_short_identity
+            .entry(short_identity.to_string())
+            .or_default()
+            .insert(new_name.trim().to_string());
+    }
+
+    for (short_identity, targets) in targets_by_short_identity {
+        if targets.len() != 1 {
+            continue;
+        }
+        let Some(target) = targets.iter().next() else {
+            continue;
+        };
+        if value.contains(&short_identity) {
+            *value = crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
+                value,
+                &short_identity,
+                target,
+                crate::tool::writing::typed_contract_gate::CharacterReferenceMatch::DerivedShortIdentity,
+            );
         }
     }
 }
@@ -3694,7 +3740,10 @@ fn rewrite_primary_role_references_to_authority(
             continue;
         }
         *value = crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
-            value, &surface, primary,
+            value,
+            &surface,
+            primary,
+            crate::tool::writing::typed_contract_gate::CharacterReferenceMatch::AuthorityAnchor,
         );
     }
 }
@@ -3723,7 +3772,10 @@ fn rewrite_specific_primary_role_marker(
             continue;
         }
         *value = crate::tool::writing::typed_contract_gate::replace_character_anchor_reference(
-            value, &surface, target,
+            value,
+            &surface,
+            target,
+            crate::tool::writing::typed_contract_gate::CharacterReferenceMatch::AuthorityAnchor,
         );
     }
     // Keep the generic primary pass from remapping a correctly resolved
@@ -4371,6 +4423,38 @@ mod tests {
 
         assert_eq!(value, "温昭衡掌控集团，温昭衡最终选择放手。");
         assert!(!value.contains("温昭衡深"));
+    }
+
+    #[test]
+    fn authority_rewrite_updates_unambiguous_governed_given_name_surfaces() {
+        let replacements = BTreeMap::from([
+            ("沈清漪".to_string(), "岑昭舟".to_string()),
+            ("谢长风".to_string(), "秦景朔".to_string()),
+        ]);
+        let mut value = "清漪在帝都与秦景朔重逢；秦景朔平定朝纲以护清漪周全；清漪最终选择舍弃权势，与清漪一起隐居。".to_string();
+
+        rewrite_structured_character_references(&mut value, &replacements);
+
+        assert_eq!(
+            value,
+            "岑昭舟在帝都与秦景朔重逢；秦景朔平定朝纲以护岑昭舟周全；岑昭舟最终选择舍弃权势，与岑昭舟一起隐居。"
+        );
+        assert!(!value.contains("清漪"));
+    }
+
+    #[test]
+    fn authority_rewrite_preserves_ambiguous_given_name_common_noun_surface() {
+        let replacements = BTreeMap::from([("周安宁".to_string(), "宋望川".to_string())]);
+        let mut value =
+            "城中恢复安宁后，社会安宁需要维护，安宁的生活仍是众人的愿望；周安宁决定离开。"
+                .to_string();
+
+        rewrite_structured_character_references(&mut value, &replacements);
+
+        assert_eq!(
+            value,
+            "城中恢复安宁后，社会安宁需要维护，安宁的生活仍是众人的愿望；宋望川决定离开。"
+        );
     }
 
     #[test]
@@ -5924,6 +6008,108 @@ mod tests {
         assert!(draft.fiction_premise.contains(&character.canonical_name));
         assert!(!character.desire.contains("林默"));
         assert!(character.desire.contains(&character.canonical_name));
+    }
+
+    #[test]
+    fn governed_given_name_surface_stays_aligned_when_plot_patch_reintroduces_it() {
+        let mut draft = build_initial_creation_draft(
+            "session-governed-given-name-surface",
+            "fiction",
+            "写一部古代言情小说，每章2500字，共10万字",
+        )
+        .expect("draft");
+        draft.title = "寒蝉旧约".to_string();
+        draft.fiction_premise = "清漪在帝都重查家族旧案。".to_string();
+        draft.fiction_outline = "清漪在权力漩涡中找到证据。".to_string();
+        let patch = CharacterPatch {
+            characters: vec![
+                CharacterContract {
+                    canonical_name: "沈清漪".to_string(),
+                    role: "主角".to_string(),
+                    desire: "清漪要查清家族旧案".to_string(),
+                    fear: "清漪因旧案再次失去亲人".to_string(),
+                    bottom_line: "不用无辜者的性命换取平反".to_string(),
+                    arc_start: "只相信家族仇恨".to_string(),
+                    arc_end: "主动公开证据并选择自由".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "谢长风".to_string(),
+                    role: "关键关系对象".to_string(),
+                    desire: "平定朝纲以护清漪周全".to_string(),
+                    fear: "清漪因他的权势而离去".to_string(),
+                    bottom_line: "必须守住清漪的平安".to_string(),
+                    arc_start: "隐忍克制的权臣".to_string(),
+                    arc_end: "愿意放弃权势的守护者".to_string(),
+                    ..Default::default()
+                },
+                CharacterContract {
+                    canonical_name: "萧承琰".to_string(),
+                    role: "对手".to_string(),
+                    desire: "将清漪纳为帝后".to_string(),
+                    fear: "失去对清漪的控制".to_string(),
+                    bottom_line: "绝不放弃皇权".to_string(),
+                    arc_start: "掌控朝堂的帝王".to_string(),
+                    arc_end: "失去制度性权力的失败者".to_string(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        patch.apply_to_draft(&mut draft);
+
+        let characters = draft
+            .fiction_characters
+            .iter()
+            .map(|line| draft_character_line_to_contract(line))
+            .collect::<Vec<_>>();
+        let primary = characters
+            .iter()
+            .find(|character| character.role_looks_primary())
+            .expect("primary")
+            .canonical_name
+            .clone();
+        assert!(!draft.fiction_premise.contains("清漪"));
+        assert!(
+            !draft.fiction_outline.contains("清漪"),
+            "{}",
+            draft.fiction_outline
+        );
+        for character in &characters {
+            for field in [
+                &character.desire,
+                &character.fear,
+                &character.bottom_line,
+                &character.arc_start,
+                &character.arc_end,
+            ] {
+                assert!(!field.contains("清漪"), "{field}");
+            }
+        }
+
+        PlotPatch {
+            raw_outline: "清漪在帝都找到翻案证据。".to_string(),
+            volumes: vec![VolumeContract {
+                title: "寒蝉初鸣".to_string(),
+                objective: "清漪逐渐查明旧案真相".to_string(),
+                ending_change: "清漪身份从流放女眷变为持证人".to_string(),
+            }],
+            near_chapters: vec![ChapterSeedContract {
+                number: Some(1),
+                goal: "清漪入京取回旧案账册".to_string(),
+                expected_turn: "清漪发现账册曾被替换".to_string(),
+            }],
+            ..Default::default()
+        }
+        .apply_to_draft(&mut draft);
+
+        assert!(
+            !draft.fiction_outline.contains("清漪"),
+            "{}",
+            draft.fiction_outline
+        );
+        assert!(draft.fiction_outline.contains(&primary));
     }
 
     #[test]

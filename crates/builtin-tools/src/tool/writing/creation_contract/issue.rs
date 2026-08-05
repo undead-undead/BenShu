@@ -48,6 +48,19 @@ pub(crate) fn user_story_semantic_issue_kind(candidate_field: &str) -> ContractI
         return ContractIssueKind::Characters;
     }
     if [
+        "世界规则",
+        "必须避免",
+        "治理约束",
+        "world_rule",
+        "must_avoid",
+        "governance",
+    ]
+    .iter()
+    .any(|marker| candidate_field.contains(marker) || lowered.contains(marker))
+    {
+        return ContractIssueKind::Governance;
+    }
+    if [
         "大纲",
         "分卷",
         "卷尾",
@@ -438,6 +451,14 @@ mod tests {
         assert_eq!(
             user_story_semantic_issue_kind("候选合同角色权威表"),
             ContractIssueKind::Characters
+        );
+        assert_eq!(
+            user_story_semantic_issue_kind("必须避免"),
+            ContractIssueKind::Governance
+        );
+        assert_eq!(
+            user_story_semantic_issue_kind("contract.world_rules"),
+            ContractIssueKind::Governance
         );
     }
 }

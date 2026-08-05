@@ -626,6 +626,8 @@ mod tests {
         let later_execution = chapter_execution_prompt("zh-CN", "照夜录", 2, "{}", None);
         assert!(first_execution.contains("reader_promise.core_hook"));
         assert!(first_execution.contains("第一章开篇架构指导"));
+        assert!(first_execution.contains("future_chapters 补充约束"));
+        assert!(first_execution.contains("无可绑定实体的抽象总结不能成为后续章节权威"));
         assert!(!later_execution.contains("第一章开篇架构指导"));
         assert!(later_execution.contains("上一批准状态"));
         assert!(later_execution.contains("next_chapter_boundary"));

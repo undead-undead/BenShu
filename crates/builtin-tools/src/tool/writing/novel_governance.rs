@@ -430,6 +430,13 @@ fn text_consumes_future_chapter_with_required_anchors(
         })
 }
 
+const CJK_STATIC_RELATION_MARKERS: &[&str] = &["来自", "源自", "属于"];
+const CJK_EXPLICIT_OUTCOME_MARKERS: &[&str] = &[
+    "确认", "发现", "查明", "证明", "证实", "显示", "表明", "直指", "揭示", "揭开", "透露", "获得",
+    "得到", "拿到", "完成", "抵达", "进入", "击败", "解决", "达成", "交换", "识破", "暴露", "来自",
+    "源自", "属于",
+];
+
 fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
     if cjk {
         // Future-boundary evidence must describe a completed outcome, not a
@@ -444,13 +451,9 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
         if sentence.contains('已') {
             return true;
         }
-        let explicit_outcome = [
-            "确认", "发现", "查明", "证明", "证实", "显示", "表明", "直指", "揭示", "揭开", "透露",
-            "获得", "得到", "拿到", "完成", "抵达", "进入", "击败", "解决", "达成", "交换", "识破",
-            "暴露", "来自", "源自", "属于",
-        ]
-        .iter()
-        .any(|marker| sentence.contains(marker));
+        let explicit_outcome = CJK_EXPLICIT_OUTCOME_MARKERS
+            .iter()
+            .any(|marker| sentence.contains(marker));
         if explicit_outcome {
             return true;
         }
@@ -458,16 +461,7 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
         // explicitly describing intent, anticipation, or an event in progress.
         // Otherwise normal chapter-end foreshadowing can consume the next
         // chapter even though its result has not happened yet.
-        let chars = sentence.chars().collect::<Vec<_>>();
-        return chars.iter().enumerate().any(|(index, ch)| {
-            if *ch != '了' {
-                return false;
-            }
-            let previous = index.checked_sub(1).and_then(|offset| chars.get(offset));
-            let next = chars.get(index + 1);
-            !previous.is_some_and(|ch| matches!(ch, '为' | '除' | '得' | '不'))
-                && !next.is_some_and(|ch| matches!(ch, '解' | '望' | '然' | '如'))
-        });
+        return text_has_completed_aspect_le(sentence);
     }
     let lowered = sentence.to_ascii_lowercase();
     [
@@ -489,6 +483,60 @@ fn sentence_reports_completed_outcome(sentence: &str, cjk: bool) -> bool {
     ]
     .iter()
     .any(|marker| lowered.contains(marker))
+}
+
+fn completed_clause_matches_future_event_kind(clause: &str, next_seed: &str, cjk: bool) -> bool {
+    if !cjk {
+        return true;
+    }
+    let static_relation = CJK_STATIC_RELATION_MARKERS
+        .iter()
+        .find_map(|marker| clause.find(marker).map(|index| (*marker, index)));
+    let Some((relation, relation_index)) = static_relation else {
+        return true;
+    };
+    if CJK_STATIC_RELATION_MARKERS
+        .iter()
+        .any(|marker| next_seed.contains(marker))
+    {
+        return true;
+    }
+
+    // A static ownership/classification statement can share a distinctive
+    // noun phrase with a future action without performing that action.  For
+    // example, “those are the larger force belonging to X” does not mean the
+    // force has already launched the next chapter's encirclement.  Keep source
+    // reveals admissible when the sealed future seed itself is about origin.
+    // If a separate completed action follows the static relation in the same
+    // clause, its aspect marker remains admissible (for example,
+    // “belonging to X, the force has already launched the encirclement”).
+    if CJK_EXPLICIT_OUTCOME_MARKERS
+        .iter()
+        .filter(|marker| !CJK_STATIC_RELATION_MARKERS.contains(marker))
+        .any(|marker| clause.contains(marker))
+    {
+        return true;
+    }
+    let prefix = clause.get(..relation_index).unwrap_or_default();
+    let suffix = clause
+        .get(relation_index + relation.len()..)
+        .unwrap_or_default();
+    text_has_completed_aspect_le(prefix)
+        || suffix.contains('已')
+        || text_has_completed_aspect_le(suffix)
+}
+
+fn text_has_completed_aspect_le(text: &str) -> bool {
+    let chars = text.chars().collect::<Vec<_>>();
+    chars.iter().enumerate().any(|(index, ch)| {
+        if *ch != '了' {
+            return false;
+        }
+        let previous = index.checked_sub(1).and_then(|offset| chars.get(offset));
+        let next = chars.get(index + 1);
+        !previous.is_some_and(|ch| matches!(ch, '为' | '除' | '得' | '不'))
+            && !next.is_some_and(|ch| matches!(ch, '解' | '望' | '然' | '如'))
+    })
 }
 
 fn text_reports_non_realized_intent(text: &str, cjk: bool) -> bool {
@@ -583,6 +631,7 @@ pub(crate) fn final_body_future_consumption_evidence(
                 .filter(|clause| !clause.is_empty())
                 .any(|clause| {
                     sentence_reports_completed_outcome(clause, cjk)
+                        && completed_clause_matches_future_event_kind(clause, next_seed, cjk)
                         && text_consumes_future_chapter_with_required_anchors(
                             clause,
                             current_seed,
@@ -2305,6 +2354,46 @@ mod tests {
         assert_eq!(
             final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
             Some(consumed)
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_keeps_larger_encirclement_setup_open() {
+        let current = "谢栖禾展示更深层的青莲剑意，迫使秦星朔做出抉择；秦星朔决定暂时庇护或观察谢栖禾；此前信徒已在乱石堆周围形成包围之势";
+        let next = "钟予原的信徒发起更大规模的合围，谢栖禾被迫在秦星朔面前展现更强的重塑能力；谢栖禾与秦星朔建立更深层的合作或观察关系";
+        let body = "信徒们的合围已经到了近前，数十道灰色的流光正汇聚成一股洪流，带着毁灭性的气息压向谢栖禾。四周的信徒虽然暂时被这股突如其来的青色律动所压制，但更多的身影已经出现在了远处的地平线上，那是更大规模的、属于钟予原的掠夺者。它们正如同黑色的潮汐，正缓慢而坚定地向着这片微弱的青色光芒汇聚而来。";
+
+        let evidence = final_body_future_consumption_evidence(body, current, next, true, &[]);
+        assert!(
+            evidence.is_none(),
+            "a completed current-scale encirclement plus an approaching larger force must leave the larger next-chapter encirclement open; evidence={evidence:?}"
+        );
+
+        let consumed =
+            "钟予原的信徒已经发起更大规模的合围，谢栖禾被迫在秦星朔面前展现了更强的重塑能力。";
+        assert_eq!(
+            final_body_future_consumption_evidence(consumed, current, next, true, &[]).as_deref(),
+            Some(consumed),
+            "a completed larger encirclement must still be detected"
+        );
+    }
+
+    #[test]
+    fn final_body_future_boundary_detects_action_before_static_relation() {
+        let next = "谢栖禾击败钟予原的信徒";
+        let body = "谢栖禾击败了属于钟予原的信徒，破碎的阵线再也无法合拢。";
+
+        let evidence = final_body_future_consumption_evidence(
+            body,
+            "谢栖禾守住当前阵地",
+            next,
+            true,
+            &["谢栖禾".to_string()],
+        );
+
+        assert!(
+            evidence.is_some(),
+            "a completed action must not be hidden by a later ownership phrase"
         );
     }
 
